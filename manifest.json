@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Rift Atlas Stats Tracker",
+  "version": "0.10.2",
+  "description": "Records your Rift Atlas (Riftbound) matches locally: win/loss rate, match history, and win rate vs opponent champions. Passive observer - never plays for you.",
+  "permissions": ["storage", "unlimitedStorage"],
+  "optional_permissions": ["downloads"],
+  "host_permissions": ["https://play.riftatlas.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://play.riftatlas.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Rift Atlas Stats Tracker - open dashboard"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: https://assets.riftatlas-workers.com;"
+  },
+  "icons": {}
+}

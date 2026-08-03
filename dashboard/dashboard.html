@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rift Atlas Stats Tracker</title>
+<link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+<div id="archiveBanner" class="banner banner-archive" hidden>
+  <span id="archiveBannerText"></span>
+  <span class="banner-actions">
+    <button id="archiveExit">Exit archive view</button>
+  </span>
+</div>
+
+<div id="backupBanner" class="banner" hidden>
+  <span id="backupBannerText"></span>
+  <span class="banner-actions">
+    <button id="bannerBackup">Back up now</button>
+    <button id="bannerDismiss" class="ghost">Dismiss</button>
+  </span>
+</div>
+
+<header>
+  <h1>Rift Atlas Stats Tracker</h1>
+  <div class="actions">
+    <button id="exportCsv">Export CSV</button>
+    <button id="exportJson">Export JSON</button>
+    <button id="importJson">Import JSON</button>
+    <input type="file" id="importFile" accept="application/json" hidden />
+    <button id="archiveClear" title="Download everything as one file, then clear it from the extension">Archive &amp; clear</button>
+    <button id="viewArchive" title="Open an archive file read-only, without touching your live data">View archive</button>
+    <input type="file" id="archiveFile" accept="application/json" hidden />
+    <button id="clearAll" class="danger">Clear all</button>
+  </div>
+</header>
+
+<section class="filters">
+  <label>My champion
+    <select id="fMyChampion"><option value="">All</option></select>
+  </label>
+  <label>My deck
+    <select id="fDeck"><option value="">All</option></select>
+  </label>
+  <label>Mode
+    <select id="fMode"><option value="">All</option></select>
+  </label>
+  <label>Count unknown results in stats
+    <input type="checkbox" id="fUnknown" />
+  </label>
+  <label title="Saves a JSON copy of your matches to your Downloads folder once a day, so history survives reinstalling the extension.">Daily auto-backup to Downloads
+    <input type="checkbox" id="autoBackup" />
+  </label>
+  <span id="backupState" class="backup-state"></span>
+</section>
+
+<section class="tiles">
+  <div class="tile"><span class="tile-label">Games</span><span class="tile-value" id="tGames">0</span></div>
+  <div class="tile"><span class="tile-label">Wins</span><span class="tile-value win" id="tWins">0</span></div>
+  <div class="tile"><span class="tile-label">Losses</span><span class="tile-value loss" id="tLosses">0</span></div>
+  <div class="tile"><span class="tile-label">Win rate</span><span class="tile-value" id="tWinrate">&ndash;</span></div>
+  <div class="tile"><span class="tile-label">Avg duration</span><span class="tile-value" id="tDuration">&ndash;</span></div>
+</section>
+
+<section>
+  <h2>Win rate vs opponent champion</h2>
+  <table id="vsTable">
+    <thead><tr><th>Opponent champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<section>
+  <h2>By my deck</h2>
+  <p class="hint">
+    Deck names are read from the game automatically. If a match is unlabelled, type a name in the <b>Deck</b> column of Match history.
+    <button id="autoDeck" class="inline-btn" title="Group matches by the cards you actually played, using replay data">Detect decks from replays</button>
+    <button id="bulkLabel" class="inline-btn">Label all unlabelled matches…</button>
+  </p>
+  <table id="deckTable">
+    <thead><tr><th>Deck</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<section>
+  <h2>By my champion</h2>
+  <table id="myTable">
+    <thead><tr><th>My champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Match history</h2>
+  <p class="hint">Click a row to open the game summary, notes and full log. Results can be changed at any time &mdash; edits are marked &ldquo;manual&rdquo;.</p>
+  <table id="historyTable">
+    <thead><tr>
+      <th></th><th>Date</th><th>Mode</th><th>Room</th><th>My champion</th><th>Deck</th><th>Opponent</th>
+      <th>Opp. champion</th><th>Score</th><th>Length</th><th>Result</th><th>Source</th><th></th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<footer>All data is stored locally in your browser. Nothing is uploaded anywhere.</footer>
+<script src="analysis.js"></script>
+<script src="fingerprint.js"></script>
+<script src="replay.js"></script>
+<script src="dashboard.js"></script>
+<datalist id="deckNames"></datalist>
+</body>
+</html>
