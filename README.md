@@ -46,11 +46,13 @@ A full game is a few hundred KB, kept in a separate `replay_` storage key so the
 
 - A content script watches the game board (`data-testid="game-state"`). When a match enters `in_game`, it records the room code, mode, both players' legends and champions (from card image alt text), and tracks scores and turn count.
 - **End detection:** a match ends when someone reaches 8 points, when a victory/defeat/concede message appears, or when the board leaves `in_game`.
+- **Deck detection:** the extension polls the deck picker on play.riftatlas.com and remembers the deck you had open — its friendly name and champion — for a couple of hours. When a match starts, that name is used if its champion agrees with the legend on the board; otherwise it falls back to the deck name shown in-game, the room URL, and finally the deck you played last. A name that couldn't be checked at the start is re-checked when the game ends, and dropped if the board turned out to disagree. Hover a deck name in the dashboard to see which source it came from, and type over it to override — hand-typed names are never overwritten, even mid-game.
 - **Manual override:** at match end a small toast appears in the bottom-right with the detected result. If it's wrong, click the correct one (Win / Loss / Draw) or "Don't record". You can also edit any match's result later in the dashboard — overridden results are marked `manual`.
 - Data lives in `chrome.storage.local`. Use Export JSON/CSV in the dashboard for backups; Import JSON merges records by id.
 
 ## Known limitations / notes
 
 - Rift Atlas is actively developed. If a site update changes the board markup, champion capture or auto-detection may stop working until the selectors in `content.js` are updated (the manual toast means no match is silently lost).
+- Deck detection knows which deck you had **open in the picker**, not which one the server dealt you. The champion check catches the common mistake (a deck for a different champion), but it can't tell two decks on the same champion apart — if you browse "Diana Control" and then launch "Diana Aggro", the match is labelled with the one you looked at last. Hover the name to see how it was arrived at, and type over it when it's wrong.
 - Opponent score reading uses a styling heuristic (their track has no `aria-pressed` marker); if it misreads, the end-of-match toast is the safety net.
 - Matches abandoned mid-game (tab closed) are saved with result `unknown` so you can fill them in from the dashboard.

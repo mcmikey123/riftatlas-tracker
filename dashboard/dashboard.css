@@ -322,18 +322,14 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 
 /* deck labelling */
 .deck-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
-.deck-input {
-  flex: 1 1 200px; min-width: 160px; background: var(--surface-2); color: var(--ink);
-  border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13px;
-}
-.deck-input:focus { outline: none; border-color: var(--accent); }
+.deck-select { max-width: 100%; cursor: pointer; }
+.deck-select:focus { outline: none; border-color: var(--accent); }
+/* Unlabelled reads as a hint, not as a deck called "unlabelled". */
+.deck-select:has(option[value=""]:checked) { color: var(--ink-3); font-style: italic; }
+.deck-wide { flex: 1 1 200px; min-width: 160px; padding: 7px 10px; border-radius: 8px; }
 .deck-apply { font-size: 11px; padding: 6px 10px; }
 .deck-cell { padding: 4px 8px; }
-.deck-inline {
-  width: 100%; min-width: 120px; padding: 4px 7px; font-size: 12px;
-  border-radius: 6px; background: rgba(29,45,74,0.55);
-}
-.deck-inline::placeholder { color: rgba(126,147,184,0.75); font-style: italic; }
+.deck-inline { width: 100%; min-width: 120px; padding: 4px 7px; font-size: 12px; }
 .inline-btn { padding: 3px 9px; font-size: 11px; margin-left: 8px; }
 
 /* tokens & extra battlefields */
