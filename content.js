@@ -386,6 +386,21 @@
   // A log row looks like:
   //   <li><span aria-hidden bar-colour></span>
   //       <p><span><span>16:11</span><span>Conquered <b>X</b> and scored 1.</span></span>…</p></li>
+  //
+  // Chat rows are the same shape but render their own header and repeat the
+  // time after the message, so the raw text carries the same timestamp up to
+  // three times ("16:34You at 16:34: nice?16:34"). The row's time is stored
+  // once in `t` and drawn by the dashboard, so every standalone repeat of it
+  // is noise. Only repeats of THIS row's own time are touched - a time that
+  // genuinely differs is part of what was said and stays put.
+  function stripRepeatedTime(text, t) {
+    return text
+      .replace(new RegExp("^" + t + "\\s*"), "")
+      .replace(new RegExp("\\s*" + t + "$"), "")
+      .replace(new RegExp("\\s+at\\s+" + t + "\\s*:"), ":")
+      .trim();
+  }
+
   function parseLogLi(li) {
     const p = li.querySelector("p");
     if (!p) return null;
@@ -397,8 +412,7 @@
     const t = spans[timeIdx].textContent.trim();
     // Use the wrapper span so nested <b>/<span> formatting is included.
     const holder = spans[timeIdx].parentElement || p;
-    let text = (holder.textContent || "").trim();
-    if (text.startsWith(t)) text = text.slice(t.length).trim();
+    const text = stripRepeatedTime((holder.textContent || "").trim(), t);
     if (!text) return null;
     const bar = li.querySelector('span[aria-hidden="true"]');
     const cls = (bar && bar.className) || "";
