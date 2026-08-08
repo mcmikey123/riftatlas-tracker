@@ -16,9 +16,19 @@
     roomCode: '[data-testid="room-code"]',
     myScoreGroup: '[role="group"][aria-label="Your score track"]',
     oppScoreGroup: '[role="group"][aria-label="Opponent score track"]',
+    // Deck picker (site pages, not the board): the tab strip we walk up from.
+    deckTab: "#deck-list-tab",
   };
 
   const WIN_SCORE = 8;
+  const DECK_POLL_MS = 2000; // how often to re-read the deck picker
+  const DECK_READ_MIN_MS = 250; // floor between reads when mutations drive them
+  const DECK_STAMP_MS = 30000; // how often to refresh the stored "last seen"
+  // How long a deck seen in the picker stays usable. Long enough to cover a
+  // session (pick a deck, play several games), short enough that the deck you
+  // browsed last week never labels today's match.
+  const DECK_MEMORY_MS = 2 * 60 * 60 * 1000;
+  const MAX_DECK_NAME = 60; // longer than this and it isn't a deck name
   const MAX_LOG = 500; // cap stored log lines per match
   const MAX_SNAPS = 500; // cap replay snapshots per match
   const REPLAY_SAVE_MS = 5000; // how often to flush the replay buffer
@@ -376,6 +386,21 @@
   // A log row looks like:
   //   <li><span aria-hidden bar-colour></span>
   //       <p><span><span>16:11</span><span>Conquered <b>X</b> and scored 1.</span></span>…</p></li>
+  //
+  // Chat rows are the same shape but render their own header and repeat the
+  // time after the message, so the raw text carries the same timestamp up to
+  // three times ("16:34You at 16:34: nice?16:34"). The row's time is stored
+  // once in `t` and drawn by the dashboard, so every standalone repeat of it
+  // is noise. Only repeats of THIS row's own time are touched - a time that
+  // genuinely differs is part of what was said and stays put.
+  function stripRepeatedTime(text, t) {
+    return text
+      .replace(new RegExp("^" + t + "\\s*"), "")
+      .replace(new RegExp("\\s*" + t + "$"), "")
+      .replace(new RegExp("\\s+at\\s+" + t + "\\s*:"), ":")
+      .trim();
+  }
+
   function parseLogLi(li) {
     const p = li.querySelector("p");
     if (!p) return null;
@@ -387,8 +412,7 @@
     const t = spans[timeIdx].textContent.trim();
     // Use the wrapper span so nested <b>/<span> formatting is included.
     const holder = spans[timeIdx].parentElement || p;
-    let text = (holder.textContent || "").trim();
-    if (text.startsWith(t)) text = text.slice(t.length).trim();
+    const text = stripRepeatedTime((holder.textContent || "").trim(), t);
     if (!text) return null;
     const bar = li.querySelector('span[aria-hidden="true"]');
     const cls = (bar && bar.className) || "";
@@ -442,10 +466,166 @@
   }
 
   // ---------- deck name ----------
-  // The in-game DOM may not expose a deck name at all; if it doesn't, matches
-  // are labelled by hand in the dashboard. This probes the likely sources and
-  // reports what it finds once, so auto-detection can be wired if possible.
-  // Rift Atlas renders the chosen deck as a pair of sibling <p> elements:
+  // Matches used to be labelled by hand in the dashboard. The deck picker on
+  // play.riftatlas.com names the deck you are about to take into a game, so we
+  // watch it continuously and remember what was open; a hand-typed name in the
+  // dashboard still overrides whatever we detect.
+  //
+  // The picker's header sits directly above the deck/tab strip:
+  //   <div>                          <- header
+  //     <div>…<p>Bandle Bomb</p></div>       <- the name you gave the deck
+  //     <div>…<p>Diana, Scorn of the Moon</p></div>  <- its champion
+  //     <div role="tablist"><button id="deck-list-tab">…      <- anchor
+  // The tab id is the only stable hook on it, so we find the header by walking
+  // up from there rather than by matching class names that change every deploy.
+
+  const cleanText = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
+
+  /**
+   * The deck currently open in the picker, or null if it isn't on screen.
+   * `:scope > div p` follows the header's own layout: the name and champion
+   * divs come before the tab strip, so the first two <p>s in document order
+   * are the ones we want. If the champion div ever loses its <p> we pick up a
+   * tab label instead - which fails safe, because it then won't match the
+   * legend on the board and the read is discarded rather than trusted.
+   */
+  function readDeckPicker() {
+    const header = document
+      .querySelector(SEL.deckTab)
+      ?.closest('[role="tablist"]')?.parentElement;
+    if (!header) return null;
+    const ps = header.querySelectorAll(":scope > div p");
+    const name = cleanText(ps[0]);
+    if (!name || name.length > MAX_DECK_NAME) return null;
+    return { name, champion: cleanText(ps[1]) || null };
+  }
+
+  // Last deck seen in the picker, with the last time we saw it. Mirrored into
+  // its own storage key because the picker unmounts the moment the board
+  // mounts, and because the game may be opened in a fresh tab (or the page
+  // reloaded) between choosing a deck and playing it. Its own key rather than
+  // a field on `settings`, so a write here can't clobber a settings write
+  // happening in the dashboard at the same moment.
+  let activeDeck = null;
+  let deckReadAt = 0;
+  let deckSavedAt = 0;
+
+  const deckIsUsable = () =>
+    !!activeDeck && Date.now() - (activeDeck.at || 0) < DECK_MEMORY_MS;
+
+  /** Poll the picker. Cheap enough to run on a timer whatever page we're on. */
+  function watchDeckPicker() {
+    // Mutation-driven calls can arrive every frame on this site; the picker
+    // cannot change faster than a click, so a floor costs us nothing.
+    const now = Date.now();
+    if (now - deckReadAt < DECK_READ_MIN_MS) return;
+    deckReadAt = now;
+
+    const found = readDeckPicker();
+    if (!found) return;
+    const changed =
+      !activeDeck ||
+      activeDeck.name !== found.name ||
+      activeDeck.champion !== found.champion;
+    // Always restamp: `at` means "last seen on screen", so a deck left open
+    // for an hour doesn't age out from under the player.
+    activeDeck = { name: found.name, champion: found.champion, at: now };
+    if (changed) {
+      console.info(
+        "[RA-Tracker] deck picker:",
+        activeDeck.name,
+        activeDeck.champion ? "(" + activeDeck.champion + ")" : ""
+      );
+    }
+    // Persist on change, and refresh the stored stamp now and then while the
+    // picker sits on screen - otherwise storage would record when the deck
+    // last CHANGED, and a deck left open all session would look stale to the
+    // next page load.
+    if (!changed && now - deckSavedAt < DECK_STAMP_MS) return;
+    deckSavedAt = now;
+    try {
+      chrome.storage.local.set({ activeDeck });
+    } catch (_) {}
+  }
+
+  /** Restore the picked deck across reloads / a newly opened game tab. */
+  function loadActiveDeck() {
+    try {
+      chrome.storage.local.get({ activeDeck: null }, (d) => {
+        // Anything read live from the page beats what storage remembers.
+        if (d && d.activeDeck && d.activeDeck.name && !activeDeck) {
+          activeDeck = d.activeDeck;
+        }
+      });
+    } catch (_) {}
+  }
+
+  // "Diana, Scorn of the Moon" -> "diana". The picker names the champion the
+  // deck is built around; the board exposes legend and champion CARDS, whose
+  // titles differ ("Diana, Scorn of the Moon" vs "Diana, Aspect of the Moon").
+  // Comparing the character alone is what makes the check work across both.
+  const championKey = (s) =>
+    String(s || "").split(",")[0].toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+
+  /**
+   * Does the picked deck agree with the cards on the board?
+   * true = agrees, false = contradicted, null = not enough to tell.
+   */
+  function deckMatchesBoard(deck, m) {
+    const want = championKey(deck && deck.champion);
+    if (!want) return null;
+    const mine = [championKey(m.myLegend), championKey(m.myChampion)].filter(Boolean);
+    if (!mine.length) return null;
+    return mine.includes(want);
+  }
+
+  /**
+   * Decide which deck a match was played with, best source first, and say
+   * where the answer came from so the dashboard can be honest about it.
+   *
+   * The champion check is a guard, not a proof: it rules the picked deck OUT
+   * when the board shows a different champion, but it cannot tell two decks on
+   * the SAME champion apart ("Diana Aggro" vs "Diana Control"). The picker is
+   * still the best evidence there is - it names the deck the player last had
+   * open - which is why an override always stays one keystroke away.
+   */
+  function pickDeckName(m) {
+    const usable = deckIsUsable();
+    const agrees = usable ? deckMatchesBoard(activeDeck, m) : null;
+    if (usable && agrees === true) {
+      return { name: activeDeck.name, source: "picker" };
+    }
+    const fromBoard = resolveDeckName(m.myLegend, pendingDeckCands);
+    if (fromBoard) return { name: fromBoard, source: "board" };
+    if (usable && agrees === null) {
+      // Couldn't check either way (no champion text, or the board hasn't
+      // revealed our cards yet) - the picker is still the best thing we have.
+      return { name: activeDeck.name, source: "picker-unverified" };
+    }
+    if (usable && agrees === false) {
+      console.info(
+        "[RA-Tracker] ignoring picked deck “%s” (%s): board shows %s",
+        activeDeck.name,
+        activeDeck.champion,
+        m.myLegend || m.myChampion || "nothing yet"
+      );
+    }
+    const fromUrl = detectDeckName();
+    return fromUrl ? { name: fromUrl, source: "url" } : null;
+  }
+
+  /** New matches fall back to this when nothing can be detected. */
+  function rememberLastDeck(name) {
+    try {
+      chrome.storage.local.get({ settings: {} }, (d) => {
+        const s = Object.assign({}, d && d.settings, { lastDeck: name });
+        chrome.storage.local.set({ settings: s });
+      });
+    } catch (_) {}
+  }
+
+  // Fallback for games we never saw the picker for. Rift Atlas renders the
+  // chosen deck as a pair of sibling <p> elements:
   //   <p>latest</p><p>Diana, Scorn of the Moon</p>
   // i.e. deck name followed by its legend. Matching the second <p> against the
   // legend we independently read off the board is what makes this safe when
@@ -467,9 +647,9 @@
     for (const p of ps) {
       const next = p.nextElementSibling;
       if (!next || next.tagName !== "P") continue;
-      const name = (p.textContent || "").replace(/\s+/g, " ").trim();
-      const legend = (next.textContent || "").replace(/\s+/g, " ").trim();
-      if (!name || name.length > 60) continue;
+      const name = cleanText(p);
+      const legend = cleanText(next);
+      if (!name || name.length > MAX_DECK_NAME) continue;
       if (!LEGEND_RE.test(legend)) continue;
       const key = name + "|" + legend;
       if (seen.has(key)) continue;
@@ -501,28 +681,12 @@
       const u = new URLSearchParams(location.search);
       for (const k of ["deck", "deckName", "deckId", "list"]) {
         const v = u.get(k);
-        if (v && v.length < 60) return v;
+        if (v && v.length <= MAX_DECK_NAME) return v;
       }
       const el = document.querySelector("[data-deck-name]");
       if (el) return el.getAttribute("data-deck-name");
     } catch (_) {}
     return null;
-  }
-
-  function probeDeckSources() {
-    if (probeDeckSources._done) return;
-    probeDeckSources._done = true;
-    try {
-      const keys = Object.keys(localStorage).filter((k) => /deck|list/i.test(k));
-      if (keys.length) {
-        console.info(
-          "[RA-Tracker] deck-related localStorage keys (send these to enable auto deck naming):",
-          keys.map((k) => k + " = " + String(localStorage.getItem(k)).slice(0, 120))
-        );
-      } else {
-        console.info("[RA-Tracker] no deck name found in the page; label decks in the dashboard.");
-      }
-    } catch (_) {}
   }
 
   // ---------- match lifecycle ----------
@@ -588,6 +752,7 @@
       durationMs: null,
       notes: "",
       deckName: "",
+      deckSource: null, // 'picker' | 'board' | 'url' | 'last' | 'manual' | …
       log: [], // [{t, actor: self|opponent|system, text}]
       schemaVersion: 3,
     };
@@ -601,19 +766,14 @@
     pendingLastJson = null;
     refreshMatchFacts(root); // fills in myLegend, needed to pick the right deck
 
-    // Deck: read it off the page (verified against our legend), fall back to
-    // the URL, then to the last deck you used.
-    const found =
-      resolveDeckName(currentMatch.myLegend, pendingDeckCands) || detectDeckName();
+    // Deck: the name from the picker (checked against the legend on the
+    // board), else the in-game DOM, else the URL, else the deck you used last.
+    const found = pickDeckName(currentMatch);
     if (found) {
-      currentMatch.deckName = found;
-      console.info("[RA-Tracker] deck detected:", found);
-      try {
-        chrome.storage.local.get({ settings: {} }, (d) => {
-          const s = Object.assign({}, d && d.settings, { lastDeck: found });
-          chrome.storage.local.set({ settings: s });
-        });
-      } catch (_) {}
+      currentMatch.deckName = found.name;
+      currentMatch.deckSource = found.source;
+      console.info("[RA-Tracker] deck detected:", found.name, "(" + found.source + ")");
+      rememberLastDeck(found.name);
     } else {
       const fresh0 = currentMatch;
       try {
@@ -621,6 +781,7 @@
           const last = d && d.settings && d.settings.lastDeck;
           if (last && currentMatch === fresh0 && !fresh0.deckName) {
             fresh0.deckName = last; // assume same deck as last time
+            fresh0.deckSource = "last";
             saveMatch(fresh0);
           }
         });
@@ -642,6 +803,16 @@
         fresh.myScore = Math.max(fresh.myScore, open.myScore || 0);
         fresh.opponentScore = Math.max(fresh.opponentScore, open.opponentScore || 0);
         fresh.notes = open.notes || "";
+        // Deck: the name already on the record was read when the game began -
+        // closer to the moment the deck was actually chosen than anything we
+        // can see after a mid-game reload - so it wins, unless it was only the
+        // "same deck as last time" guess. Records written before deck sources
+        // existed carry no source and were typed by hand, so they win too.
+        const openDeck = (open.deckName || "").trim();
+        if (openDeck && (open.deckSource !== "last" || !fresh.deckName)) {
+          fresh.deckName = openDeck;
+          fresh.deckSource = open.deckSource || null;
+        }
         if (Array.isArray(open.log) && open.log.length) fresh.log = open.log; // legacy inline log
         // Resume the existing replay and log instead of starting new ones.
         const rKey = "replay_" + fresh.id;
@@ -704,6 +875,31 @@
     m.resultSource = result && result !== "unknown" ? "auto" : null;
     m.endReason = reason;
     m.endCount = (m.endCount || 0) + 1;
+    // Deck, one last time. A game can begin before we ever saw the picker (a
+    // room link opened straight into a match, or a tab loaded mid-game), and
+    // by now the board has long since revealed our legend - so a name we
+    // couldn't check at the start can be improved or contradicted here. Names
+    // we already trust, and anything hand-typed, are left alone.
+    if (m.deckSource !== "manual" && m.deckSource !== "picker" && m.deckSource !== "board") {
+      const late = pickDeckName(m);
+      if (late && (late.name !== m.deckName || late.source !== m.deckSource)) {
+        m.deckName = late.name;
+        m.deckSource = late.source;
+        rememberLastDeck(late.name);
+        console.info("[RA-Tracker] deck resolved at match end:", late.name, "(" + late.source + ")");
+      } else if (
+        m.deckSource === "picker-unverified" &&
+        deckMatchesBoard(activeDeck, m) === false
+      ) {
+        // Only an explicit contradiction clears a name - never the mere
+        // absence of evidence, which would throw away the reading taken at
+        // the start of the game. A guess we now know is wrong is worse than
+        // no label at all: it silently skews that deck's stats.
+        m.deckName = "";
+        m.deckSource = null;
+        console.info("[RA-Tracker] dropped unverified deck name - the board disagrees");
+      }
+    }
     lastEnded = { roomCode: m.roomCode, at: Date.now(), record: m };
     saveMatch(m);
     if (m.endCount <= 2) showConfirmToast(m);
@@ -892,6 +1088,10 @@
     const root = getRoot();
     const phase = root?.dataset.roomPhase || null;
 
+    // Catch a deck change as it renders rather than on the next poll tick.
+    // Self-throttled, so the mutation firehose on this site costs nothing.
+    if (!currentMatch) watchDeckPicker();
+
     if (root && phase === "in_game") {
       if (!currentMatch) startMatch(root);
       refreshMatchFacts(root);
@@ -979,7 +1179,36 @@
         persistLogFor(m, true);
       }
     });
-    probeDeckSources();
+    // The deck picker lives on the site's own pages, which produce none of the
+    // board mutations we filter for, so it gets a standing poll of its own
+    // rather than riding on the observer. One id lookup per tick when it isn't
+    // on screen, which is most of the time.
+    loadActiveDeck();
+    watchDeckPicker();
+    setInterval(() => {
+      // Not while a match is live: the deck for this game is already decided,
+      // and letting the picker drift now would only let a deck the player
+      // glanced at overwrite the one they actually played.
+      if (isOrphaned() || currentMatch) return;
+      try {
+        watchDeckPicker();
+      } catch (_) {}
+    }, DECK_POLL_MS);
+    // A deck name typed in the dashboard while the game is still running would
+    // otherwise be undone by the next periodic save of the in-memory record.
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== "local" || !changes.matches || !currentMatch) return;
+        const saved = (changes.matches.newValue || []).find(
+          (x) => x && x.id === currentMatch.id
+        );
+        if (!saved || saved.deckSource !== "manual") return; // only we write the rest
+        if (saved.deckName === currentMatch.deckName) return;
+        currentMatch.deckName = saved.deckName || "";
+        currentMatch.deckSource = "manual";
+        console.info("[RA-Tracker] deck renamed from the dashboard:", currentMatch.deckName);
+      });
+    } catch (_) {}
     console.info("[RA-Tracker] active");
   }
 

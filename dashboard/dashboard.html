@@ -74,7 +74,9 @@
 <section>
   <h2>By my deck</h2>
   <p class="hint">
-    Deck names are read from the game automatically. If a match is unlabelled, type a name in the <b>Deck</b> column of Match history.
+    Deck names are worked out from the deck you had open in the picker before the game, falling back to the board, the room URL,
+    then the deck you played last. Hover a name to see which it was, and change it from the <b>Deck</b> column of Match history
+    to correct it — decks on the same champion can't be told apart automatically.
     <button id="autoDeck" class="inline-btn" title="Group matches by the cards you actually played, using replay data">Detect decks from replays</button>
     <button id="bulkLabel" class="inline-btn">Label all unlabelled matches…</button>
   </p>
@@ -109,6 +111,5 @@
 <script src="fingerprint.js"></script>
 <script src="replay.js"></script>
 <script src="dashboard.js"></script>
-<datalist id="deckNames"></datalist>
 </body>
 </html>

@@ -129,18 +129,58 @@
 
   const deckOf = (m) => (m.deckName || "").trim() || "Unlabelled";
 
+  // Where a deck name came from, so a detected name can be told apart from one
+  // you typed before you decide whether to trust it.
+  const DECK_SOURCE_LABEL = {
+    picker: "the deck you had open in the picker (its champion matches the board)",
+    "picker-unverified": "the deck you had open in the picker, unchecked against the board",
+    board: "read off the game board",
+    url: "read from the room URL",
+    last: "assumed — the same deck as your previous match",
+    fingerprint: "matched by the cards you played",
+    manual: "typed by you",
+  };
+  const deckTitle = (m) =>
+    (m.deckName || "").trim()
+      ? `${DECK_SOURCE_LABEL[m.deckSource] || "source not recorded"} — pick another to override`
+      : "Pick or add a deck name to override detection";
+
   function buildFilterOptions() {
     fillSelect($("#fMyChampion"), [...new Set(all.map((m) => champ(m.myChampion || m.myLegend)))]);
     fillSelect($("#fMode"), [...new Set(all.map((m) => m.mode).filter(Boolean))]);
     fillSelect($("#fDeck"), [...new Set(all.map(deckOf))]);
-    // autocomplete source for the per-match deck field
-    const dl = $("#deckNames");
-    if (dl) {
-      dl.innerHTML = [...new Set(all.map((m) => (m.deckName || "").trim()).filter(Boolean))]
-        .sort()
-        .map((d) => `<option value="${esc(d)}">`)
-        .join("");
-    }
+  }
+
+  // Every deck name in use, which is what the per-match picker offers.
+  const deckNames = () =>
+    [...new Set(all.map((m) => (m.deckName || "").trim()).filter(Boolean))].sort(
+      (a, b) => a.localeCompare(b)
+    );
+
+  // Sentinel option value: picking it asks for a name instead of setting one.
+  // The leading space keeps it distinct: stored names are always trimmed, so
+  // no real deck can collide with it.
+  const NEW_DECK = " new";
+
+  /**
+   * The per-match deck picker. A plain <select> of the decks you already have
+   * - the common case is "one of these again" - with one entry that prompts
+   * for a new name, so a custom name is always one click away.
+   */
+  function deckSelect(m, cls) {
+    const current = (m.deckName || "").trim();
+    const opts = deckNames()
+      .map(
+        (d) =>
+          `<option value="${esc(d)}" ${d === current ? "selected" : ""}>${esc(d)}</option>`
+      )
+      .join("");
+    return `<select class="deck-select ${cls}" data-deck="${m.id}" title="${esc(deckTitle(m))}"
+              ${readOnly() ? "disabled" : ""}>
+        <option value="" ${current ? "" : "selected"}>— unlabelled —</option>
+        ${opts}
+        <option value="${NEW_DECK}">＋ New deck name…</option>
+      </select>`;
   }
 
   function fillSelect(sel, values) {
@@ -248,8 +288,7 @@
         <td>${esc(m.mode || "–")}</td>
         <td>${esc(m.roomCode || "–")}</td>
         <td>${esc(m.myChampion || m.myLegend || "–")}</td>
-        <td class="deck-cell"><input class="deck-input deck-inline" list="deckNames" data-deck="${m.id}"
-              value="${esc(m.deckName || "")}" placeholder="name deck…" ${readOnly() ? "readonly" : ""}></td>
+        <td class="deck-cell">${deckSelect(m, "deck-inline")}</td>
         <td>${esc(m.opponentName || "–")}</td>
         <td>${esc(m.opponentChampion || m.opponentLegend || "–")}</td>
         <td>${
@@ -319,8 +358,7 @@
         <div class="detail-col">
           <h3>Deck</h3>
           <div class="deck-row">
-            <input class="deck-input" list="deckNames" data-deck="${m.id}" value="${esc(m.deckName || "")}"
-                   placeholder="e.g. Diana Aggro / Diana Control" ${readOnly() ? "readonly" : ""}>
+            ${deckSelect(m, "deck-wide")}
             ${readOnly() ? "" : `<button class="deck-apply" data-deckapply="${m.id}" title="Give every unlabelled match with this champion the same deck name">Apply to unlabelled ${esc(champ(m.myChampion || m.myLegend))} games</button>`}
           </div>
           <h3>Notes</h3>
@@ -360,37 +398,42 @@
       }
       return;
     }
+    const deckId = t.dataset?.deck;
+    if (deckId) {
+      if (readOnly()) return;
+      const m = all.find((x) => x.id === deckId);
+      if (!m) return;
+      if (t.value !== NEW_DECK) return setDeckName(m, t.value);
+      const typed = prompt("Name this deck:", m.deckName || "");
+      // Cancelled: put the picker back where it was rather than leaving it
+      // showing the "new name" entry.
+      if (typed === null || !typed.trim()) return render();
+      return setDeckName(m, typed);
+    }
     if (["fMyChampion", "fMode", "fDeck", "fUnknown"].includes(t.id)) render();
   });
 
+  /** Name a match's deck by hand, from either deck picker. */
+  function setDeckName(m, name) {
+    m.deckName = name.trim();
+    // Marked manual either way: clearing it is a decision too, and it stops the
+    // tracker re-detecting a name onto a match that is still running.
+    m.deckSource = "manual";
+    chrome.storage.local.set({ matches: all }, () => {
+      buildFilterOptions();
+      render(); // a new name has to reach every other row's picker
+    });
+    // Remember it so new matches default to this deck.
+    if (m.deckName) {
+      getSettings((s) => {
+        s.lastDeck = m.deckName;
+        setSettings(s);
+      });
+    }
+  }
+
   const noteTimers = new Map();
   document.addEventListener("input", (e) => {
-    const deckId = e.target?.dataset?.deck;
-    if (deckId && !readOnly()) {
-      const value = e.target.value;
-      clearTimeout(noteTimers.get("deck:" + deckId));
-      noteTimers.set(
-        "deck:" + deckId,
-        setTimeout(() => {
-          const m = all.find((x) => x.id === deckId);
-          if (!m) return;
-          m.deckName = value.trim();
-          chrome.storage.local.set({ matches: all }, () => {
-            buildFilterOptions();
-            const rows = filtered(false);
-            renderAgg($("#deckTable tbody"), rows, deckOf);
-          });
-          // Remember it so new matches default to this deck.
-          if (m.deckName) {
-            getSettings((s) => {
-              s.lastDeck = m.deckName;
-              setSettings(s);
-            });
-          }
-        }, 600)
-      );
-      return;
-    }
     const id = e.target?.dataset?.notes;
     if (!id || readOnly()) return;
     const value = e.target.value;
@@ -445,16 +488,16 @@
     const applyId = e.target?.dataset?.deckapply;
     if (applyId && !readOnly()) {
       const src = all.find((x) => x.id === applyId);
-      const input = document.querySelector(`[data-deck="${CSS.escape(applyId)}"]`);
-      const name = ((input && input.value) || src?.deckName || "").trim();
-      if (!name) return alert("Type a deck name first.");
+      // The picker commits on change, so the record is already the truth.
+      const name = (src?.deckName || "").trim();
+      if (!name) return alert("Give this match a deck name first.");
       const champion = champ(src.myChampion || src.myLegend);
       const targets = all.filter(
         (m) => champ(m.myChampion || m.myLegend) === champion && !(m.deckName || "").trim()
       );
       if (!targets.length) return alert(`No unlabelled ${champion} matches to update.`);
       if (!confirm(`Label ${targets.length} unlabelled ${champion} match${targets.length === 1 ? "" : "es"} as “${name}”?`)) return;
-      targets.forEach((m) => (m.deckName = name));
+      targets.forEach((m) => { m.deckName = name; m.deckSource = "manual"; });
       chrome.storage.local.set({ matches: all }, () => { buildFilterOptions(); render(); });
       return;
     }
@@ -500,7 +543,7 @@
     if (name === null) return;
     const clean = name.trim();
     if (!clean) return;
-    targets.forEach((m) => (m.deckName = clean));
+    targets.forEach((m) => { m.deckName = clean; m.deckSource = "manual"; });
     chrome.storage.local.set({ matches: all }, () => {
       buildFilterOptions();
       render();
@@ -548,7 +591,7 @@
           const clean = (name || "").trim();
           if (!clean) return;
           const ids = new Set(c.ids);
-          all.forEach((m) => { if (ids.has(m.id)) m.deckName = clean; });
+          all.forEach((m) => { if (ids.has(m.id)) { m.deckName = clean; m.deckSource = "fingerprint"; } });
           named += c.size;
         });
         if (!named) return;
@@ -580,7 +623,7 @@
       );
       if (!ok) return;
       const byId = new Map(proposals.map((p) => [p.match.id, p.deck]));
-      all.forEach((m) => { if (byId.has(m.id)) m.deckName = byId.get(m.id); });
+      all.forEach((m) => { if (byId.has(m.id)) { m.deckName = byId.get(m.id); m.deckSource = "fingerprint"; } });
       chrome.storage.local.set({ matches: all }, () => {
         buildFilterOptions();
         render();
@@ -596,7 +639,7 @@
 
   $("#exportCsv").addEventListener("click", () => {
     buildBundle(false, (bundle) => {
-      const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","notes"];
+      const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","notes"];
       const extra = ["duration","verdict","myCommits","oppCommits","myConquers","oppConquers","myTrashed","oppTrashed","logLines"];
       const lines = [cols.concat(extra).join(",")].concat(
         bundle.matches.map((m) => {
