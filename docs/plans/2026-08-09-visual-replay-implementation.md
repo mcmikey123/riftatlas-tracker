@@ -1,5 +1,18 @@
 # Visual Replay Implementation Plan
 
+> **Superseded — 2026-08-09.** This plan documents a completed round of work and is kept as the
+> historical record; it is not being rewritten to match current state. The living document is
+> `docs/specs/2026-08-09-visual-replay-design.md`. Locked contracts below that no longer hold:
+> - the `capture/capture-policy.js` policy API — `coalesceAtRatio`, `coalesceMs`, and
+>   `minFrameIntervalMs()` are gone; there is no `"coalescing"` state, only
+>   `normal → stopped`, plus the `killed` latch
+> - the `visualReplayBudgetMb` setting name — it's `visualReplayMaxMatchMb` now, alongside
+>   `visualReplayKeepMatches` for retention
+> - the structured-track coexistence described in Task 8 (banner pointing at "the structured
+>   replay") — `dashboard/replay.js` and the structured track are deleted; visual replay is the
+>   only replay
+> - the `replay_<id>` storage key — replaced by `deckcards_<matchId>` for card-code fingerprinting
+
 **Goal:** Record each match as an rrweb event stream so it replays exactly as the site rendered it, stored compressed in the extension's own IndexedDB.
 
 **Architecture:** A vendored rrweb recorder runs in the content script behind a thin policy layer (keyframe timing, byte budget, perf kill-switch). Batches of events go to the service worker over `chrome.runtime.sendMessage`; the worker extracts repeated stylesheet text into a content-addressed asset store, deflates each batch, and appends it to IndexedDB on the extension origin. The dashboard replays with rrweb's own `Replayer`. The existing structured track is untouched and remains the fallback.

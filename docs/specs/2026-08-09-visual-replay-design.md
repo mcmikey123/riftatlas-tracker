@@ -8,9 +8,10 @@ Status: accepted
 Record each match so it can be replayed **as the game actually rendered it**, and store that
 recording small enough to keep on disk.
 
-The existing replay viewer (`dashboard/replay.js`) re-implements the Rift Atlas board from
-structured data. That reimplementation can only ever lag the real site: every visual change
-upstream is maintenance here, and until someone does that maintenance the replay is wrong.
+A replay viewer (`dashboard/replay.js`) used to re-implement the Rift Atlas board from
+structured data. That reimplementation could only ever lag the real site: every visual change
+upstream was maintenance here, and until someone did that maintenance the replay was wrong. This
+design replaced it. `replay.js` is deleted; visual replay is now the only replay.
 
 ### The objective, stated precisely
 
@@ -30,11 +31,13 @@ Two tracks record every match, independently.
 
 | Track | Produces | Consumers | Always on |
 |---|---|---|---|
-| **Structured** (existing, unchanged) | `replay_<id>` — zone/card/score snapshots | `replay.js`, `fingerprint.js`, `analysis.js` | yes |
+| **Card-code accumulator** | `deckcards_<matchId>` — `{ id, codes: string[] }` | `fingerprint.js` | yes |
 | **Visual** (new) | rrweb event stream in IndexedDB | `replay-html.js` | yes, at full fidelity |
 
-The structured track is untouched. It is the analysis substrate, the fallback when visual
-capture stops, and the reason every match ever recorded still opens.
+The card-code track is not a replay and never was a fallback for one. It accumulates the set of
+your own card codes seen during a match, purely so `fingerprint.js` can cluster matches by deck
+without a decklist. `analysis.js` reads `match.log`, independent of both tracks. If visual capture
+stops, the replay stops — there is no structured track left to fall back to.
 
 ### Data flow
 
@@ -48,8 +51,8 @@ play.riftatlas.com tab                    extension service worker
 │   budget state machine     │            │   extract CSS → sha-256 ref  │
 │   (capture/capture-policy) │            │   ↓                          │
 └────────────────────────────┘            │ CompressionStream deflate-raw│
-        ▲ ~15 new lines in content.js     │   ↓                          │
-        │ start / stop / mark             │ store/idb.js → IndexedDB     │
+        ▲ content.js shrank ~289 lines    │   ↓                          │
+        │ net; old snapshot capture gone  │ store/idb.js → IndexedDB     │
                                           └──────────────────────────────┘
                                                        │
 dashboard ── replay-html.js ── vendor/rrweb-replay.min.js (rrweb Replayer)
@@ -79,8 +82,8 @@ that is hundreds of megabytes of disk writes per match. IndexedDB appends one ch
 | `store/replay-store.js` | batching, compression, budget accounting, retention | no |
 | `dashboard/replay-html.js` | Visual replay viewer | no |
 
-`content.js` gains **start/stop/mark calls only** — no capture logic. It is already ~1200 lines
-and does not grow meaningfully.
+`content.js` gains **start/stop/mark calls only** — no capture logic. Deleting the structured
+snapshot machinery it used to carry shrank it by ~289 lines net, to just over 1000.
 
 ### Capture root
 
@@ -202,32 +205,36 @@ Captured `innerWidth`/`innerHeight` size the iframe exactly, and a CSS `transfor
 it to the modal. Replaying at a different width would fire different media queries and reintroduce
 drift.
 
-Matches keep their existing **Replay** button, always available. Matches with a visual track gain a
-**Visual** button beside it.
+Matches with a visual track show a **Replay** control; matches without one show nothing where it
+would go. There is no separate structured-replay button to keep alongside it.
 
 ## Error handling
 
 | Failure | Response |
 |---|---|
-| rrweb throws during capture | stop visual track, keep structured, record `error` on the meta record |
+| rrweb throws during capture | stop visual track, record `error` on the meta record; match record, log and card list unaffected |
 | service worker evicted mid-match | up to 5s of unflushed events lost; replay marked `incomplete` |
-| IDB quota exceeded | stop visual capture, surface in diagnostics, structured unaffected |
+| IDB quota exceeded | stop visual capture, surface in diagnostics; match record, log and card list unaffected |
 | chunk fails to decompress on read | viewer plays up to the last good chunk and says so |
-| no visual track for a match | **Visual** button absent; **Replay** unchanged |
+| no visual track for a match | **Replay** control absent entirely; match record, log and card list unaffected |
 
 `sendMessage` from `beforeunload` is unreliable and is not relied upon.
 
 ## Testing strategy
 
-`node --test` (built in, zero dependencies). No framework is added.
+`node --test` (built in, zero dependencies). No framework is added. The suite is 40 tests.
 
 Pure units under test:
 - `store/css-assets.js` — extract/rehydrate round-trip, ref reuse across snapshots, sub-threshold
   text left inline, missing-asset handling
-- `capture/capture-policy.js` — keyframe triggers (start / turn change / byte ratio), full
-  fidelity right up to the ceiling, the one-way `normal → stopped` transition, an uncapped
+- `capture/capture-policy.js` — keyframe triggers (turn change / byte ratio), full fidelity right
+  up to the ceiling, the one-way `normal → stopped → killed` state progression, an uncapped
   ceiling never stopping capture, kill-switch latch
-- `store/replay-store.js` — batch boundary selection and chunk framing (compression stubbed)
+- `store/replay-store.js` — batch boundary selection and chunk framing (compression stubbed),
+  concurrent-append ordering across a chunk roll, stop/error state transitions, gc retention
+  including orphaned assets
+- `fingerprint.js` — the card-code accumulator's sole consumer: codes-to-fingerprint conversion,
+  clustering by overlap, and deck-label suggestion
 
 Not unit tested (no browser available, and asserted by the diagnostics panel instead): rrweb
 itself, IDB wiring, viewer rendering.
@@ -251,6 +258,19 @@ default 25 should come from.
 - font embedding as `data:` URIs (fallback fonts accepted for now)
 - canvas capture
 - animation/timing fidelity — frames are stepped, not animated
-- hover-preview parity with `replay.js` (the site's own hover needs scripting, which stays off)
-- any change to `fingerprint.js`, `analysis.js`, or `replay.js`
+- hover preview (the site's own hover needs scripting, which stays off)
+- any change to `analysis.js`
 - backwards compatibility for pre-existing visual replays (none exist)
+
+## Revisions
+
+**2026-08-09.** Two rounds landed after this document was first written, both since folded into
+the sections above rather than left as drift:
+
+1. `dashboard/replay.js`, the structured step-through viewer, was deleted along with the snapshot
+   machinery that fed it. Visual replay is now the only replay. Its former "fallback" role is
+   gone with it — there is nothing left to fall back to.
+2. The structured track's one real consumer, `fingerprint.js`, didn't need the full snapshot data
+   it was reading — only the set of card codes seen. It was replaced by a lightweight card-code
+   accumulator (`deckcards_<matchId>`), and `content.js` shrank by ~289 lines net as the old
+   capture code came out.
