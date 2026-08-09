@@ -54,6 +54,12 @@
     <input type="checkbox" id="autoBackup" />
   </label>
   <span id="backupState" class="backup-state"></span>
+  <label title="Records each match as the site's own markup and stylesheets, replayable exactly as it looked. The newest 25 matches keep a visual track.">Visual replay
+    <input type="checkbox" id="visualEnabled" />
+  </label>
+  <label title="How much compressed data one match's visual replay may use before capture stops. The step-through replay carries on either way.">Visual budget per match (MB)
+    <input type="number" id="visualBudget" min="1" max="64" step="1" />
+  </label>
 </section>
 
 <section class="tiles">

@@ -53,6 +53,7 @@
       buildFilterOptions();
       render();
       refreshBackupUI();
+      refreshVisualSettingsUI();
     });
   }
 
@@ -973,7 +974,11 @@
   // ---- backups ---------------------------------------------------------
 
   const DAY_MS = 86400000;
-  const defaultSettings = { autoBackup: false, lastBackup: 0, bannerDismissed: 0 };
+  // The recorder reads visualReplay* out of this same object at match start.
+  const defaultSettings = {
+    autoBackup: false, lastBackup: 0, bannerDismissed: 0,
+    visualReplayEnabled: true, visualReplayBudgetMb: 8,
+  };
 
   const getSettings = (cb) =>
     chrome.storage.local.get({ settings: defaultSettings }, (d) =>
@@ -1084,6 +1089,42 @@
         );
         $("#backupBanner").hidden = true;
       });
+    });
+  });
+
+  // ---- visual replay settings ------------------------------------------
+
+  const BUDGET_MIN_MB = 1;
+  const BUDGET_MAX_MB = 64;
+  // Out-of-range budgets are clamped rather than rejected: the number input's
+  // own min/max only constrain its spinner, not what can be typed or pasted.
+  const clampBudget = (v) => {
+    const mb = Math.round(Number(v));
+    if (!Number.isFinite(mb)) return defaultSettings.visualReplayBudgetMb;
+    return Math.min(BUDGET_MAX_MB, Math.max(BUDGET_MIN_MB, mb));
+  };
+
+  function refreshVisualSettingsUI() {
+    getSettings((s) => {
+      $("#visualEnabled").checked = s.visualReplayEnabled !== false;
+      $("#visualBudget").value = clampBudget(s.visualReplayBudgetMb);
+    });
+  }
+
+  $("#visualEnabled").addEventListener("change", (e) => {
+    const on = e.target.checked;
+    getSettings((s) => {
+      s.visualReplayEnabled = on;
+      setSettings(s);
+    });
+  });
+
+  $("#visualBudget").addEventListener("change", (e) => {
+    const mb = clampBudget(e.target.value);
+    e.target.value = mb; // show what was actually stored, clamp included
+    getSettings((s) => {
+      s.visualReplayBudgetMb = mb;
+      setSettings(s);
     });
   });
 

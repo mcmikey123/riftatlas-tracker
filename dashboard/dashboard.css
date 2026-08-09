@@ -55,6 +55,12 @@ select {
   background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; font-size: 13px;
 }
+input[type="number"] {
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 13px; width: 68px;
+  font-variant-numeric: tabular-nums;
+}
+input[type="number"]:focus { outline: none; border-color: var(--accent); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 14px 0 8px; }
 .tile {
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;

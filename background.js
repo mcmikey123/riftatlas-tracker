@@ -12,6 +12,9 @@ chrome.action.onClicked.addListener(() => {
 importScripts("store/idb.js", "store/css-assets.js", "store/replay-store.js");
 
 const VISUAL_PREFIX = "ra:visual:";
+// How many matches keep a visual track. Hardcoded on purpose: retention is not
+// a setting, and the diagnostics panel shows the same 25.
+const KEEP_NEWEST = 25;
 
 const toBytes = (data) => (data instanceof Uint8Array ? data : new Uint8Array(data));
 
@@ -67,6 +70,13 @@ async function handleVisual(msg) {
         truncatedAtTurn: msg.truncatedAtTurn,
         stats: msg.stats,
       });
+      // Retention runs on the way out of every match, and its own failure is
+      // never the stop's: the match is already safely closed by this point.
+      try {
+        await replayStore.gc(KEEP_NEWEST);
+      } catch (e) {
+        console.warn("[Rift Atlas] visual replay retention failed:", e);
+      }
       return { ok: true };
     case "ra:visual:get":
       return { ok: true, replay: await replayStore.get(msg.matchId) };
