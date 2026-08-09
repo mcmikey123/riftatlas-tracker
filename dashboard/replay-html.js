@@ -19,7 +19,6 @@
   const FULL_SNAPSHOT = 2; // rrweb EventType.FullSnapshot
   const CUSTOM = 5; // rrweb EventType.Custom
   const MAX_CHIPS = 30; // more than this and the chip row stops being scannable
-  const STEP_MS = 1000; // step size when the recording holds no keyframes at all
   const MIN_STAGE_H = 240;
   const STAGE_MARGIN = 108; // room the controls and hint line need below the stage
   const DEFAULT_VIEWPORT = { w: 1280, h: 800 };

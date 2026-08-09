@@ -79,7 +79,15 @@ policy.minFrameIntervalMs() -> number      // 0 normal, coalesceMs when coalesci
 policy.usedRatio() -> number
 ```
 
-`reason` ∈ `"start" | "turn" | "ratio"`. Keyframe when: `reason === "start"`; or `reason === "turn"` and `turnNumber` differs from the last keyframe's turn; or `bytesSinceKeyframe > lastKeyframeBytes`. Never keyframe in state `stopped` or `killed`. `killed` latches permanently once any `onCaptureDuration(ms)` exceeds `killMs`.
+`reason` ∈ `"turn" | "ratio"`. Keyframe when `reason === "turn"`, or when
+`bytesSinceKeyframe > lastKeyframeBytes`. Never keyframe in state `stopped` or `killed`. `killed`
+latches permanently once any `onCaptureDuration(ms)` exceeds `killMs`.
+
+> **Reconciled after code review.** There is no `"start"` reason: rrweb takes the opening snapshot
+> inside `record()`, so nothing ever asked the policy for it. The recorder owns `lastKeyframeTurn`
+> and passes `reason` at face value, which keeps `shouldKeyframe` a genuinely pure predicate — it
+> previously mutated, so calling it twice for one decision changed the answer. Byte figures are in
+> the worker's compressed currency, so the ratio rule compares like with like.
 
 ### `store/css-assets.js` (pure, hash injected)
 
@@ -117,7 +125,7 @@ Batch closes at `BATCH_MAX_RAW = 256 * 1024` or `BATCH_MAX_MS = 5000`.
 
 ```js
 RATRec.start(matchId)             // begin recording
-RATRec.mark(seq, turnNumber)      // authoritative sequence bump observed
+RATRec.mark(turnNumber)           // authoritative sequence bump observed
 RATRec.stop(reason)               // end recording
 RATRec.stats()                    // diagnostics snapshot
 ```
@@ -141,12 +149,12 @@ No test. Commit: `chore(vendor): add rrweb 2.0.0-alpha.4 record and replay bundl
 
 Write `test/capture-policy.test.js` first. Cases:
 
-1. `shouldKeyframe({reason:"start"})` → `true`.
-2. `reason:"turn"` with a new `turnNumber` → `true`; same `turnNumber` again → `false`.
+1. `reason:"turn"` always keyframes, and calling the predicate twice returns the same answer.
+2. An unknown `reason` never keyframes.
 3. `reason:"ratio"` with `bytesSinceKeyframe: 100, lastKeyframeBytes: 90` → `true`; `50` vs `90` → `false`.
 4. `onBytes` at 79% of budget → `state() === "normal"`, `minFrameIntervalMs() === 0`.
 5. `onBytes` at 85% → `state() === "coalescing"`, `minFrameIntervalMs() === 3000`.
-6. `onBytes` at 100% → `state() === "stopped"`, and `shouldKeyframe({reason:"start"})` → `false`.
+6. `onBytes` at 100% → `state() === "stopped"`, and `shouldKeyframe({reason:"turn"})` → `false`.
 7. `onCaptureDuration(151)` → `state() === "killed"`; a later `onBytes(0)` does **not** clear it.
 8. State only ever advances: `normal → coalescing → stopped`, never back.
 
@@ -221,7 +229,7 @@ Keep `run_at: "document_idle"`.
 `content.js`: exactly three call sites, guarded by `globalThis.RATRec &&` so the file still works if
 capture is absent —
 - in `startMatch`, after the record is created: `RATRec.start(currentMatch.id)`
-- beside the existing `takeSnapshot(root)` call: `RATRec.mark(seq, turnNumber)`
+- beside the existing `takeSnapshot(root)` call: `RATRec.mark(turnNumber)`
 - in `endMatch`: `RATRec.stop(reason)`
 
 Commit: `feat(capture): wire visual replay into the extension`.
