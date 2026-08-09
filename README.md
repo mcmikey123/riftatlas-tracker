@@ -58,7 +58,7 @@ Only the **newest 25 matches** keep a visual track; older ones are dropped autom
 
 Two things visual replays are deliberately **not** part of:
 
-- **`Archive & clear` does not include them**, and clearing still deletes them. Archive the matches you care about, but expect the visual tracks to be gone afterwards.
+- **`Archive & clear` does not include them**, but clearing does delete them: both it and **Clear all** wipe the visual database along with the rest, and deleting a single match deletes that match's visual recording too. Archive the matches you care about, but expect the visual tracks to be gone afterwards — the archive file cannot bring them back.
 - **Export/Import JSON does not carry them.** An export holds matches, logs and step-through replays; importing one on another machine gives you everything except the visual recordings.
 
 Turn the whole thing off with the **Visual replay** checkbox in the dashboard; the tracker and the step-through replay are unaffected.

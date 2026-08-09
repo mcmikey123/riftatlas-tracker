@@ -57,6 +57,27 @@
   const getAll = (storeName, query) => withStore(storeName, "readonly", (s) => wrap(s.getAll(query)));
   const del = (storeName, key) => withStore(storeName, "readwrite", (s) => wrap(s.delete(key)));
 
+  function txDone(tx) {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  /* Empties the whole database, assets included, for the dashboard's clear-all
+   * paths. Not `deleteDatabase`: that blocks for as long as any connection is
+   * open - including a dashboard tab's - and would leave the user's "everything
+   * is gone" confirmation waiting on a close that may never come. Clearing every
+   * store in one transaction is the same end state, atomically. */
+  async function clearAll() {
+    const db = await openDb();
+    const names = Object.keys(STORE_DEFS);
+    const tx = db.transaction(names, "readwrite");
+    for (const name of names) tx.objectStore(name).clear();
+    return txDone(tx);
+  }
+
   async function clearMatch(matchId) {
     const db = await openDb();
     const tx = db.transaction(["replays", "chunks"], "readwrite");
@@ -67,14 +88,10 @@
       const cursor = cursorReq.result;
       if (cursor) { cursor.delete(); cursor.continue(); }
     };
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
+    return txDone(tx);
   }
 
-  root.RATrackerIdb = { openDb, put, get, getAll, del, clearMatch };
+  root.RATrackerIdb = { openDb, put, get, getAll, del, clearMatch, clearAll };
 })(typeof window !== "undefined" ? window : globalThis);
 
 if (typeof module !== "undefined" && module.exports) {

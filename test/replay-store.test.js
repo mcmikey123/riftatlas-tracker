@@ -80,9 +80,36 @@ const fullSnapshot = (cssText) => ({
 const chunkAt = (idb, matchId, seq) => idb.stores.chunks.get(matchId + "|" + seq);
 const eventsIn = (chunk) => JSON.parse(decode(chunk.bytes));
 
-test("exposes the locked batch constants", () => {
-  assert.equal(BATCH_MAX_RAW, 256 * 1024);
-  assert.equal(BATCH_MAX_MS, 5000);
+// Runs `body` with Date.now under the test's control, for the age-based roll.
+async function withClock(start, body) {
+  const real = Date.now;
+  let now = start;
+  Date.now = () => now;
+  try {
+    await body((ms) => { now += ms; });
+  } finally {
+    Date.now = real;
+  }
+}
+
+test("rolls the open chunk once it has been open for BATCH_MAX_MS", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+
+  await withClock(1000000, async (advance) => {
+    await store.start("m1", meta());
+    await store.append("m1", events(2, 1), 1000);
+    assert.equal(idb.stores.chunks.size, 1);
+
+    // Well under BATCH_MAX_RAW, so only the chunk's age can close it.
+    advance(BATCH_MAX_MS);
+    await store.append("m1", events(3, 10), 1000);
+  });
+
+  assert.equal(idb.stores.chunks.size, 2);
+  assert.equal(eventsIn(chunkAt(idb, "m1", 0)).length, 2);
+  assert.equal(chunkAt(idb, "m1", 1).firstEventIdx, 2);
+  assert.equal(eventsIn(chunkAt(idb, "m1", 1)).length, 3);
 });
 
 test("start then one append writes one replay record and one chunk", async () => {
@@ -234,4 +261,170 @@ test("gc keeps the newest replays and deletes the rest with their chunks", async
   assert.equal(idb.stores.assets.size, 1);
   assert.equal((await store.list()).length, 2);
   assert.equal(await store.gc(10), 0);
+});
+
+// Chunks for one match, oldest first, with the events each one holds.
+const chunksOf = (idb, matchId) =>
+  [...idb.stores.chunks.values()]
+    .filter((c) => c.matchId === matchId)
+    .sort((a, b) => a.seq - b.seq);
+
+// Every chunk's firstEventIdx must be exactly how many events precede it, or
+// the viewer seeks to the wrong frame.
+function assertChain(idb, matchId, expected) {
+  const chunks = chunksOf(idb, matchId);
+  const seen = [];
+  for (const chunk of chunks) {
+    assert.equal(chunk.firstEventIdx, seen.length, `firstEventIdx of seq ${chunk.seq}`);
+    for (const event of eventsIn(chunk)) seen.push(event);
+  }
+  assert.deepEqual(seen, expected);
+  assert.equal(idb.stores.replays.get(matchId).stats.eventCount, expected.length);
+  assert.deepEqual(chunks.map((c) => c.seq), chunks.map((_, i) => i));
+}
+
+// The recorder flushes from a timer and from a size threshold without awaiting
+// the previous reply, so two appends for one match overlap routinely.
+test("concurrent appends keep every event, in order, with an intact chain", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+  await store.start("m1", meta());
+
+  const first = events(3, 1);
+  const second = events(4, 100);
+  await Promise.all([
+    store.append("m1", first, 1000),
+    store.append("m1", second, 1000),
+  ]);
+
+  assertChain(idb, "m1", [...first, ...second]);
+  assert.deepEqual((await store.get("m1")).events, [...first, ...second]);
+});
+
+test("concurrent appends that roll the chunk lose nothing across the boundary", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+  await store.start("m1", meta());
+
+  const batches = [events(2, 1), events(3, 100), events(4, 200)];
+  // Each batch is over half of BATCH_MAX_RAW, so the second and third both
+  // cross it and open a new chunk.
+  await Promise.all(batches.map((batch) => store.append("m1", batch, 0.6 * BATCH_MAX_RAW)));
+
+  assert.equal(chunksOf(idb, "m1").length, 3);
+  assertChain(idb, "m1", batches.flat());
+  assert.equal(idb.stores.replays.get("m1").chunkCount, 3);
+});
+
+// The recorder sends its last batch and then stops immediately; a stop that
+// read the record before that append wrote it would revert cssRefs, and the
+// final keyframe would rehydrate to an empty stylesheet.
+test("a stop racing the last append cannot revert it", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+  await store.start("m1", meta());
+
+  const last = [fullSnapshot(BIG_CSS), ...events(2, 1)];
+  await Promise.all([
+    store.append("m1", last, 1000),
+    store.stop("m1", { reason: "end" }),
+  ]);
+
+  const record = idb.stores.replays.get("m1");
+  assert.deepEqual(record.cssRefs, ["h" + BIG_CSS.length]);
+  assert.equal(record.state, "complete");
+  assert.equal(record.stats.eventCount, 3);
+  assert.equal(record.chunkCount, 1);
+
+  // The whole point: the last keyframe still carries its stylesheet.
+  assert.deepEqual((await store.get("m1")).events, last);
+});
+
+test("a kill switch that latches before the first turn still files as truncated", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+
+  for (const reason of ["perf-kill", "restart", "budget"]) {
+    await store.start(reason, meta());
+    await store.append(reason, events(1, 1), 1000);
+    // No turn was ever marked, so truncatedAtTurn cannot carry the state.
+    await store.stop(reason, { reason, truncatedAtTurn: null });
+
+    const record = idb.stores.replays.get(reason);
+    assert.equal(record.state, "truncated", reason);
+    assert.equal(record.incomplete, true, reason);
+  }
+
+  await store.start("m2", meta());
+  await store.stop("m2", { reason: "navigate" });
+  assert.equal(idb.stores.replays.get("m2").state, "stopped");
+});
+
+test("stop records the recorder's error message, and only when it errored", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+
+  await store.start("m1", meta());
+  await store.stop("m1", { reason: "error", error: "rrweb threw: bad node" });
+  assert.equal(idb.stores.replays.get("m1").state, "error");
+  assert.equal(idb.stores.replays.get("m1").error, "rrweb threw: bad node");
+
+  await store.start("m2", meta());
+  await store.stop("m2", { reason: "end", error: "not an error" });
+  assert.equal(idb.stores.replays.get("m2").error, null);
+
+  await store.start("m3", meta());
+  await store.stop("m3", { reason: "error" });
+  assert.equal(idb.stores.replays.get("m3").error, null);
+});
+
+test("gc reaps assets no surviving replay references", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+  // Same content hash for the shared sheet, a distinct one per redeploy.
+  const OLD_CSS = BIG_CSS + "/*old*/";
+
+  await store.start("old", meta(100));
+  await store.append("old", [fullSnapshot(OLD_CSS)], 1000);
+  await store.stop("old", { reason: "end" });
+
+  await store.start("new", meta(400));
+  await store.append("new", [fullSnapshot(BIG_CSS)], 1000);
+  await store.stop("new", { reason: "end" });
+  assert.equal(idb.stores.assets.size, 2);
+
+  assert.equal(await store.gc(1), 1);
+
+  assert.deepEqual([...idb.stores.assets.keys()], ["h" + BIG_CSS.length]);
+  // The survivor still plays back with its stylesheet intact.
+  assert.deepEqual((await store.get("new")).events, [fullSnapshot(BIG_CSS)]);
+});
+
+// An append writes its assets before it patches the record with the refs, so a
+// gc landing in that window must not mistake them for orphans.
+test("gc leaves assets a mid-flight append has written but not yet referenced", async () => {
+  const idb = fakeIdb();
+  const OLD_CSS = BIG_CSS + "/*old*/";
+  let gate = null;
+  const store = makeStore(idb, { compress: async (bytes) => (gate ? gate.then(() => bytes) : bytes) });
+
+  await store.start("old", meta(100));
+  await store.append("old", [fullSnapshot(OLD_CSS)], 1000);
+  await store.stop("old", { reason: "end" });
+
+  await store.start("live", meta(400));
+  let release;
+  gate = new Promise((r) => { release = r; });
+  const inflight = store.append("live", [fullSnapshot(BIG_CSS)], 1000);
+  await new Promise((r) => setTimeout(r, 0));
+  // The asset is on disk; the record still has no ref to it.
+  assert.equal(idb.stores.assets.size, 2);
+  assert.deepEqual(idb.stores.replays.get("live").cssRefs, []);
+
+  assert.equal(await store.gc(1), 1);
+  release();
+  await inflight;
+
+  assert.deepEqual([...idb.stores.assets.keys()], ["h" + BIG_CSS.length]);
+  assert.deepEqual((await store.get("live")).events, [fullSnapshot(BIG_CSS)]);
 });

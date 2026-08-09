@@ -68,6 +68,7 @@ async function handleVisual(msg) {
       await replayStore.stop(msg.matchId, {
         reason: msg.reason,
         truncatedAtTurn: msg.truncatedAtTurn,
+        error: msg.error,
         stats: msg.stats,
       });
       // Retention runs on the way out of every match, and its own failure is
@@ -82,8 +83,15 @@ async function handleVisual(msg) {
       return { ok: true, replay: await replayStore.get(msg.matchId) };
     case "ra:visual:list":
       return { ok: true, replays: await replayStore.list(), assets: await assetFootprint() };
-    case "ra:visual:gc":
-      return { ok: true, deleted: await replayStore.gc(msg.keepNewest) };
+    // Deleting a match must take its DOM recording with it: the visual track
+    // holds the opponent's name and the in-game chat, and nothing else in the
+    // extension can reach this database once the match record is gone.
+    case "ra:visual:delete":
+      await self.RATrackerIdb.clearMatch(msg.matchId);
+      return { ok: true };
+    case "ra:visual:clear":
+      await self.RATrackerIdb.clearAll();
+      return { ok: true };
     default:
       return { ok: false, error: "unknown message " + msg.type };
   }

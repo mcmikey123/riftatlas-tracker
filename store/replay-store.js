@@ -17,10 +17,16 @@
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
+  // The reasons the recorder raises itself when a match outruns the capture.
+  // They must be listed here rather than inferred from `truncatedAtTurn`: a kill
+  // switch that latches before the first turn mark leaves that null, and the
+  // viewer's truncation banner is the only explanation the replay ever gets.
+  const TRUNCATING_REASONS = ["budget", "perf-kill", "restart"];
+
   function stateFor(reason, truncatedAtTurn) {
     if (reason === "end") return "complete";
     if (reason === "error") return "error";
-    if (reason === "budget" || reason === "killed" || truncatedAtTurn !== null) return "truncated";
+    if (TRUNCATING_REASONS.includes(reason) || truncatedAtTurn !== null) return "truncated";
     return "stopped";
   }
 
@@ -44,6 +50,29 @@
   function createReplayStore(deps) {
     const { idb, compress, decompress, hash } = deps;
     const sessions = new Map();
+
+    /* One promise chain per match, so every write for a match runs alone.
+     *
+     * The recorder flushes from two independent triggers (a timer and a size
+     * threshold) without awaiting the previous reply, and a full snapshot
+     * routinely crosses the size threshold - so overlapping calls are normal.
+     * Un-serialized they corrupt the delta chain: two appends sharing a session
+     * write the same composite `chunks` key and the loser's events vanish while
+     * `eventCount` still counts them, skewing every later `firstEventIdx`. The
+     * same read-modify-write race lets a `stop` revert the final append's
+     * `cssRefs`, which strips the last keyframe of its styles. Both run through
+     * here, so neither can interleave with the other. */
+    const tails = new Map();
+
+    function enqueue(matchId, fn) {
+      const next = (tails.get(matchId) || Promise.resolve()).then(fn, fn);
+      // The tail must never reject, or one failed write would poison the queue.
+      const tail = next.catch(() => {});
+      tails.set(matchId, tail);
+      // Drop the entry once the queue drains, so matches don't accumulate here.
+      tail.then(() => { if (tails.get(matchId) === tail) tails.delete(matchId); });
+      return next;
+    }
 
     // Rebuilds in-memory batch state from the stored record after a service
     // worker restart. The pre-restart chunk is left closed as it was.
@@ -96,7 +125,10 @@
       });
     }
 
-    async function append(matchId, events, rawBytes) {
+    // Callers reach this through `append`, which serializes it; the roll path
+    // below recurses into it directly rather than re-entering the queue it is
+    // already holding.
+    async function appendNow(matchId, events, rawBytes) {
       const s = await session(matchId);
       const incoming = Array.isArray(events) ? events : [];
       const { events: lean, assets } = await extractCssAssets(incoming, { hash });
@@ -113,7 +145,7 @@
       if (s.events.length && rolls) {
         const closed = s.closedBytes + s.chunkBytes;
         sessions.set(matchId, newSession(s.seq + 1, s.eventCount, closed, s.rawBytes, s.cssRefs));
-        return append(matchId, incoming, raw);
+        return appendNow(matchId, incoming, raw);
       }
 
       s.events = s.events.concat(lean);
@@ -141,7 +173,7 @@
       return { compressedBytes: s.chunkBytes, totalCompressedBytes };
     }
 
-    async function stop(matchId, options) {
+    async function stopNow(matchId, options) {
       const o = options || {};
       sessions.delete(matchId);
       const truncatedAtTurn = o.truncatedAtTurn === undefined ? null : o.truncatedAtTurn;
@@ -153,9 +185,16 @@
         state,
         truncatedAtTurn,
         incomplete: state !== "complete",
+        // Only an errored capture carries a reason to show; anything else would
+        // put a stale message behind the dashboard's state pill.
+        error: state === "error" && typeof o.error === "string" && o.error ? o.error : null,
         stats: Object.assign({}, o.stats || {}, record.stats),
       }));
     }
+
+    const append = (matchId, events, rawBytes) =>
+      enqueue(matchId, () => appendNow(matchId, events, rawBytes));
+    const stop = (matchId, options) => enqueue(matchId, () => stopNow(matchId, options));
 
     async function get(matchId) {
       const record = await idb.get("replays", matchId);
@@ -205,10 +244,28 @@
 
       for (const record of doomed) {
         sessions.delete(record.matchId);
-        // Drops replays + chunks only: assets are shared by content hash.
+        // Drops replays + chunks only: assets are shared by content hash, so
+        // they are reaped below against what is left rather than per match.
         await idb.clearMatch(record.matchId);
       }
+      await reapAssets();
       return doomed.length;
+    }
+
+    /* Content-addressed stylesheets outlive the replays that referenced them -
+     * every site redeploy mints new hashes - so nothing would ever free them
+     * without this. An asset is live if a surviving record references it, or if
+     * a recording session holds it: that session has already written the asset
+     * but may not have patched its record with the ref yet. */
+    async function reapAssets() {
+      const live = new Set();
+      for (const record of await list()) for (const ref of record.cssRefs || []) live.add(ref);
+      for (const s of sessions.values()) for (const ref of s.cssRefs) live.add(ref);
+
+      const assets = (await idb.getAll("assets")) || [];
+      for (const asset of assets) {
+        if (asset && !live.has(asset.hash)) await idb.del("assets", asset.hash);
+      }
     }
 
     return { start, append, stop, get, list, gc };

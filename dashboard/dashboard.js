@@ -108,6 +108,31 @@
 
   const hasVisual = (id) => !readOnly() && visualIds !== null && visualIds.has(id);
 
+  /* Deleting a match here has to reach the service worker's IndexedDB too: the
+   * visual recording is the match's own markup, opponent name and chat included,
+   * and once the match record is gone nothing in the dashboard can reach or show
+   * it again. The local state is dropped immediately so the panel and the Visual
+   * buttons match what was just deleted, without waiting for a re-list. */
+  function forgetVisual(matchId) {
+    chrome.runtime.sendMessage({ type: "ra:visual:delete", matchId }, () => {
+      void chrome.runtime.lastError; // the tracker carries on either way
+    });
+    if (visualIds) visualIds.delete(matchId);
+    visualRecords = visualRecords.filter((r) => r.matchId !== matchId);
+    renderVisualPanel();
+  }
+
+  /** Wipe every visual recording, for the two clear-everything paths. */
+  function forgetAllVisual() {
+    chrome.runtime.sendMessage({ type: "ra:visual:clear" }, () => {
+      void chrome.runtime.lastError;
+    });
+    visualIds = new Set();
+    visualRecords = [];
+    visualAssets = { count: 0, bytes: 0 };
+    renderVisualPanel();
+  }
+
   /** Open the structured (snapshot) replay for a match, full screen. */
   function openStructuredReplay(m) {
     getReplay(m.id, (snaps) => {
@@ -430,7 +455,6 @@
   // ---- visual replay diagnostics ---------------------------------------
 
   const DASH = "—"; // stands in wherever a number was never recorded
-  const VISUAL_ROWS = 25; // the store's retention limit: the panel can't grow past it
 
   function fmtBytes(n) {
     if (!Number.isFinite(n)) return DASH;
@@ -498,8 +522,9 @@
     panel.hidden = readOnly() || !records.length;
     if (panel.hidden) return;
 
-    const shown = records.slice(0, VISUAL_ROWS);
-    $("#visualTable tbody").innerHTML = shown.map(visualRow).join("");
+    // Every record gets a row: retention is the store's job, and it never hands
+    // back more than the newest 25.
+    $("#visualTable tbody").innerHTML = records.map(visualRow).join("");
 
     const bytes = records.reduce((n, r) => n + (Number(r.compressedBytes) || 0), 0);
     const chunks = records.reduce((n, r) => n + (Number(r.chunkCount) || 0), 0);
@@ -516,11 +541,6 @@
         <td>${fmtBytes(visualAssets.bytes)}</td>
         <td colspan="6" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
       </tr>`;
-
-    const extra = records.length - shown.length;
-    const note = $("#visualShown");
-    note.hidden = extra <= 0;
-    note.textContent = extra > 0 ? `Showing the newest ${shown.length} of ${records.length} recordings.` : "";
   }
 
   // ---- events ----------------------------------------------------------
@@ -653,6 +673,7 @@
       expanded.delete(del);
       logCache.delete(del);
       chrome.storage.local.remove(["replay_" + del, "log_" + del]);
+      forgetVisual(del);
       persist(all, () => { buildFilterOptions(); render(); });
     }
   });
@@ -909,6 +930,7 @@
             all = [];
             expanded.clear();
             logCache.clear();
+            forgetAllVisual();
             chrome.storage.local.set({ matches: [] }, () => {
               buildFilterOptions();
               render();
@@ -961,6 +983,7 @@
       all = [];
       expanded.clear();
       logCache.clear();
+      forgetAllVisual();
       chrome.storage.local.get(null, (data) => {
         const keys = Object.keys(data || {}).filter(
           (k) => k.startsWith("replay_") || k.startsWith("log_")
