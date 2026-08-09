@@ -31,7 +31,7 @@ Two tracks record every match, independently.
 | Track | Produces | Consumers | Always on |
 |---|---|---|---|
 | **Structured** (existing, unchanged) | `replay_<id>` — zone/card/score snapshots | `replay.js`, `fingerprint.js`, `analysis.js` | yes |
-| **Visual** (new) | rrweb event stream in IndexedDB | `replay-html.js` | yes, until budget |
+| **Visual** (new) | rrweb event stream in IndexedDB | `replay-html.js` | yes, at full fidelity |
 
 The structured track is untouched. It is the analysis substrate, the fallback when visual
 capture stops, and the reason every match ever recorded still opens.
@@ -72,7 +72,7 @@ that is hundreds of megabytes of disk writes per match. IndexedDB appends one ch
 |---|---|---|
 | `vendor/rrweb-record.min.js` | rrweb 2.0.0-alpha.4 recorder, IIFE global `rrwebRecord` | vendored |
 | `vendor/rrweb-replay.min.js` | rrweb replayer, IIFE global `rrwebReplay` | vendored |
-| `capture/capture-policy.js` | keyframe policy + budget state machine | **pure** |
+| `capture/capture-policy.js` | keyframe policy + stop/kill state machine | **pure** |
 | `capture/dom-recorder.js` | rrweb lifecycle, settle timing, perf guard, messaging | no |
 | `store/css-assets.js` | extract/rehydrate stylesheet text by content hash | **pure** |
 | `store/idb.js` | IndexedDB open/put/get/delete | no |
@@ -138,22 +138,46 @@ avoidable cost.
 object store. Rehydration on read is the exact inverse. Both directions are pure functions over
 plain objects, and are the highest-value unit tests in the change.
 
-### Budget and degradation
+### Bounding storage
 
-Per-match budget: **8 MB compressed** (setting: `visualReplayBudgetMb`).
+Storage is bounded by **retention** — how many matches keep a replay — and by nothing else.
 
-| Usage | Behaviour |
-|---|---|
-| 0–80% | capture every settled sequence bump |
-| 80–100% | coalesce to at most one frame per 3s; note in diagnostics |
-| ≥100% | stop visual capture, record `truncatedAtTurn`; **structured capture continues to match end** |
+| Setting | Default | Range | Read by |
+|---|---|---|---|
+| `visualReplayKeepMatches` | 25 | 1–500 | the service worker, at every gc |
+| `visualReplayMaxMatchMb` | 512 | 16–4096, or blank/0 for no limit | the recorder, at match start |
+
+Capture has exactly two fidelities: full, or none. `capture-policy` is `normal → stopped`, plus
+the independent `killed` latch, and there is no throttled middle.
+
+**Why there is no degradation ladder.** An earlier revision of this design degraded capture as a
+per-match byte budget filled: past 80% it coalesced to one frame per 3s, and only at 100% did it
+stop. That was the wrong control, and it contradicted the feature's own premise. The whole point
+of recording the site's own markup is that the replay cannot be wrong — and a recording that
+silently thins its frames to fit a number is wrong, in the specific way that is hardest to
+notice. It still looks like a replay. It just isn't the match that was played, and nothing in
+the viewer can tell you which parts are missing. Fidelity is the product; a half-fidelity replay
+is not a cheaper version of the product, it is a defect that costs disk anyway.
+
+The cost of one recording is a property of the match, not a dial. So the dial is the *number* of
+recordings kept, which is a decision the owner can actually reason about — "the last 25 matches",
+priced by the mean per-match size the diagnostics panel reports. Retention deletes whole
+recordings that have served their purpose; degradation damaged the one being made.
+
+**The MB ceiling is a runaway guard.** It survives only to stop a pathological recording from
+filling the disk before the match ends — a page in a redraw loop, a leak upstream. Defaulted to
+512 MB against a typical 1–3 MB match, it should essentially never fire; if it does, that is a
+bug report, not a tuning exercise. Blank or 0 disables it entirely (`createCapturePolicy` reads
+any non-finite or non-positive `budgetBytes` as unlimited). Reaching it stops capture and marks
+the record `truncated`, exactly as before.
 
 Frames are **never dropped from the front**. Dropping frame 0 of a delta chain destroys the
 whole replay, not just its opening — the existing `replay.snaps.shift()` behaviour is not
-carried over. When capture stops, the viewer says so ("Visual replay covers turns 1–9;
-step-through continues to turn 14") and offers the structured replay for the remainder.
+carried over. When capture stops for any reason, the viewer says which turns the replay covers.
+The match record, its game log, its result and its card list are produced by `content.js` and
+run to the end of the match regardless; only the replay stops.
 
-Worst case is therefore exactly today's behaviour, which is why the feature can default on.
+The perf kill switch below is unrelated to storage and unaffected by any of this.
 
 ### Performance guard
 
@@ -200,8 +224,9 @@ Matches keep their existing **Replay** button, always available. Matches with a 
 Pure units under test:
 - `store/css-assets.js` — extract/rehydrate round-trip, ref reuse across snapshots, sub-threshold
   text left inline, missing-asset handling
-- `capture/capture-policy.js` — keyframe triggers (start / turn change / byte ratio), budget
-  thresholds and transitions, never-drop-from-front invariant, kill-switch latch
+- `capture/capture-policy.js` — keyframe triggers (start / turn change / byte ratio), full
+  fidelity right up to the ceiling, the one-way `normal → stopped` transition, an uncapped
+  ceiling never stopping capture, kill-switch latch
 - `store/replay-store.js` — batch boundary selection and chunk framing (compression stubbed)
 
 Not unit tested (no browser available, and asserted by the diagnostics panel instead): rrweb
@@ -210,9 +235,13 @@ itself, IDB wiring, viewer rendering.
 ## Diagnostics
 
 Because the real DOM size cannot be measured before shipping, the feature measures itself. A
-dashboard panel reports, per match: node count, keyframe size raw/compressed, mean delta size,
-total compressed bytes, capture time p50/max, degradation state, and shared-CSS blob size.
-These numbers are what should drive any later change to the 8 MB default.
+dashboard panel reports, per match: compressed size, chunk and keyframe counts, mean delta size,
+capture time p50/max, end state, and shared-CSS blob size.
+
+Its job is to let the owner **choose a retention number**, so it also totals current disk use —
+the sum of the retained replays plus the shared stylesheet blob — and the mean per-match size,
+from which keeping *N* matches prices directly. Those are the numbers any later change to the
+default 25 should come from.
 
 ## Out of scope
 
@@ -222,7 +251,6 @@ These numbers are what should drive any later change to the 8 MB default.
 - font embedding as `data:` URIs (fallback fonts accepted for now)
 - canvas capture
 - animation/timing fidelity — frames are stepped, not animated
-- retention UI (retention is hardcoded: newest 25 matches keep a visual track)
 - hover-preview parity with `replay.js` (the site's own hover needs scripting, which stays off)
 - any change to `fingerprint.js`, `analysis.js`, or `replay.js`
 - backwards compatibility for pre-existing visual replays (none exist)

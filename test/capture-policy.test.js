@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 
 const { createCapturePolicy } = require("../capture/capture-policy.js");
 
-// Small budget so byte counts read as obvious percentages.
+// Small ceiling so byte counts read as obvious percentages.
 const BUDGET = 1000;
 const make = (opts) => createCapturePolicy(Object.assign({ budgetBytes: BUDGET }, opts));
 
@@ -41,26 +41,32 @@ test("3. ratio keyframes when the delta outgrows the last keyframe", () => {
   );
 });
 
-test("4. below the coalesce ratio the policy stays normal", () => {
+/* Fidelity is the product, so there is no partial mode to fall into: anything
+ * short of the ceiling captures exactly as much as an empty store would. These
+ * two guard against a degradation ladder being reintroduced by accident. */
+test("4. well below the ceiling the policy stays normal", () => {
   const p = make();
   p.onBytes(790);
   assert.equal(p.state(), "normal");
-  assert.equal(p.minFrameIntervalMs(), 0);
   assert.equal(p.usedRatio(), 0.79);
+  assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 1 }), true);
 });
 
-test("5. at the coalesce ratio the policy throttles frames", () => {
+test("5. close under the ceiling capture is still at full fidelity", () => {
   const p = make();
-  p.onBytes(850);
-  assert.equal(p.state(), "coalescing");
-  assert.equal(p.minFrameIntervalMs(), 3000);
+  p.onBytes(999);
+  assert.equal(p.state(), "normal");
+  assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 1 }), true);
+  assert.equal(
+    p.shouldKeyframe({ reason: "ratio", bytesSinceKeyframe: 100, lastKeyframeBytes: 90 }),
+    true,
+  );
 });
 
-test("6. a full budget stops capture and blocks keyframes", () => {
+test("6. reaching the ceiling stops capture and blocks keyframes", () => {
   const p = make();
   p.onBytes(1000);
   assert.equal(p.state(), "stopped");
-  assert.equal(p.minFrameIntervalMs(), 0);
   assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 1 }), false);
   assert.equal(
     p.shouldKeyframe({ reason: "ratio", bytesSinceKeyframe: 100, lastKeyframeBytes: 1 }),
@@ -78,28 +84,48 @@ test("7. a slow capture latches killed permanently", () => {
   p.onBytes(0);
   p.onCaptureDuration(1);
   assert.equal(p.state(), "killed");
-  assert.equal(p.minFrameIntervalMs(), 0);
   assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 1 }), false);
 });
 
+// Only one transition is left - normal -> stopped - and it is still one-way: a
+// late or out-of-order byte total must not resurrect a wound-down capture.
 test("8. state only ever advances", () => {
   const p = make();
+  assert.equal(p.state(), "normal");
   p.onBytes(850);
-  assert.equal(p.state(), "coalescing");
+  assert.equal(p.state(), "normal");
   p.onBytes(0);
-  assert.equal(p.state(), "coalescing");
-  p.onBytes(100);
-  assert.equal(p.state(), "coalescing");
+  assert.equal(p.state(), "normal");
   p.onBytes(1000);
   assert.equal(p.state(), "stopped");
   p.onBytes(10);
   assert.equal(p.state(), "stopped");
-  // Stopped takes no frames at all, so it imposes no gap; only coalescing does.
-  assert.equal(p.minFrameIntervalMs(), 0);
+  p.onBytes(850);
+  assert.equal(p.state(), "stopped");
 
+  // The kill switch is an independent latch, not a step on that path: it can
+  // take over from either state and nothing walks it back.
   const q = make();
   q.onBytes(1000);
   assert.equal(q.state(), "stopped");
-  q.onBytes(850);
-  assert.equal(q.state(), "stopped");
+  q.onCaptureDuration(999);
+  assert.equal(q.state(), "killed");
+  q.onBytes(0);
+  assert.equal(q.state(), "killed");
+});
+
+/* The setting offers an explicit "no limit", which arrives here as a blank, a
+ * zero or nothing at all. Uncapped must mean uncapped: no byte total, however
+ * large, may stop capture. */
+test("9. a non-positive or non-finite ceiling means no ceiling at all", () => {
+  for (const budgetBytes of [0, -1, NaN, Infinity, null, undefined, ""]) {
+    const p = createCapturePolicy({ budgetBytes });
+    p.onBytes(50 * 1024 * 1024 * 1024);
+    assert.equal(p.state(), "normal", "budgetBytes " + String(budgetBytes));
+    assert.equal(p.usedRatio(), 0, "budgetBytes " + String(budgetBytes));
+    assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 1 }), true);
+    // The perf kill switch is unaffected by any of this.
+    p.onCaptureDuration(151);
+    assert.equal(p.state(), "killed");
+  }
 });

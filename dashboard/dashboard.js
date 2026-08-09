@@ -101,6 +101,9 @@
   let visualIds = null;
   let visualRecords = [];
   let visualAssets = { count: 0, bytes: 0 };
+  // Mirrors the retention setting, so the panel can project what keeping that
+  // many matches costs. Refreshed by refreshVisualSettingsUI.
+  let keepMatches = 25;
 
   function ensureVisualIds() {
     // Set before the reply lands, so a re-render can't fire a second query.
@@ -528,11 +531,14 @@
     if (panel.hidden) return;
 
     // Every record gets a row: retention is the store's job, and it never hands
-    // back more than the newest 25.
+    // back more than the retention setting allows.
     $("#visualTable tbody").innerHTML = records.map(visualRow).join("");
 
     const bytes = records.reduce((n, r) => n + (Number(r.compressedBytes) || 0), 0);
     const chunks = records.reduce((n, r) => n + (Number(r.chunkCount) || 0), 0);
+    // What retention actually costs: every replay is captured at full fidelity,
+    // so the mean is the only figure needed to price a different keep count.
+    const mean = records.length ? bytes / records.length : 0;
     $("#visualTable tfoot").innerHTML = `
       <tr class="vd-total">
         <td>Total · ${records.length} match${records.length === 1 ? "" : "es"}</td>
@@ -545,6 +551,14 @@
         <td>+ shared stylesheets · ${fmtCount(visualAssets.count)}</td>
         <td>${fmtBytes(visualAssets.bytes)}</td>
         <td colspan="6" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
+      </tr>
+      <tr class="vd-total">
+        <td>On disk now · retained replays + shared stylesheets</td>
+        <td>${fmtBytes(bytes + (Number(visualAssets.bytes) || 0))}</td>
+        <td colspan="6" class="vd-note">
+          ${fmtBytes(mean)} per match on average &mdash; keeping the newest ${keepMatches}
+          works out at roughly ${fmtBytes(mean * keepMatches)} once that many have been played
+        </td>
       </tr>`;
   }
 
@@ -999,10 +1013,11 @@
   // ---- backups ---------------------------------------------------------
 
   const DAY_MS = 86400000;
-  // The recorder reads visualReplay* out of this same object at match start.
+  // The recorder reads visualReplay* out of this same object at match start,
+  // and the service worker reads the retention count out of it at every gc.
   const defaultSettings = {
     autoBackup: false, lastBackup: 0, bannerDismissed: 0,
-    visualReplayEnabled: true, visualReplayBudgetMb: 8,
+    visualReplayEnabled: true, visualReplayKeepMatches: 25, visualReplayMaxMatchMb: 512,
   };
 
   const getSettings = (cb) =>
@@ -1119,24 +1134,49 @@
 
   // ---- visual replay settings ------------------------------------------
 
-  const BUDGET_MIN_MB = 1;
-  const BUDGET_MAX_MB = 64;
-  // Out-of-range budgets are clamped rather than rejected: the number input's
+  /* Retention is the storage control. Recordings are never degraded, so what a
+   * replay costs is fixed by the match; the only lever over total disk use is
+   * how many matches keep one. The MB ceiling below is a runaway guard. */
+  const KEEP_MIN = 1;
+  const KEEP_MAX = 500;
+  // Out-of-range values are clamped rather than rejected: the number input's
   // own min/max only constrain its spinner, not what can be typed or pasted.
-  const clampBudget = (v) => {
+  const clampKeep = (v) => {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return defaultSettings.visualReplayKeepMatches;
+    return Math.min(KEEP_MAX, Math.max(KEEP_MIN, n));
+  };
+
+  const CEILING_MIN_MB = 16;
+  const CEILING_MAX_MB = 4096;
+  // A blank field is the explicit "no limit" affordance and is stored as 0,
+  // which the capture policy reads as uncapped. Anything else is clamped into
+  // range, so the guard can never be set so low that it shapes normal capture.
+  const clampCeiling = (v) => {
+    if (v === "" || v === null || v === undefined) return 0;
     const mb = Math.round(Number(v));
-    if (!Number.isFinite(mb)) return defaultSettings.visualReplayBudgetMb;
-    return Math.min(BUDGET_MAX_MB, Math.max(BUDGET_MIN_MB, mb));
+    if (!Number.isFinite(mb)) return defaultSettings.visualReplayMaxMatchMb;
+    if (mb <= 0) return 0;
+    return Math.min(CEILING_MAX_MB, Math.max(CEILING_MIN_MB, mb));
   };
 
   function refreshVisualSettingsUI() {
-    // The spinner's bounds come from the constants above so the two can't drift.
-    const budget = $("#visualBudget");
-    budget.min = String(BUDGET_MIN_MB);
-    budget.max = String(BUDGET_MAX_MB);
+    // The spinners' bounds come from the constants above so the two can't drift.
+    const keep = $("#visualKeep");
+    const ceiling = $("#visualCeiling");
+    keep.min = String(KEEP_MIN);
+    keep.max = String(KEEP_MAX);
+    ceiling.min = String(CEILING_MIN_MB);
+    ceiling.max = String(CEILING_MAX_MB);
     getSettings((s) => {
       $("#visualEnabled").checked = s.visualReplayEnabled !== false;
-      budget.value = clampBudget(s.visualReplayBudgetMb);
+      keepMatches = clampKeep(s.visualReplayKeepMatches);
+      keep.value = keepMatches;
+      const mb = clampCeiling(s.visualReplayMaxMatchMb);
+      ceiling.value = mb > 0 ? mb : ""; // blank, not 0, is what "no limit" looks like
+      // The panel projects disk use from the retention count, so it has to be
+      // redrawn whenever that number changes.
+      renderVisualPanel();
     });
   }
 
@@ -1148,11 +1188,20 @@
     });
   });
 
-  $("#visualBudget").addEventListener("change", (e) => {
-    const mb = clampBudget(e.target.value);
-    e.target.value = mb; // show what was actually stored, clamp included
+  $("#visualKeep").addEventListener("change", (e) => {
+    const n = clampKeep(e.target.value);
+    e.target.value = n; // show what was actually stored, clamp included
     getSettings((s) => {
-      s.visualReplayBudgetMb = mb;
+      s.visualReplayKeepMatches = n;
+      setSettings(s, refreshVisualSettingsUI);
+    });
+  });
+
+  $("#visualCeiling").addEventListener("change", (e) => {
+    const mb = clampCeiling(e.target.value);
+    e.target.value = mb > 0 ? mb : "";
+    getSettings((s) => {
+      s.visualReplayMaxMatchMb = mb;
       setSettings(s);
     });
   });

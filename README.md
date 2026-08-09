@@ -30,7 +30,7 @@ The **game summary** reads the log and reports a playstyle verdict — Aggressiv
 
 ## Archiving old games
 
-Storage in `chrome.storage.local` is roughly 0.5 KB per match record, ~20 KB for its game log and a few KB for the list of cards you played — so about 25 KB per game. The replay is the big item and lives elsewhere: up to the visual-replay budget (8 MB compressed by default) in the extension's own IndexedDB, and only for the newest 25 matches. The tracker keeps the frequently-rewritten match list lean by storing logs and card lists under their own keys.
+Storage in `chrome.storage.local` is roughly 0.5 KB per match record, ~20 KB for its game log and a few KB for the list of cards you played — so about 25 KB per game. The replay is the big item and lives elsewhere: roughly 1–3 MB compressed per match in the extension's own IndexedDB, and only for as many recent matches as you choose to keep (25 by default). The tracker keeps the frequently-rewritten match list lean by storing logs and card lists under their own keys.
 
 Earlier versions also kept a ~430 KB board-snapshot replay per match under `replay_` keys. Those are gone: the visual replay replaced them, and the first time you open the dashboard after updating, the leftover `replay_` keys are deleted automatically to reclaim the space.
 
@@ -46,15 +46,16 @@ While you play, the extension records the *codes* of your own cards that become 
 
 Each match is recorded as a **replay**: the site's own markup and stylesheets, captured as they changed and played back through [rrweb](https://github.com/rrweb-io/rrweb) in a scripting-disabled iframe. It looks exactly like the game did, because it *is* the game's own HTML — not a redrawn board. Open a match in history and click **open full screen** beside **Replay**. Matches without a recording don't show the button.
 
-It costs roughly 1–3 MB compressed per match, kept in the extension's own IndexedDB rather than `chrome.storage.local`. Each match gets a budget — **8 MB compressed** by default, adjustable from 1 to 64 MB in the dashboard — and degrades in steps as it fills:
+It costs roughly 1–3 MB compressed per match, kept in the extension's own IndexedDB rather than `chrome.storage.local`. Recording is **always at full fidelity** — a frame per settled game event, start to finish. It is never thinned out to save space, because a replay that quietly skips frames is no longer the match you played, and nothing on screen would tell you which parts were missing.
 
-- **up to 80%** — a frame per settled game event, as normal.
-- **80–100%** — frames are coalesced to at most one every 3 seconds.
-- **100%** — capture stops for the rest of that match and the replay is marked `truncated`; the viewer says which turns it covers. **The match record, its game log, its result and its card list all carry on to the end of the match regardless** — only the replay stops.
+So disk use is controlled by **how many replays you keep**, not by shrinking any one of them:
 
-Capture also disables itself for the session if any single frame takes longer than 150 ms, on the principle that the extension never interferes with play. The **Visual replay capture** panel in the dashboard reports what each recording actually cost — size, keyframes, frame timings and which of the states above it ended in.
+- **Keep visual replays for the newest N matches** — **25** by default, anywhere from 1 to 500. Once you have that many, the oldest replay is deleted at the end of each match. Its match record, game log, result and card list are untouched; only the replay goes.
+- **Stop a runaway recording at N MB** — a safeguard, not a target. **512 MB** by default against a match that normally costs 1–3 MB, so it should never fire; it exists to stop a pathological recording running away with the disk. Set it from 16 to 4096 MB, or leave the field **blank for no limit at all**. If a recording somehow does hit it, capture stops there and the replay is marked `truncated` — the viewer says which turns it covers — rather than continuing at lower fidelity.
 
-Only the **newest 25 matches** keep a replay; older ones are dropped automatically at the end of each match. Their match records, logs and card lists are untouched.
+Capture also disables itself for the session if any single frame takes longer than 150 ms, on the principle that the extension never interferes with play. Either way, **the match record, its game log, its result and its card list all carry on to the end of the match** — only the replay stops.
+
+The **Visual replay capture** panel in the dashboard reports what each recording actually cost — size, keyframes, frame timings and how it ended — along with your current total on disk and the mean size per match, which is what to pick a retention number from.
 
 Two things replays are deliberately **not** part of:
 

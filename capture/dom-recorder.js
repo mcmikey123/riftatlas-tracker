@@ -5,8 +5,10 @@
  * service worker. Exposes `globalThis.RATRec` = start/mark/stop/stats.
  *
  * The extension's premise is that it never interferes with play, so every entry
- * point and the rrweb `emit` callback is wrapped: an unexpected error tears down
- * the visual track only and leaves the structured tracker untouched. */
+ * point and the rrweb `emit` callback is wrapped: an unexpected error ends the
+ * recording and nothing else. The match record, its game log, its result and its
+ * card list are produced by content.js and run to the end of the match either
+ * way; only the replay stops, and the viewer says which turns it covers. */
 (function (root) {
   "use strict";
 
@@ -26,6 +28,10 @@
   // The worker's compressed total is the only figure anything decides on.
   const SNAPSHOT_WEIGHT_BYTES = 64 * 1024;
   const BLOCK_SELECTOR = ".ra-tracker-toast,#ra-tracker-banner";
+  // Runaway guard only, and deliberately far above what a match costs. Storage
+  // is bounded by retention instead, so this exists to catch a pathological
+  // recording rather than to shape a normal one.
+  const DEFAULT_MAX_MATCH_MB = 512;
   // Stop reasons the recorder raises itself, i.e. the match outran the capture.
   // Any other reason comes from `endMatch` and covers the match in full.
   const TRUNCATING = { budget: true, "perf-kill": true, error: true, restart: true };
@@ -198,7 +204,6 @@
   function keyframe(s, turnNumber) {
     const t0 = performance.now();
     s.lastKeyframeTurn = turnNumber;
-    s.lastFrameAt = t0;
     tagTurn(s, turnNumber);
     root.rrwebRecord.takeFullSnapshot();
     noteCaptureCost(s, performance.now() - t0, true);
@@ -209,8 +214,6 @@
     // "turn" only when the turn actually moved; otherwise the ratio rule decides.
     const reason = s.pendingTurn !== s.lastKeyframeTurn ? "turn" : "ratio";
     const { pendingTurn: turnNumber, bytesSinceKeyframe, lastKeyframeBytes } = s;
-    // A mark that produces no frame must not reset the coalescing gap, so
-    // `lastFrameAt` only moves when a frame is actually taken.
     if (!s.policy.shouldKeyframe({ reason, turnNumber, bytesSinceKeyframe, lastKeyframeBytes })) return;
     keyframe(s, turnNumber);
   }
@@ -326,8 +329,13 @@
     };
   }
 
-  function beginRecording(s, budgetMb) {
-    s.policy = root.createCapturePolicy({ budgetBytes: Math.max(1, Number(budgetMb) || 8) * 1024 * 1024 });
+  function beginRecording(s, maxMatchMb) {
+    // An unset setting falls back to the default ceiling; an explicit 0 or a
+    // blank field is "no ceiling", which the policy reads off a non-positive
+    // budget. Only a real number here may lower the guard.
+    const mb = Number(maxMatchMb);
+    const ceilingMb = Number.isFinite(mb) ? mb : DEFAULT_MAX_MATCH_MB;
+    s.policy = root.createCapturePolicy({ budgetBytes: ceilingMb * 1024 * 1024 });
     const meta = { viewport: s.viewport, startedAt: s.startedAt, href: location.href };
     send({ type: "ra:visual:start", matchId: s.matchId, meta }); // viewport sizes the viewer's iframe
     const stopRecording = root.rrwebRecord.record({
@@ -375,14 +383,14 @@
           inFlight: false, flushFailures: 0, droppedEvents: 0,
           idleId: null, settleId: null, pendingTurn: null, turnNumber: null,
           finishing: false, finishTimer: null, onPageHide: null,
-          lastKeyframeTurn: null, lastKeyframeBytes: 0, bytesSinceKeyframe: 0, lastFrameAt: -Infinity,
+          lastKeyframeTurn: null, lastKeyframeBytes: 0, bytesSinceKeyframe: 0,
           events: 0, keyframes: 0, deltaBytes: 0, samples: [], captureMaxMs: 0,
         });
         chrome.storage.local.get({ settings: {} }, (data) => guarded(() => {
           const cfg = (data && data.settings) || {}; // visualReplayEnabled defaults true
           // A stop() landing before storage answers must not start rrweb after all.
           if (cfg.visualReplayEnabled === false || s.stopped || session !== s) return;
-          beginRecording(s, cfg.visualReplayBudgetMb);
+          beginRecording(s, cfg.visualReplayMaxMatchMb);
         }));
       });
     },
@@ -391,10 +399,8 @@
         const s = session;
         if (!s || s.stopped || s.finishing || !s.stopRecording) return;
         s.turnNumber = turnNumber;
-        // Coalescing drops the mark outright rather than restarting the settle,
-        // so a burst of bumps still yields one frame per minFrameIntervalMs.
-        const minGap = s.policy.minFrameIntervalMs();
-        if (minGap > 0 && performance.now() - s.lastFrameAt < minGap) return;
+        // Every mark is honoured: capture runs at full fidelity or not at all,
+        // so there is no throttle here to drop one.
         s.pendingTurn = turnNumber;
         scheduleSettle(s);
       });
