@@ -27,7 +27,13 @@
   // at a nominal weight purely to keep the flush and retry bounds meaningful.
   // The worker's compressed total is the only figure anything decides on.
   const SNAPSHOT_WEIGHT_BYTES = 64 * 1024;
-  const BLOCK_SELECTOR = ".ra-tracker-toast,#ra-tracker-banner";
+  /* Our own injected UI is excluded by CLASS, not by selector. rrweb 2.0.0-alpha.4
+   * has a bug in its isBlocked(): it resolves a text node to its parentElement but
+   * then calls `.matches(blockSelector)` on the original node, so any text node
+   * reaching that branch throws. The branch is only entered when blockSelector is
+   * set; the blockClass path tests classList on the resolved element and is safe.
+   * Every element content.js injects into the page carries this class. */
+  const BLOCK_CLASS = "ra-tracker-block";
   // Runaway guard only, and deliberately far above what a match costs. Storage
   // is bounded by retention instead, so this exists to catch a pathological
   // recording rather than to shape a normal one.
@@ -350,7 +356,7 @@
         noteCaptureCost(s, performance.now() - t0, false);
         if (full && !s.stopped) flush(s);
       }),
-      blockSelector: BLOCK_SELECTOR, // our own injected UI, never the game's
+      blockClass: BLOCK_CLASS, // our own injected UI, never the game's
       maskInputOptions: { text: true, password: true },
       inlineStylesheet: true,
       recordCanvas: false,

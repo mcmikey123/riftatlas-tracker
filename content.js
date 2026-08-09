@@ -796,6 +796,7 @@
     orphanBannerShown = true;
     const el = document.createElement("div");
     el.id = "ra-tracker-orphan";
+    el.className = "ra-tracker-block"; // keeps our own UI out of the visual replay
     el.textContent =
       "Rift Atlas Tracker was updated — REFRESH THIS TAB to resume recording. Matches played before refreshing will NOT be saved.";
     el.style.cssText =
@@ -842,6 +843,7 @@
     removeToast();
     const el = document.createElement("div");
     el.id = "ra-tracker-toast";
+    el.className = "ra-tracker-block"; // keeps our own UI out of the visual replay
     const detected =
       record.result === "win"
         ? "WIN detected"

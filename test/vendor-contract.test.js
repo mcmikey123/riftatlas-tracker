@@ -18,6 +18,11 @@ const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
 
+/** Drops comments so a rule can assert on code rather than on prose about it. */
+function stripComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
 /** Evaluate a vendored bundle with just enough globals to reach its export. */
 function loadBundle(file) {
   const context = {
@@ -62,6 +67,38 @@ test("the replay bundle exports a Replayer constructor", () => {
     "function",
     "dashboard/replay-html.js constructs new rrwebReplay.Replayer(...)"
   );
+});
+
+test("the recorder avoids rrweb's crashing blockSelector path", () => {
+  // rrweb 2.0.0-alpha.4's isBlocked() resolves a text node to its parentElement
+  // and then calls .matches(blockSelector) on the ORIGINAL node, so any text node
+  // reaching that branch throws "e.matches is not a function" — asynchronously,
+  // inside rrweb's own mutation callback, where our guard cannot catch it. The
+  // branch is only entered when blockSelector is set. Use blockClass instead.
+  const source = stripComments(fs.readFileSync(path.join(root, "capture/dom-recorder.js"), "utf8"));
+  assert.ok(
+    !/\bblockSelector\b/.test(source),
+    "blockSelector triggers an upstream rrweb crash; block our UI with blockClass"
+  );
+  assert.ok(/\bblockClass\b/.test(source), "our injected UI must still be excluded from capture");
+});
+
+test("every element content.js injects into the page is blocked from capture", () => {
+  const source = fs.readFileSync(path.join(root, "content.js"), "utf8");
+  const recorder = fs.readFileSync(path.join(root, "capture/dom-recorder.js"), "utf8");
+  const blockClass = recorder.match(/BLOCK_CLASS\s*=\s*"([^"]+)"/)?.[1];
+  assert.ok(blockClass, "dom-recorder.js must define BLOCK_CLASS");
+
+  // Each element content.js gives an id to is injected into the game page, so it
+  // must carry the block class or our own UI ends up inside the replay.
+  const injected = [...source.matchAll(/\.id\s*=\s*"(ra-tracker-[\w-]+)"([\s\S]{0,200})/g)];
+  assert.ok(injected.length >= 2, "expected content.js to inject at least the toast and the banner");
+  for (const [, id, following] of injected) {
+    assert.ok(
+      following.includes(blockClass),
+      `#${id} is injected into the page but never gets the "${blockClass}" class`
+    );
+  }
 });
 
 test("every rrweb member the browser code calls is present on a bundle", () => {
