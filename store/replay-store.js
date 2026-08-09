@@ -65,10 +65,12 @@
       return restored;
     }
 
+    // `changes` may be a function of the stored record, for the patches that
+    // have to merge into what is already there rather than replace it.
     async function patchRecord(matchId, changes) {
       const record = await idb.get("replays", matchId);
       if (!record) return null;
-      const next = Object.assign({}, record, changes);
+      const next = Object.assign({}, record, typeof changes === "function" ? changes(record) : changes);
       await idb.put("replays", next);
       return next;
     }
@@ -144,12 +146,15 @@
       sessions.delete(matchId);
       const truncatedAtTurn = o.truncatedAtTurn === undefined ? null : o.truncatedAtTurn;
       const state = stateFor(o.reason, truncatedAtTurn);
-      await patchRecord(matchId, {
+      // The recorder's own numbers (frame timings, keyframe count) arrive here
+      // and only here; the store's eventCount stays authoritative.
+      await patchRecord(matchId, (record) => ({
         endedAt: Date.now(),
         state,
         truncatedAtTurn,
         incomplete: state !== "complete",
-      });
+        stats: Object.assign({}, o.stats || {}, record.stats),
+      }));
     }
 
     async function get(matchId) {

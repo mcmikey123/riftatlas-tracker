@@ -37,6 +37,21 @@ const replayStore = self.RATrackerReplayStore.createReplayStore({
   hash,
 });
 
+/* Stylesheets are content-addressed, so their cost belongs to the whole store
+ * rather than to any one match: this is what the diagnostics panel reports as
+ * the shared footprint. Diagnostics must never fail a listing, so it degrades
+ * to zero rather than throwing. */
+async function assetFootprint() {
+  try {
+    const assets = (await self.RATrackerIdb.getAll("assets")) || [];
+    let bytes = 0;
+    for (const asset of assets) bytes += ((asset && asset.text) || "").length;
+    return { count: assets.length, bytes };
+  } catch (_) {
+    return { count: 0, bytes: 0 };
+  }
+}
+
 async function handleVisual(msg) {
   switch (msg.type) {
     case "ra:visual:start":
@@ -50,12 +65,13 @@ async function handleVisual(msg) {
       await replayStore.stop(msg.matchId, {
         reason: msg.reason,
         truncatedAtTurn: msg.truncatedAtTurn,
+        stats: msg.stats,
       });
       return { ok: true };
     case "ra:visual:get":
       return { ok: true, replay: await replayStore.get(msg.matchId) };
     case "ra:visual:list":
-      return { ok: true, replays: await replayStore.list() };
+      return { ok: true, replays: await replayStore.list(), assets: await assetFootprint() };
     case "ra:visual:gc":
       return { ok: true, deleted: await replayStore.gc(msg.keepNewest) };
     default:

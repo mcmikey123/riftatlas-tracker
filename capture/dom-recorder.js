@@ -73,6 +73,7 @@
       s.bytesSinceKeyframe = 0;
     } else {
       s.bytesSinceKeyframe += bytes;
+      s.deltaBytes += bytes; // diagnostics: keyframes are sized separately
     }
     if (s.bufferBytes >= FLUSH_BYTES) flush(s);
   }
@@ -128,7 +129,7 @@
     // s.stopped is set, so this final flush cannot rearm the timer.
     try { flush(s); } catch (_) { /* a corrupt tail must not block the stop message */ }
     const truncatedAtTurn = TRUNCATING[reason] ? s.turnNumber : null;
-    send({ type: "ra:visual:stop", matchId: s.matchId, reason, truncatedAtTurn });
+    send({ type: "ra:visual:stop", matchId: s.matchId, reason, truncatedAtTurn, stats: reportableStats(s) });
   }
 
   function guarded(fn) {
@@ -143,15 +144,29 @@
   }
 
   function snapshotStats(s) {
-    if (!s) return { matchId: null, state: "idle", events: 0, keyframes: 0, flushedBytes: 0, captureP50Ms: 0, captureMaxMs: 0, usedRatio: 0 };
+    if (!s) return { matchId: null, state: "idle", events: 0, keyframes: 0, meanDeltaBytes: 0, flushedBytes: 0, captureP50Ms: 0, captureMaxMs: 0, usedRatio: 0 };
     const sorted = s.samples.slice().sort((a, b) => a - b);
+    const deltas = Math.max(0, s.events - s.keyframes);
     return {
       matchId: s.matchId,
       state: s.stopped ? s.stopReason || "stopped" : s.policy ? s.policy.state() : "starting",
       events: s.events, keyframes: s.keyframes, flushedBytes: s.flushedBytes,
+      meanDeltaBytes: deltas ? Math.round(s.deltaBytes / deltas) : 0,
       captureP50Ms: sorted.length ? round1(sorted[sorted.length >> 1]) : 0,
       captureMaxMs: round1(s.captureMaxMs),
       usedRatio: s.policy ? s.policy.usedRatio() : 0,
+    };
+  }
+
+  // What the diagnostics panel can only learn from this side of the wire:
+  // frame timings and the keyframe/delta split live in the page, not the store.
+  function reportableStats(s) {
+    const snap = snapshotStats(s);
+    return {
+      keyframes: snap.keyframes,
+      meanDeltaBytes: snap.meanDeltaBytes,
+      captureP50Ms: snap.captureP50Ms,
+      captureMaxMs: snap.captureMaxMs,
     };
   }
 
@@ -185,7 +200,7 @@
           buffer: [], bufferBytes: 0, flushTimer: null, flushedBytes: 0,
           idleId: null, settleId: null, pendingTurn: null, turnNumber: null,
           lastKeyframeTurn: null, lastKeyframeBytes: 0, bytesSinceKeyframe: 0, lastFrameAt: -Infinity,
-          events: 0, keyframes: 0, samples: [], captureMaxMs: 0,
+          events: 0, keyframes: 0, deltaBytes: 0, samples: [], captureMaxMs: 0,
         });
         chrome.storage.local.get({ settings: {} }, (data) => guarded(() => {
           const cfg = (data && data.settings) || {}; // visualReplayEnabled defaults true

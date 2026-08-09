@@ -81,9 +81,13 @@
     chrome.storage.local.get(key, (r) => cb((r && r[key] && r[key].snaps) || null));
   }
 
-  // Which matches have a visual recording. Asked once for the whole history -
-  // never per row - and null until the service worker has answered.
+  // Which matches have a visual recording, and what each one cost. Asked once
+  // for the whole history - never per row - and null until the service worker
+  // has answered. The same reply feeds the Visual buttons and the diagnostics
+  // panel, so opening the dashboard costs one query, not two.
   let visualIds = null;
+  let visualRecords = [];
+  let visualAssets = { count: 0, bytes: 0 };
 
   function ensureVisualIds() {
     // Set before the reply lands, so a re-render can't fire a second query.
@@ -91,9 +95,10 @@
     visualIds = new Set();
     chrome.runtime.sendMessage({ type: "ra:visual:list" }, (reply) => {
       if (chrome.runtime.lastError || !reply || !reply.ok) return;
-      const ids = (reply.replays || [])
-        .filter((r) => r && r.matchId && r.chunkCount > 0)
-        .map((r) => r.matchId);
+      visualRecords = (reply.replays || []).filter((r) => r && r.matchId);
+      visualAssets = reply.assets || visualAssets;
+      renderVisualPanel();
+      const ids = visualRecords.filter((r) => r.chunkCount > 0).map((r) => r.matchId);
       if (!ids.length) return;
       visualIds = new Set(ids);
       render();
@@ -255,6 +260,7 @@
     renderAgg($("#deckTable tbody"), rows, deckOf);
     renderAgg($("#myTable tbody"), rows, (m) => champ(m.myChampion || m.myLegend));
     renderHistory(filtered(true));
+    renderVisualPanel();
     renderArchiveBanner();
   }
 
@@ -419,6 +425,102 @@
 
   const esc = (s) =>
     String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // ---- visual replay diagnostics ---------------------------------------
+
+  const DASH = "—"; // stands in wherever a number was never recorded
+  const VISUAL_ROWS = 25; // the store's retention limit: the panel can't grow past it
+
+  function fmtBytes(n) {
+    if (!Number.isFinite(n)) return DASH;
+    if (n < 1024) return Math.round(n) + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(2) + " MB";
+  }
+
+  // In-flight matches, and any recorded before a counter existed, simply have
+  // no value here - which must read as "not recorded", never as NaN.
+  function statOf(record, key) {
+    const v = record.stats ? record.stats[key] : undefined;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+
+  const fmtCount = (v) => (v === null || !Number.isFinite(v) ? DASH : String(v));
+  const fmtMs = (v) => (v === null ? DASH : v + " ms");
+
+  // Null - not zero - when no record carried the counter at all, so an empty
+  // column can't masquerade as a measured zero.
+  function sumStat(records, key) {
+    const vals = records.map((r) => statOf(r, key)).filter((v) => v !== null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+  }
+
+  function visualLabel(record) {
+    const at = record.startedAt ? new Date(record.startedAt) : null;
+    const when = at
+      ? at.toLocaleDateString() + " " + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : DASH;
+    const m = all.find((x) => x.id === record.matchId);
+    if (!m) return when;
+    return `${when} · ${champ(m.myChampion || m.myLegend)} vs ${champ(m.opponentChampion || m.opponentLegend)}`;
+  }
+
+  function visualStateCell(record) {
+    const state = record.state || "unknown";
+    const why =
+      state === "truncated" && record.truncatedAtTurn != null
+        ? `visual capture stopped at turn ${record.truncatedAtTurn}; the step-through replay covers the rest`
+        : state === "error"
+        ? record.error || "capture failed"
+        : state;
+    return `<td><span class="vd-state vd-${esc(state)}" title="${esc(why)}">${esc(state)}</span></td>`;
+  }
+
+  function visualRow(record) {
+    return `<tr>
+        <td>${esc(visualLabel(record))}</td>
+        <td>${fmtBytes(record.compressedBytes)}</td>
+        <td>${fmtCount(record.chunkCount)}</td>
+        <td>${fmtCount(statOf(record, "keyframes"))}</td>
+        <td>${fmtBytes(statOf(record, "meanDeltaBytes"))}</td>
+        <td>${fmtMs(statOf(record, "captureP50Ms"))}</td>
+        <td>${fmtMs(statOf(record, "captureMaxMs"))}</td>
+        ${visualStateCell(record)}
+      </tr>`;
+  }
+
+  function renderVisualPanel() {
+    const panel = $("#visualPanel");
+    if (!panel) return;
+    const records = visualRecords.slice().sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+    // An archive file holds no visual replays, so the panel would be lying.
+    panel.hidden = readOnly() || !records.length;
+    if (panel.hidden) return;
+
+    const shown = records.slice(0, VISUAL_ROWS);
+    $("#visualTable tbody").innerHTML = shown.map(visualRow).join("");
+
+    const bytes = records.reduce((n, r) => n + (Number(r.compressedBytes) || 0), 0);
+    const chunks = records.reduce((n, r) => n + (Number(r.chunkCount) || 0), 0);
+    $("#visualTable tfoot").innerHTML = `
+      <tr class="vd-total">
+        <td>Total · ${records.length} match${records.length === 1 ? "" : "es"}</td>
+        <td>${fmtBytes(bytes)}</td>
+        <td>${chunks}</td>
+        <td>${fmtCount(sumStat(records, "keyframes"))}</td>
+        <td colspan="4"></td>
+      </tr>
+      <tr class="vd-total">
+        <td>+ shared stylesheets · ${fmtCount(visualAssets.count)}</td>
+        <td>${fmtBytes(visualAssets.bytes)}</td>
+        <td colspan="6" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
+      </tr>`;
+
+    const extra = records.length - shown.length;
+    const note = $("#visualShown");
+    note.hidden = extra <= 0;
+    note.textContent = extra > 0 ? `Showing the newest ${shown.length} of ${records.length} recordings.` : "";
+  }
 
   // ---- events ----------------------------------------------------------
 

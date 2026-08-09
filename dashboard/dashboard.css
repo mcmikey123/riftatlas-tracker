@@ -352,6 +352,25 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 }
 .rp-bf-mid .rp-bf-head { color: #f0d9a4; }
 
+/* --- visual replay diagnostics --- */
+#visualTable td:not(:first-child) { text-align: right; white-space: nowrap; }
+#visualTable td:first-child { color: var(--ink-2); }
+#visualTable th:not(:first-child) { text-align: right; }
+#visualTable td.vd-note { text-align: left; white-space: normal; }
+.vd-total > td { border-top: 1px solid rgba(134, 168, 246, 0.28); color: var(--ink-2); font-weight: 600; }
+.vd-total .vd-note { color: var(--ink-3); font-size: 11.5px; font-weight: 400; }
+/* The state is the column you scan for, so each one is a distinct colour
+   rather than another line of grey text. */
+.vd-state {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; letter-spacing: 0.03em;
+  border: 1px solid rgba(134, 168, 246, 0.3); color: var(--ink-2);
+}
+.vd-complete { border-color: rgba(98, 201, 156, 0.5); background: rgba(98, 201, 156, 0.14); color: var(--win); }
+.vd-truncated { border-color: rgba(240, 190, 110, 0.5); background: rgba(240, 190, 110, 0.14); color: #ffcf8a; }
+.vd-error { border-color: rgba(224, 138, 138, 0.55); background: rgba(224, 138, 138, 0.16); color: var(--loss); }
+.vd-recording { border-color: rgba(134, 168, 246, 0.5); background: rgba(134, 168, 246, 0.14); color: var(--accent); }
+
 /* --- visual replay viewer --- */
 /* The stage clips the replayer, which is laid out at its captured viewport and
    scaled from the top-left corner by replay-html.js. Its height is set inline

@@ -107,6 +107,26 @@
   </table>
 </section>
 
+<section id="visualPanel" hidden>
+  <h2>Visual replay capture</h2>
+  <p class="hint">
+    What each visual recording actually cost, newest first. These are the numbers to judge the per-match budget by:
+    a match marked <b>truncated</b> hit the budget and stopped recording before the game ended, and a
+    <b>capture max</b> near 150&nbsp;ms means a frame came close to the point where capture disables itself.
+    Blank figures (&mdash;) were never recorded &mdash; a match still in progress, or one captured before these
+    counters existed.
+  </p>
+  <table id="visualTable">
+    <thead><tr>
+      <th>Match</th><th>Compressed</th><th>Chunks</th><th>Keyframes</th><th>Mean delta</th>
+      <th>Capture p50</th><th>Capture max</th><th>State</th>
+    </tr></thead>
+    <tbody></tbody>
+    <tfoot></tfoot>
+  </table>
+  <p class="hint" id="visualShown" hidden></p>
+</section>
+
 <footer>All data is stored locally in your browser. Nothing is uploaded anywhere.</footer>
 <script src="analysis.js"></script>
 <script src="fingerprint.js"></script>
