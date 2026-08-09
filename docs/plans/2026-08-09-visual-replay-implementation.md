@@ -95,8 +95,13 @@ exact inverse; a `__cssRef` with no matching asset is left as an empty `_cssText
 
 ### `store/replay-store.js`
 
+> **Reconciled during implementation.** `decompress` was added — `store.get` cannot reverse its
+> own compression without it. `stop` also accepts the recorder's `stats` snapshot, and
+> `ra:visual:list` gained an additive `assets: {count, bytes}` field for the diagnostics panel.
+> No existing name changed meaning.
+
 ```js
-createReplayStore({ idb, compress, hash }) -> store
+createReplayStore({ idb, compress, decompress, hash }) -> store
 store.start(matchId, meta) -> Promise<void>
 store.append(matchId, events, rawBytes) -> Promise<{ compressedBytes, totalCompressedBytes }>
 store.stop(matchId, { reason, truncatedAtTurn }) -> Promise<void>
