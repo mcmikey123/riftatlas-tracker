@@ -81,6 +81,38 @@
     chrome.storage.local.get(key, (r) => cb((r && r[key] && r[key].snaps) || null));
   }
 
+  // Which matches have a visual recording. Asked once for the whole history -
+  // never per row - and null until the service worker has answered.
+  let visualIds = null;
+
+  function ensureVisualIds() {
+    // Set before the reply lands, so a re-render can't fire a second query.
+    if (visualIds !== null || archive) return;
+    visualIds = new Set();
+    chrome.runtime.sendMessage({ type: "ra:visual:list" }, (reply) => {
+      if (chrome.runtime.lastError || !reply || !reply.ok) return;
+      const ids = (reply.replays || [])
+        .filter((r) => r && r.matchId && r.chunkCount > 0)
+        .map((r) => r.matchId);
+      if (!ids.length) return;
+      visualIds = new Set(ids);
+      render();
+    });
+  }
+
+  const hasVisual = (id) => !readOnly() && visualIds !== null && visualIds.has(id);
+
+  /** Open the structured (snapshot) replay for a match, full screen. */
+  function openStructuredReplay(m) {
+    getReplay(m.id, (snaps) => {
+      if (!snaps || !snaps.length) {
+        alert("No replay was captured for this match.\n\nReplays are recorded for games played with v0.3.0 or later.");
+        return;
+      }
+      window.RATrackerReplay.openModal(m, snaps);
+    });
+  }
+
   /** Full portable bundle: matches with logs inline, optionally replays. */
   function buildBundle(includeReplays, cb) {
     if (archive) {
@@ -271,6 +303,7 @@
   const COLSPAN = 13;
 
   function renderHistory(rows) {
+    ensureVisualIds();
     const tbody = $("#historyTable tbody");
     tbody.innerHTML = "";
     if (!rows.length) {
@@ -364,7 +397,11 @@
           <h3>Notes</h3>
           <textarea class="notes" data-notes="${m.id}" rows="6" ${readOnly() ? "readonly" : ""} placeholder="What happened? What would you do differently?">${esc(m.notes || "")}</textarea>
           <span class="save-state" data-savestate="${m.id}"></span>
-          <h3 class="log-head">Replay <button class="log-toggle" data-replay="${m.id}">open full screen</button></h3>
+          <h3 class="log-head">Replay <button class="log-toggle" data-replay="${m.id}">open full screen</button>${
+            hasVisual(m.id)
+              ? ` <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">visual</button>`
+              : ""
+          }</h3>
           <h3 class="log-head">Game log <button class="log-toggle" data-log="${m.id}">show</button></h3>
           <div class="log-box" data-logbox="${m.id}" hidden>${
             (logCache.get(m.id) || [])
@@ -466,13 +503,19 @@
     }
     const replayId = e.target?.dataset?.replay;
     if (replayId) {
-      const m = all.find((x) => x.id === replayId) || {};
-      getReplay(replayId, (snaps) => {
-        if (!snaps || !snaps.length) {
-          alert("No replay was captured for this match.\n\nReplays are recorded for games played with v0.3.0 or later.");
+      openStructuredReplay(all.find((x) => x.id === replayId) || { id: replayId });
+      return;
+    }
+    const visualId = e.target?.dataset?.visual;
+    if (visualId) {
+      const m = all.find((x) => x.id === visualId) || { id: visualId };
+      chrome.runtime.sendMessage({ type: "ra:visual:get", matchId: visualId }, (reply) => {
+        const payload = chrome.runtime.lastError || !reply || !reply.ok ? null : reply.replay;
+        if (!payload || !payload.events || !payload.events.length) {
+          alert("The visual recording for this match could not be read.\n\nThe step-through replay is still available.");
           return;
         }
-        window.RATrackerReplay.openModal(m, snaps);
+        window.RATrackerVisualReplay.openModal(m, payload, { openStructured: openStructuredReplay });
       });
       return;
     }
