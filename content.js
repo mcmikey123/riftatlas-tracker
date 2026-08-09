@@ -756,6 +756,7 @@
       log: [], // [{t, actor: self|opponent|system, text}]
       schemaVersion: 3,
     };
+    globalThis.RATRec && RATRec.start(currentMatch.id);
     // Carry the setup/mulligan frames into this match's replay.
     if (pending.roomCode && pending.roomCode === currentMatch.roomCode && pending.snaps.length) {
       replay = { id: currentMatch.id, snaps: pending.snaps.slice() };
@@ -853,6 +854,8 @@
     if (Number.isFinite(turn) && turn > m.turns) m.turns = turn;
     captureLog();
     takeSnapshot(root);
+    globalThis.RATRec &&
+      RATRec.mark(root?.dataset.authoritativeSequence || null, Number.isFinite(turn) ? turn : m.turns);
 
     // Score-based end detection (first to WIN_SCORE).
     if (m.myScore >= WIN_SCORE) endMatch("win", "score");
@@ -863,6 +866,8 @@
     if (!currentMatch) return;
     const m = currentMatch;
     captureLog(); // grab any final lines before we let go
+    // "end" is the capture's own reason: `reason` here is the match result.
+    globalThis.RATRec && RATRec.stop("end");
     persistReplay(true);
     persistLogFor(m, true);
     currentMatch = null;

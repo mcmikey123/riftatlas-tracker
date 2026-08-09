@@ -9,7 +9,12 @@
   "content_scripts": [
     {
       "matches": ["https://play.riftatlas.com/*"],
-      "js": ["content.js"],
+      "js": [
+        "vendor/rrweb-record.min.js",
+        "capture/capture-policy.js",
+        "capture/dom-recorder.js",
+        "content.js"
+      ],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
