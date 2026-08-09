@@ -338,7 +338,10 @@
     s.policy = root.createCapturePolicy({ budgetBytes: ceilingMb * 1024 * 1024 });
     const meta = { viewport: s.viewport, startedAt: s.startedAt, href: location.href };
     send({ type: "ra:visual:start", matchId: s.matchId, meta }); // viewport sizes the viewer's iframe
-    const stopRecording = root.rrwebRecord.record({
+    // The record-only bundle exposes the record function AS `rrwebRecord`, with
+    // takeFullSnapshot/addCustomEvent hung off it. Only the all-in-one `rrweb`
+    // bundle has a `.record` member; calling that here is what broke capture.
+    const stopRecording = root.rrwebRecord({
       // rrweb calls this synchronously out of its own serialization, so the time
       // spent here is time the game's thread does not have. Timed, then flushed.
       emit: (event) => guarded(() => {
@@ -374,7 +377,7 @@
         // A start we cannot honour still clears the old session: otherwise the
         // previous match's stopped session lingers and `stats()` reports it.
         session = null;
-        if (typeof root.rrwebRecord === "undefined" || typeof root.createCapturePolicy !== "function") return;
+        if (typeof root.rrwebRecord !== "function" || typeof root.createCapturePolicy !== "function") return;
         const s = (session = {
           matchId, startedAt: Date.now(),
           viewport: { w: root.innerWidth, h: root.innerHeight, dpr: root.devicePixelRatio || 1 },
