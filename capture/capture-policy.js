@@ -26,7 +26,6 @@
     // Once the page is stuttering under us we stay out for good: recovering and
     // resuming would just re-run the capture that caused the stall.
     let killed = false;
-    let lastKeyframeTurn = null;
 
     function usedRatio() {
       return budgetBytes > 0 ? usedBytes / budgetBytes : 1;
@@ -40,26 +39,23 @@
       return "normal";
     }
 
+    /* Pure predicate: same input, same answer, no matter how often it is asked.
+     * The recorder owns "has this turn already been keyframed" - it is the only
+     * side that knows which turn the last frame carried - and says so by passing
+     * `reason: "turn"`, which is taken at face value here. */
     function shouldKeyframe(input) {
       const s = state();
       if (s === "stopped" || s === "killed") return false;
 
-      const { reason, turnNumber, bytesSinceKeyframe, lastKeyframeBytes } = input || {};
-      let keyframe = false;
-
-      if (reason === "start") {
-        keyframe = true;
-      } else if (reason === "turn") {
-        keyframe = turnNumber !== lastKeyframeTurn;
-      } else if (reason === "ratio") {
+      const { reason, bytesSinceKeyframe, lastKeyframeBytes } = input || {};
+      if (reason === "turn") return true;
+      if (reason === "ratio") {
         // Self-calibrating: a delta stream that has grown past the keyframe it
         // was diffed against costs more to replay than a fresh snapshot would,
         // whatever the page's actual size. No absolute byte threshold to tune.
-        keyframe = Number(bytesSinceKeyframe) > Number(lastKeyframeBytes);
+        return Number(bytesSinceKeyframe) > Number(lastKeyframeBytes);
       }
-
-      if (keyframe) lastKeyframeTurn = turnNumber;
-      return keyframe;
+      return false;
     }
 
     function onBytes(totalCompressedBytes) {
@@ -71,8 +67,10 @@
       if (Number(ms) > killMs) killed = true;
     }
 
+    // Coalescing is the only state that throttles frames; stopped and killed do
+    // not take frames at all, so they impose no gap.
     function minFrameIntervalMs() {
-      return state() === "normal" ? 0 : coalesceMs;
+      return state() === "coalescing" ? coalesceMs : 0;
     }
 
     return { shouldKeyframe, onBytes, onCaptureDuration, state, minFrameIntervalMs, usedRatio };

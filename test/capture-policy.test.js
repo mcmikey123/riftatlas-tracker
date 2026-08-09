@@ -9,16 +9,24 @@ const { createCapturePolicy } = require("../capture/capture-policy.js");
 const BUDGET = 1000;
 const make = (opts) => createCapturePolicy(Object.assign({ budgetBytes: BUDGET }, opts));
 
-test("1. start always keyframes", () => {
-  const p = make();
-  assert.equal(p.shouldKeyframe({ reason: "start" }), true);
-});
-
-test("2. turn keyframes once per turn number", () => {
+// The recorder owns "has this turn already been keyframed" and only ever passes
+// `reason: "turn"` once the turn has actually moved, so the policy takes that
+// reason at face value - and asking twice must not change the answer.
+test("1. a turn reason always keyframes, and the predicate is pure", () => {
   const p = make();
   assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 4 }), true);
-  assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 4 }), false);
+  assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 4 }), true);
   assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 5 }), true);
+
+  const ratio = { reason: "ratio", bytesSinceKeyframe: 100, lastKeyframeBytes: 90 };
+  assert.equal(p.shouldKeyframe(ratio), true);
+  assert.equal(p.shouldKeyframe(ratio), true);
+});
+
+test("2. an unknown reason never keyframes", () => {
+  const p = make();
+  assert.equal(p.shouldKeyframe({}), false);
+  assert.equal(p.shouldKeyframe({ reason: "start" }), false);
 });
 
 test("3. ratio keyframes when the delta outgrows the last keyframe", () => {
@@ -52,8 +60,12 @@ test("6. a full budget stops capture and blocks keyframes", () => {
   const p = make();
   p.onBytes(1000);
   assert.equal(p.state(), "stopped");
-  assert.equal(p.shouldKeyframe({ reason: "start" }), false);
+  assert.equal(p.minFrameIntervalMs(), 0);
   assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 1 }), false);
+  assert.equal(
+    p.shouldKeyframe({ reason: "ratio", bytesSinceKeyframe: 100, lastKeyframeBytes: 1 }),
+    false,
+  );
 });
 
 test("7. a slow capture latches killed permanently", () => {
@@ -66,7 +78,8 @@ test("7. a slow capture latches killed permanently", () => {
   p.onBytes(0);
   p.onCaptureDuration(1);
   assert.equal(p.state(), "killed");
-  assert.equal(p.shouldKeyframe({ reason: "start" }), false);
+  assert.equal(p.minFrameIntervalMs(), 0);
+  assert.equal(p.shouldKeyframe({ reason: "turn", turnNumber: 1 }), false);
 });
 
 test("8. state only ever advances", () => {
@@ -81,7 +94,8 @@ test("8. state only ever advances", () => {
   assert.equal(p.state(), "stopped");
   p.onBytes(10);
   assert.equal(p.state(), "stopped");
-  assert.equal(p.minFrameIntervalMs(), 3000);
+  // Stopped takes no frames at all, so it imposes no gap; only coalescing does.
+  assert.equal(p.minFrameIntervalMs(), 0);
 
   const q = make();
   q.onBytes(1000);

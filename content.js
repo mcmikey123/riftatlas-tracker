@@ -854,8 +854,7 @@
     if (Number.isFinite(turn) && turn > m.turns) m.turns = turn;
     captureLog();
     takeSnapshot(root);
-    globalThis.RATRec &&
-      RATRec.mark(root?.dataset.authoritativeSequence || null, Number.isFinite(turn) ? turn : m.turns);
+    globalThis.RATRec && RATRec.mark(Number.isFinite(turn) ? turn : m.turns);
 
     // Score-based end detection (first to WIN_SCORE).
     if (m.myScore >= WIN_SCORE) endMatch("win", "score");
