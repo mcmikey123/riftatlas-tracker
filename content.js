@@ -30,8 +30,7 @@
   const DECK_MEMORY_MS = 2 * 60 * 60 * 1000;
   const MAX_DECK_NAME = 60; // longer than this and it isn't a deck name
   const MAX_LOG = 500; // cap stored log lines per match
-  const MAX_SNAPS = 500; // cap replay snapshots per match
-  const REPLAY_SAVE_MS = 5000; // how often to flush the replay buffer
+  const CARDS_SAVE_MS = 5000; // how often to flush the card-code accumulator
   // Match-log actor colours (left bar on each log row).
   const ACTOR_SELF = "120,221,183"; // green
   const ACTOR_OPP = "255,187,110"; // amber
@@ -122,23 +121,26 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  // ---------- replay capture (board snapshots) ----------
+  // ---------- deck-card capture ----------
+  //
+  // Deck fingerprinting only ever needed one thing out of a match: the set of
+  // YOUR OWN card codes (e.g. "UNL-199") that became visible while playing it.
+  // So that set is what we accumulate, live, instead of storing a board
+  // snapshot per game action and reducing it later.
   //
   // Rift Atlas bumps data-authoritative-sequence on every authoritative game
-  // action, which makes a perfect trigger: one snapshot per real game event.
-  // We store card CODES (e.g. "UNL-199"), not images - the viewer rebuilds
-  // image URLs from the same CDN the site uses.
+  // action, which is still the trigger: one scrape per real game event.
 
-  let replay = { id: null, snaps: [] };
+  // The zones that reflect deck contents. Mirrors DECK_ZONES in
+  // dashboard/fingerprint.js - legend and champion are excluded there because
+  // they're identical across variants of the same champion, so harvesting them
+  // here would only blur the distinction fingerprinting is drawing.
+  const DECK_ZONES = ["battlefieldA", "battlefieldB", "base", "hand", "trash", "runeArea"];
+
+  let deckCards = { id: null, codes: new Set() };
   let lastSeq = null;
-  let lastSnapJson = null;
-  let replayDirty = false;
-  let replaySavedAt = 0;
-  // Frames captured before the game proper starts (battlefield pick, first
-  // player roll, mulligan). Buffered, then prepended when the match begins.
-  let pending = { roomCode: null, snaps: [] };
-  let pendingLastJson = null;
-  const MAX_PREGAME = 60;
+  let cardsDirty = false;
+  let cardsSavedAt = 0;
   // Deck name/legend pairs spotted on the lobby & deck-select screens, kept
   // so the deck can still be identified once the board reveals our legend.
   let pendingDeckCands = [];
@@ -148,233 +150,72 @@
     return m ? m[1] : null;
   };
 
-  // Tokens (Recruit, Sand Soldier, Viktor's soldiers…) are served from a
-  // different path than cards, so they need their own extractor or they end
-  // up with no artwork in the replay.
-  const tokenFromSrc = (src) => {
-    const m = /\/static\/tokens\/(?:thumbs\/)?([A-Za-z0-9_-]+)\.webp/.exec(src || "");
-    return m ? m[1] : null;
-  };
-
-  function cardFromImg(img) {
-    const name = img.alt || "";
-    const src = img.currentSrc || img.src;
-    const code = codeFromSrc(src);
-    if (code) return { c: code, n: name };
-    const token = tokenFromSrc(src);
-    if (token) return { tk: token, n: name || token };
-    return { n: name };
-  }
-
-  /**
-   * Counters/buffs are drawn in a separate overlay layer keyed by card id.
-   * We read it once per snapshot and attach values to the cards they belong
-   * to, so nothing is stored unless a card actually has a counter on it.
-   */
-  function captureCounters() {
-    const overlay = document.querySelector('[data-card-counter-overlay-root="true"]');
-    if (!overlay || !overlay.children.length) return null;
-    if (!captureCounters._dumped) {
-      captureCounters._dumped = true;
-      console.info(
-        "[RA-Tracker] counter overlay sample (send this to wire counters precisely):\n" +
-          overlay.innerHTML.slice(0, 1500)
-      );
-    }
-    const map = {};
-    for (const el of overlay.querySelectorAll("[data-card-id]")) {
-      const id = el.getAttribute("data-card-id");
-      const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if (id && txt) map[id] = txt.slice(0, 12);
-    }
-    return Object.keys(map).length ? map : null;
-  }
-
-  function zoneCards(owner, zoneRoot, counters) {
+  /** Your own card codes currently visible in one deck zone. */
+  function zoneCards(owner, zoneRoot) {
     const out = [];
-    const seen = new Set();
-    const sel = owner
-      ? `[data-drop-zone-root="${zoneRoot}"][data-zone-owner="${owner}"]`
-      : `[data-drop-zone-root="${zoneRoot}"]:not([data-zone-owner])`;
     let roots;
     try {
-      roots = document.querySelectorAll(sel);
+      roots = document.querySelectorAll(
+        `[data-drop-zone-root="${zoneRoot}"][data-zone-owner="${owner}"]`
+      );
     } catch (_) {
       return out;
     }
     for (const r of roots) {
       for (const el of r.querySelectorAll("[data-card-id]")) {
-        const id = el.getAttribute("data-card-id");
-        if (seen.has(id)) continue; // wrapper + button share the id
         const img = el.querySelector("img[alt]");
         if (!img) continue;
-        seen.add(id);
-        const name = img.alt || "";
-        if (/hidden card|card back|rune back/i.test(name)) {
-          out.push({ h: 1 });
-        } else {
-          const card = cardFromImg(img);
-          const k = counters && counters[id];
-          if (k) card.k = k; // counter / buff text, e.g. "+2"
-          out.push(card);
-        }
+        // Face-down cards say nothing about the deck.
+        if (/hidden card|card back|rune back/i.test(img.alt || "")) continue;
+        // Tokens are served from a different path, so they have no card code
+        // and drop out here - which is right: they were never in the deck.
+        const code = codeFromSrc(img.currentSrc || img.src);
+        if (code) out.push(code);
       }
     }
     return out;
   }
 
-  /** Every zone the board currently has, not just the ones we knew about. */
-  function discoverZones() {
-    const set = new Set(["battlefieldA", "battlefieldB", "base", "runeArea", "hand", "trash"]);
-    try {
-      for (const el of document.querySelectorAll("[data-drop-zone-root]")) {
-        const n = el.getAttribute("data-drop-zone-root");
-        if (n) set.add(n);
-      }
-    } catch (_) {}
-    return [...set];
-  }
-
-  /** Every battlefield on the board, including ones played mid-game. */
-  function discoverBattlefields() {
-    const out = {};
-    let markers = [];
-    try {
-      markers = document.querySelectorAll("[data-battlefield-marker]");
-    } catch (_) {}
-    for (const el of markers) {
-      const id = el.getAttribute("data-battlefield-marker");
-      if (!id) continue;
-      const img = el.querySelector("img[alt]");
-      const card = img ? cardFromImg(img) : null;
-      // A and B are the two permanent battlefields and always belong on the
-      // board. Anything else (Baron Nashor's Pit and the like) is only real
-      // once it has actually been played, so an empty slot is not recorded.
-      const permanent = id === "battlefieldA" || id === "battlefieldB";
-      if (card || permanent) out[id] = card;
-    }
-    if (!Object.keys(out).length) {
-      out.battlefieldA = battlefieldName("battlefieldA");
-      out.battlefieldB = battlefieldName("battlefieldB");
-    }
-    return out;
-  }
-
-  function singleCard(owner, dropZone) {
-    const owners = document.querySelectorAll(`[data-zone-owner="${owner}"]`);
-    for (const o of owners) {
-      const img = o.querySelector(`[data-drop-zone="${dropZone}"] img[alt]`);
-      if (img && img.alt && !/hidden card|card back/i.test(img.alt)) {
-        return { c: codeFromSrc(img.currentSrc || img.src), n: img.alt };
-      }
-    }
-    return null;
-  }
-
-  function pileCount(owner, slot) {
-    const el = document.querySelector(
-      `[data-pile-slot="${slot}"][data-pile-owner="${owner}"]`
-    );
-    const n = el ? parseInt(el.getAttribute("data-pile-count") ?? "", 10) : NaN;
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function battlefieldName(which) {
-    const el = document.querySelector(`[data-battlefield-marker="${which}"]`);
-    const img = el && el.querySelector("img[alt]");
-    return img ? { c: codeFromSrc(img.currentSrc || img.src), n: img.alt } : null;
-  }
-
-  function buildSnapshot(root, phase) {
-    const counters = captureCounters();
-    const step =
-      document.querySelector('[data-testid="turn-step"]')?.dataset.turnStep || null;
-    const snap = {
-      s: root.dataset.authoritativeSequence || null,
-      ph: phase || null,
-      tn: parseInt(root.dataset.turnNumber ?? "", 10) || null,
-      st: step,
-      ap: root.dataset.activePlayerSeat || null,
-      sc: [readMyScore() ?? 0, readOppScore() ?? 0],
-      z: {},
-      p: {},
-      bf: discoverBattlefields(),
-    };
-    const zones = discoverZones();
-    // Zones that belong to neither player (shared/neutral areas).
-    for (const zone of zones) {
-      const neutral = zoneCards(null, zone, counters);
-      if (neutral.length) snap.z["neutral." + zone] = neutral;
-    }
-    for (const owner of ["self", "opponent"]) {
-      for (const zone of zones) {
-        const cards = zoneCards(owner, zone, counters);
-        if (cards.length) snap.z[owner + "." + zone] = cards;
-      }
-      snap.z[owner + ".legend"] = singleCard(owner, "legend");
-      snap.z[owner + ".champion"] = singleCard(owner, "champion");
-      snap.p[owner + ".mainDeck"] = pileCount(owner, "mainDeck");
-      snap.p[owner + ".runeDeck"] = pileCount(owner, "runeDeck");
-    }
-    return snap;
-  }
-
-  function takeSnapshot(root) {
+  /**
+   * Fold whatever is on the board right now into this match's card set. Only
+   * new codes make the set dirty, so a board that reveals nothing new costs a
+   * scrape and no write.
+   */
+  function collectDeckCards(root) {
     const m = currentMatch;
     if (!m || !root) return;
     const seq = root.dataset.authoritativeSequence || null;
     if (seq !== null && seq === lastSeq) return; // nothing authoritative changed
     lastSeq = seq;
 
-    const snap = buildSnapshot(root, "in_game");
-    const json = JSON.stringify(snap);
-    if (json === lastSnapJson) return; // identical board, don't store twice
-    lastSnapJson = json;
-
-    snap.t = Date.now() - (Date.parse(m.startedAt) || Date.now());
-    if (replay.id !== m.id) replay = { id: m.id, snaps: [] };
-    replay.snaps.push(snap);
-    if (replay.snaps.length > MAX_SNAPS) replay.snaps.shift();
-    replayDirty = true;
+    if (deckCards.id !== m.id) deckCards = { id: m.id, codes: new Set() };
+    for (const zone of DECK_ZONES) {
+      for (const code of zoneCards("self", zone)) {
+        if (deckCards.codes.has(code)) continue;
+        deckCards.codes.add(code);
+        cardsDirty = true;
+      }
+    }
   }
 
-  /** Snapshot the setup phases (battlefield pick, roll, mulligan) too. */
-  function capturePregame(root, phase) {
-    // Remember any deck names visible during setup - they usually disappear
-    // once the board is dealt.
+  /** Deck names shown on the setup screens vanish once the board is dealt. */
+  function rememberPregameDecks() {
     for (const c of deckCandidates()) {
       if (!pendingDeckCands.some((x) => x.name === c.name && x.legend === c.legend)) {
         pendingDeckCands.push(c);
         if (pendingDeckCands.length > 12) pendingDeckCands.shift();
       }
     }
-    const code = document.querySelector(SEL.roomCode)?.dataset.roomCode || null;
-    if (pending.roomCode !== code) {
-      pending = { roomCode: code, snaps: [] };
-      pendingLastJson = null;
-    }
-    let snap;
-    try {
-      snap = buildSnapshot(root, phase);
-    } catch (_) {
-      return;
-    }
-    const json = JSON.stringify(snap);
-    if (json === pendingLastJson) return;
-    pendingLastJson = json;
-    snap.t = 0;
-    pending.snaps.push(snap);
-    if (pending.snaps.length > MAX_PREGAME) pending.snaps.shift();
   }
 
-  function persistReplay(force) {
-    if (!replayDirty || !replay.id) return;
-    if (!force && Date.now() - replaySavedAt < REPLAY_SAVE_MS) return;
-    replaySavedAt = Date.now();
-    replayDirty = false;
+  function persistDeckCards(force) {
+    if (!cardsDirty || !deckCards.id) return;
+    if (!force && Date.now() - cardsSavedAt < CARDS_SAVE_MS) return;
+    cardsSavedAt = Date.now();
+    cardsDirty = false;
     try {
       chrome.storage.local.set({
-        ["replay_" + replay.id]: { id: replay.id, snaps: replay.snaps },
+        ["deckcards_" + deckCards.id]: { id: deckCards.id, codes: [...deckCards.codes] },
       });
     } catch (err) {
       showOrphanBanner();
@@ -757,14 +598,6 @@
       schemaVersion: 3,
     };
     globalThis.RATRec && RATRec.start(currentMatch.id);
-    // Carry the setup/mulligan frames into this match's replay.
-    if (pending.roomCode && pending.roomCode === currentMatch.roomCode && pending.snaps.length) {
-      replay = { id: currentMatch.id, snaps: pending.snaps.slice() };
-      replayDirty = true;
-      console.info("[RA-Tracker] attached %d setup/mulligan frames", pending.snaps.length);
-    }
-    pending = { roomCode: null, snaps: [] };
-    pendingLastJson = null;
     refreshMatchFacts(root); // fills in myLegend, needed to pick the right deck
 
     // Deck: the name from the picker (checked against the legend on the
@@ -815,13 +648,13 @@
           fresh.deckSource = open.deckSource || null;
         }
         if (Array.isArray(open.log) && open.log.length) fresh.log = open.log; // legacy inline log
-        // Resume the existing replay and log instead of starting new ones.
-        const rKey = "replay_" + fresh.id;
+        // Resume the existing card set and log instead of starting new ones.
+        const cKey = "deckcards_" + fresh.id;
         const lKey = "log_" + fresh.id;
-        chrome.storage.local.get([rKey, lKey], (r) => {
-          const prev = r && r[rKey];
-          if (prev && Array.isArray(prev.snaps)) {
-            replay = { id: fresh.id, snaps: prev.snaps };
+        chrome.storage.local.get([cKey, lKey], (r) => {
+          const prev = r && r[cKey];
+          if (prev && Array.isArray(prev.codes)) {
+            deckCards = { id: fresh.id, codes: new Set(prev.codes) };
           }
           const prevLog = r && r[lKey];
           if (prevLog && Array.isArray(prevLog.log) && prevLog.log.length > (fresh.log || []).length) {
@@ -853,7 +686,7 @@
     const turn = parseInt(root?.dataset.turnNumber ?? "", 10);
     if (Number.isFinite(turn) && turn > m.turns) m.turns = turn;
     captureLog();
-    takeSnapshot(root);
+    collectDeckCards(root);
     globalThis.RATRec && RATRec.mark(Number.isFinite(turn) ? turn : m.turns);
 
     // Score-based end detection (first to WIN_SCORE).
@@ -867,7 +700,7 @@
     captureLog(); // grab any final lines before we let go
     // "end" is the capture's own reason: `reason` here is the match result.
     globalThis.RATRec && RATRec.stop("end");
-    persistReplay(true);
+    persistDeckCards(true);
     persistLogFor(m, true);
     currentMatch = null;
     m.endedAt = new Date().toISOString();
@@ -1100,7 +933,7 @@
       if (!currentMatch) startMatch(root);
       refreshMatchFacts(root);
     } else if (!currentMatch && root && phase) {
-      capturePregame(root, phase); // mulligan / setup frames
+      rememberPregameDecks(); // battlefield pick / roll / mulligan screens
     } else if (currentMatch) {
       // We were in a game and now we're not: phase changed or board unmounted.
       const my = currentMatch.myScore, opp = currentMatch.opponentScore;
@@ -1164,7 +997,7 @@
             saveMatch(currentMatch);
           }
         }
-        persistReplay(false);
+        persistDeckCards(false);
         persistLogFor(currentMatch, false);
       } catch (_) {}
     }, 3000);
@@ -1179,7 +1012,7 @@
         m.result = "unknown";
         m.endReason = "tab-closed";
         saveMatch(m);
-        persistReplay(true);
+        persistDeckCards(true);
         persistLogFor(m, true);
       }
     });

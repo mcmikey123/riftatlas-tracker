@@ -1,6 +1,6 @@
 /* Rift Atlas Stats Tracker - shared formatting helpers
  *
- * Both replay viewers and the dashboard build markup as strings, so they all
+ * The replay viewer and the dashboard both build markup as strings, so they
  * need the same escaper and the same clock. Loaded before every consumer in
  * dashboard.html.
  */
@@ -15,8 +15,8 @@
 
   /**
    * `m:ss` from a duration in ms, clamped at zero. `fallback` is what a
-   * non-numeric duration renders as; the structured viewer wants an empty
-   * string there, the visual one wants a zeroed clock.
+   * non-numeric duration renders as, for callers that want a blank rather
+   * than a zeroed clock.
    */
   function fmtClock(ms, fallback) {
     if (!Number.isFinite(ms)) return fallback === undefined ? "0:00" : fallback;

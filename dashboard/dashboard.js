@@ -2,14 +2,14 @@
 (() => {
   "use strict";
 
-  // `all` holds LEAN match records: game logs live in log_<id> keys and
-  // replays in replay_<id> keys, so the array rewritten during live games
-  // stays ~0.5 KB per match instead of ~21 KB.
+  // `all` holds LEAN match records: game logs live in log_<id> keys and the
+  // cards you played in deckcards_<id> keys, so the array rewritten during
+  // live games stays ~0.5 KB per match instead of ~21 KB.
   let all = [];
   const logCache = new Map(); // id -> log[]
   const expanded = new Set();
   // When viewing an archive file we render from memory and never write.
-  let archive = null; // { name, matches, replays, logs }
+  let archive = null; // { name, matches, deckCards }
 
   const analyse = (m) => window.RATrackerAnalysis.analyse(m);
   const $ = (s) => document.querySelector(s);
@@ -54,6 +54,24 @@
       render();
       refreshBackupUI();
       refreshVisualSettingsUI();
+      dropLegacyReplays();
+    });
+  }
+
+  // Board snapshots (replay_<id>) fed the step-through replay, which no longer
+  // exists, and deck fingerprinting now reads deckcards_<id> instead. Nothing
+  // can read the old keys any more, so the first dashboard open after the
+  // upgrade reclaims the ~430 KB per match they were holding.
+  let legacyReplaysDropped = false;
+  function dropLegacyReplays() {
+    if (legacyReplaysDropped || readOnly()) return;
+    legacyReplaysDropped = true;
+    chrome.storage.local.get(null, (data) => {
+      const keys = Object.keys(data || {}).filter((k) => k.startsWith("replay_"));
+      if (!keys.length) return;
+      chrome.storage.local.remove(keys, () =>
+        console.info("[RA-Tracker] removed %d obsolete snapshot replays", keys.length)
+      );
     });
   }
 
@@ -74,12 +92,6 @@
       logCache.set(id, log);
       cb(log);
     });
-  }
-
-  function getReplay(id, cb) {
-    if (archive) return cb((archive.replays && archive.replays[id]) || null);
-    const key = "replay_" + id;
-    chrome.storage.local.get(key, (r) => cb((r && r[key] && r[key].snaps) || null));
   }
 
   // Which matches have a visual recording, and what each one cost. Asked once
@@ -133,45 +145,39 @@
     renderVisualPanel();
   }
 
-  /** Open the structured (snapshot) replay for a match, full screen. */
-  function openStructuredReplay(m) {
-    getReplay(m.id, (snaps) => {
-      if (!snaps || !snaps.length) {
-        alert("No replay was captured for this match.\n\nReplays are recorded for games played with v0.3.0 or later.");
-        return;
-      }
-      window.RATrackerReplay.openModal(m, snaps);
-    });
-  }
+  // v1 bundles carried `replays` (board snapshots); v2 carries `deckCards`.
+  // v1 files still import - their replays are simply dropped, because nothing
+  // reads snapshots any more.
+  const BUNDLE_VERSION = 2;
 
-  /** Full portable bundle: matches with logs inline, optionally replays. */
-  function buildBundle(includeReplays, cb) {
+  /** Full portable bundle: matches with logs inline, optionally card codes. */
+  function buildBundle(includeCards, cb) {
     if (archive) {
       return cb({
         format: "riftatlas-tracker-archive",
-        version: 1,
+        version: BUNDLE_VERSION,
         exportedAt: new Date().toISOString(),
         matches: archive.matches,
-        replays: includeReplays ? archive.replays || {} : {},
+        deckCards: includeCards ? archive.deckCards || {} : {},
       });
     }
     chrome.storage.local.get(null, (data) => {
       const matches = all.map((m) =>
         Object.assign({}, m, { log: ((data["log_" + m.id] || {}).log) || [] })
       );
-      const replays = {};
-      if (includeReplays) {
+      const deckCards = {};
+      if (includeCards) {
         for (const m of all) {
-          const r = data["replay_" + m.id];
-          if (r && r.snaps) replays[m.id] = r.snaps;
+          const r = data["deckcards_" + m.id];
+          if (r && Array.isArray(r.codes) && r.codes.length) deckCards[m.id] = r.codes;
         }
       }
       cb({
         format: "riftatlas-tracker-archive",
-        version: 1,
+        version: BUNDLE_VERSION,
         exportedAt: new Date().toISOString(),
         matches,
-        replays,
+        deckCards,
       });
     });
   }
@@ -429,11 +435,11 @@
           <h3>Notes</h3>
           <textarea class="notes" data-notes="${m.id}" rows="6" ${readOnly() ? "readonly" : ""} placeholder="What happened? What would you do differently?">${esc(m.notes || "")}</textarea>
           <span class="save-state" data-savestate="${m.id}"></span>
-          <h3 class="log-head">Replay <button class="log-toggle" data-replay="${m.id}">open full screen</button>${
+          ${
             hasVisual(m.id)
-              ? ` <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">visual</button>`
+              ? `<h3 class="log-head">Replay <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">open full screen</button></h3>`
               : ""
-          }</h3>
+          }
           <h3 class="log-head">Game log <button class="log-toggle" data-log="${m.id}">show</button></h3>
           <div class="log-box" data-logbox="${m.id}" hidden>${
             (logCache.get(m.id) || [])
@@ -493,7 +499,7 @@
     const state = record.state || "unknown";
     const why =
       state === "truncated" && record.truncatedAtTurn != null
-        ? `visual capture stopped at turn ${record.truncatedAtTurn}; the step-through replay covers the rest`
+        ? `capture stopped at turn ${record.truncatedAtTurn} - the replay covers everything up to there`
         : state === "error"
         ? record.error || "capture failed"
         : state;
@@ -623,21 +629,16 @@
       render();
       return;
     }
-    const replayId = e.target?.dataset?.replay;
-    if (replayId) {
-      openStructuredReplay(all.find((x) => x.id === replayId) || { id: replayId });
-      return;
-    }
     const visualId = e.target?.dataset?.visual;
     if (visualId) {
       const m = all.find((x) => x.id === visualId) || { id: visualId };
       chrome.runtime.sendMessage({ type: "ra:visual:get", matchId: visualId }, (reply) => {
         const payload = chrome.runtime.lastError || !reply || !reply.ok ? null : reply.replay;
         if (!payload || !payload.events || !payload.events.length) {
-          alert("The visual recording for this match could not be read.\n\nThe step-through replay is still available.");
+          alert("The replay for this match could not be read.");
           return;
         }
-        window.RATrackerVisualReplay.openModal(m, payload, { openStructured: openStructuredReplay });
+        window.RATrackerVisualReplay.openModal(m, payload);
       });
       return;
     }
@@ -671,7 +672,7 @@
       all = all.filter((x) => x.id !== del);
       expanded.delete(del);
       logCache.delete(del);
-      chrome.storage.local.remove(["replay_" + del, "log_" + del]);
+      chrome.storage.local.remove(["deckcards_" + del, "log_" + del]);
       forgetVisual(del);
       persist(all, () => { buildFilterOptions(); render(); });
     }
@@ -717,21 +718,21 @@
     });
   });
 
-  // Recognise decks from the cards actually played, using the replays.
+  // Recognise decks from the cards actually played.
   $("#autoDeck").addEventListener("click", () => {
     if (readOnly()) return;
     const FP = window.RATrackerFingerprint;
     chrome.storage.local.get(null, (data) => {
       const prints = new Map();
       for (const m of all) {
-        const r = data["replay_" + m.id];
-        prints.set(m.id, FP.fingerprint(r && r.snaps));
+        const r = data["deckcards_" + m.id];
+        prints.set(m.id, FP.fingerprint(r && r.codes));
       }
-      const withReplay = [...prints.values()].filter((s) => s.size >= FP.MIN_CARDS).length;
-      if (!withReplay) {
+      const withCards = [...prints.values()].filter((s) => s.size >= FP.MIN_CARDS).length;
+      if (!withCards) {
         return alert(
-          "No usable replays yet.\n\nDeck recognition compares the cards you actually played, " +
-            "so it needs matches recorded with replays (v0.3.0 or later)."
+          "No usable card data yet.\n\nDeck recognition compares the cards you actually played, " +
+            `so it needs matches where at least ${FP.MIN_CARDS} of your own cards were seen on the board.`
         );
       }
       const { proposals, undecided, labelledCount } = FP.suggestLabels(all, prints);
@@ -837,9 +838,11 @@
     } catch (err) {
       throw new Error("That file isn't valid JSON (" + err.message + ").");
     }
-    if (Array.isArray(data)) return { matches: data, replays: {} };
+    if (Array.isArray(data)) return { matches: data, deckCards: {} };
     if (data && Array.isArray(data.matches)) {
-      return { matches: data.matches, replays: data.replays || {} };
+      // A v1 bundle's `replays` key is ignored rather than rejected: its board
+      // snapshots have no reader left, but its matches and logs are still good.
+      return { matches: data.matches, deckCards: data.deckCards || {} };
     }
     // Be specific about what went wrong - "not an array" helps nobody.
     const looksLikeSummary =
@@ -877,8 +880,8 @@
           logCache.set(m.id, m.log);
         }
       }
-      for (const [id, snaps] of Object.entries(bundle.replays || {})) {
-        if (snaps && snaps.length) writes["replay_" + id] = { id, snaps };
+      for (const [id, codes] of Object.entries(bundle.deckCards || {})) {
+        if (Array.isArray(codes) && codes.length) writes["deckcards_" + id] = { id, codes };
       }
       writes.matches = [...byId.values()];
       chrome.storage.local.set(writes, cb);
@@ -916,14 +919,14 @@
       setTimeout(() => {
         const ok = confirm(
           `Archive downloaded (${bundle.matches.length} matches, ${sizeMb} MB).\n\n` +
-            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs and replays from the extension.\n\n` +
+            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs and card data from the extension.\n\n` +
             `You can view it again any time with "View archive", or restore it with Import JSON.\n\n` +
             `Press Cancel to keep everything.`
         );
         if (!ok) return;
         chrome.storage.local.get(null, (data) => {
           const keys = Object.keys(data || {}).filter(
-            (k) => k.startsWith("replay_") || k.startsWith("log_")
+            (k) => k.startsWith("deckcards_") || k.startsWith("log_")
           );
           chrome.storage.local.remove(keys, () => {
             all = [];
@@ -958,7 +961,7 @@
     file.text().then((text) => {
       try {
         const bundle = parseBundle(text);
-        archive = { name: file.name, matches: bundle.matches, replays: bundle.replays };
+        archive = { name: file.name, matches: bundle.matches, deckCards: bundle.deckCards };
         logCache.clear();
         expanded.clear();
         $("#viewArchive").textContent = "Exit archive";
@@ -985,7 +988,7 @@
       forgetAllVisual();
       chrome.storage.local.get(null, (data) => {
         const keys = Object.keys(data || {}).filter(
-          (k) => k.startsWith("replay_") || k.startsWith("log_")
+          (k) => k.startsWith("deckcards_") || k.startsWith("log_")
         );
         if (keys.length) chrome.storage.local.remove(keys);
       });
@@ -1010,8 +1013,8 @@
 
   function writeBackup(cb) {
     if (!all.length) return cb && cb(new Error("nothing to back up"));
-    // Backups carry matches + logs (small); replays are excluded to keep the
-    // daily file sane - use Archive & clear if you want replays too.
+    // Backups carry matches + logs (small); the per-match card codes are
+    // excluded to keep the daily file sane - Archive & clear includes them.
     buildBundle(false, (bundle) => {
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" })

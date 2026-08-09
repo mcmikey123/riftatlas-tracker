@@ -1,9 +1,10 @@
 /* Rift Atlas Stats Tracker - deck fingerprinting
  *
- * Replays record every card of YOURS that became visible during a match, so
- * each game carries a partial sample of the deck you were playing. Two games
- * on the same deck overlap heavily; a different variant does not. That's
- * enough to group matches by deck without ever seeing a decklist.
+ * While a match is played, content.js accumulates every card code of YOURS
+ * that became visible and stores it under deckcards_<matchId>, so each game
+ * carries a partial sample of the deck you were playing. Two games on the same
+ * deck overlap heavily; a different variant does not. That's enough to group
+ * matches by deck without ever seeing a decklist.
  *
  * Because a sample is partial (you only see what you drew), similarity uses
  * the overlap coefficient - |A∩B| / min(|A|,|B|) - rather than Jaccard, which
@@ -12,9 +13,9 @@
 (function (root) {
   "use strict";
 
-  // Zones that reflect deck contents. Legend/champion are excluded: they're
-  // identical across variants of the same champion, so they'd blur exactly
-  // the distinction we're trying to draw.
+  // The zones content.js harvests those codes from - the contract between the
+  // two files. Legend/champion are excluded: they're identical across variants
+  // of the same champion, so they'd blur exactly the distinction we're drawing.
   const DECK_ZONES = ["battlefieldA", "battlefieldB", "base", "hand", "trash", "runeArea"];
   const MIN_CARDS = 6; // below this a sample is too thin to judge
   const THRESHOLD = 0.5; // overlap needed to call it the same deck
@@ -24,19 +25,12 @@
   const CLUSTER_THRESHOLD = 0.6;
   const MARGIN = 0.05; // best deck must beat the runner-up by this much
 
-  /** Set of your own card codes seen across a replay. */
-  function fingerprint(snaps) {
-    const codes = new Set();
-    if (!Array.isArray(snaps)) return codes;
-    for (const s of snaps) {
-      const z = (s && s.z) || {};
-      for (const zone of DECK_ZONES) {
-        const list = z["self." + zone];
-        if (!Array.isArray(list)) continue;
-        for (const c of list) if (c && !c.h && c.c) codes.add(c.c);
-      }
-    }
-    return codes;
+  /** Set of your own card codes seen in a match, from its stored `codes`. */
+  function fingerprint(codes) {
+    const out = new Set();
+    if (!Array.isArray(codes)) return out;
+    for (const c of codes) if (c) out.add(c);
+    return out;
   }
 
   function overlap(a, b) {
@@ -62,7 +56,7 @@
     for (const m of unlabelled) {
       const fp = prints.get(m.id);
       if (!fp || fp.size < minCards) {
-        undecided.push({ match: m, reason: fp ? `only ${fp.size} cards seen` : "no replay" });
+        undecided.push({ match: m, reason: fp ? `only ${fp.size} cards seen` : "no card data" });
         continue;
       }
       // Best score per DECK, so a deck with many reference games doesn't

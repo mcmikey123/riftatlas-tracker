@@ -1,9 +1,9 @@
-/* Rift Atlas Stats Tracker - visual replay viewer
+/* Rift Atlas Stats Tracker - replay viewer
  *
  * Plays back the rrweb event stream captured during a match, so the board is
- * the site's own DOM rather than a redrawn approximation. The structured
- * viewer in replay.js is untouched and stays the fallback for matches with no
- * visual track, and for the tail of a match whose capture ran out of budget.
+ * the site's own DOM rather than a redrawn approximation. This is the only
+ * replay there is: matches without a visual track have no replay at all, and
+ * a capture that ran out of budget simply stops where it stopped.
  *
  * The replayer is mounted at exactly the viewport it was recorded at and
  * scaled to fit with a CSS transform: replaying at a different width fires
@@ -68,10 +68,10 @@
     const last = marks.length ? marks[marks.length - 1].turn : null;
     const coveredTo = Number.isFinite(Number(meta.truncatedAtTurn)) ? Number(meta.truncatedAtTurn) : last;
     const turns = Number(match && match.turns);
-    if (coveredTo == null) return "Visual replay stops before the end of this match.";
-    const covered = `Visual replay covers turns 1–${coveredTo}`;
+    if (coveredTo == null) return "This replay stops before the end of the match.";
+    const covered = `This replay covers turns 1–${coveredTo}`;
     return Number.isFinite(turns) && turns > coveredTo
-      ? `${covered}; step-through continues to turn ${turns}`
+      ? `${covered} of ${turns}; capture ran out of budget after that`
       : `${covered} of this match`;
   }
 
@@ -79,15 +79,12 @@
    * Write the viewer's chrome into `container` and hand back every element the
    * transport controls touch. `chips` is the already-thinned chapter list.
    */
-  function renderShell(container, match, meta, marks, chips, opts) {
+  function renderShell(container, match, meta, marks, chips) {
     const truncated = meta.state === "truncated";
     const lostTail = !!meta.incomplete || meta.truncatedAtChunk != null;
 
     const banner = truncated
-      ? `<div class="vr-banner">
-           <span>${esc(truncationText(meta, match, marks))}.</span>
-           ${opts.openStructured ? '<button class="rp-btn vr-structured">Open step-through replay</button>' : ""}
-         </div>`
+      ? `<div class="vr-banner"><span>${esc(truncationText(meta, match, marks))}.</span></div>`
       : "";
     const note = lostTail
       ? '<p class="vr-note">The tail of this recording was lost, so the replay ends before the match did.</p>'
@@ -126,7 +123,6 @@
       playBtn: container.querySelector(".vr-play"),
       prevBtn: container.querySelector(".vr-prev"),
       nextBtn: container.querySelector(".vr-next"),
-      structuredBtn: container.querySelector(".vr-structured"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
     };
   }
@@ -188,8 +184,8 @@
    * a mounted replayer. Returns the controller `mount` hands back; its
    * `destroy` is the teardown for everything wired here.
    */
-  function wireControls(handles, mounted, marks, chips, opts, match) {
-    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, structuredBtn, chapterEls } = handles;
+  function wireControls(handles, mounted, marks, chips) {
+    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, chapterEls } = handles;
     const { replayer, pin, fit } = mounted;
 
     const total = Math.max(1, replayer.getMetaData().totalTime || 0);
@@ -269,13 +265,6 @@
       const ms = e.target?.dataset?.ms;
       if (ms !== undefined) seek(parseInt(ms, 10) || 0);
     });
-    if (structuredBtn) {
-      structuredBtn.addEventListener("click", () => {
-        if (opts.onLeave) opts.onLeave();
-        opts.openStructured(match);
-      });
-    }
-
     const onResize = () => fit();
     root.addEventListener("resize", onResize);
 
@@ -300,14 +289,13 @@
     };
   }
 
-  /** Mount a visual replay into `container`. Returns a controller, or null. */
-  function mount(container, match, payload, opts) {
-    opts = opts || {};
+  /** Mount a replay into `container`. Returns a controller, or null. */
+  function mount(container, match, payload) {
     const meta = (payload && payload.meta) || {};
     const events = (payload && payload.events) || [];
     if (events.length < 2) {
       container.innerHTML =
-        '<p class="rp-empty">No visual recording was captured for this match. Use the step-through replay instead.</p>';
+        '<p class="rp-empty">No recording was captured for this match.</p>';
       return null;
     }
     if (!root.rrwebReplay || typeof root.rrwebReplay.Replayer !== "function") {
@@ -324,18 +312,17 @@
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
 
-    const handles = renderShell(container, match, meta, marks, chips, opts);
+    const handles = renderShell(container, match, meta, marks, chips);
     const mounted = mountReplayer(handles, events, viewport);
     if (!mounted) {
-      container.innerHTML = '<p class="rp-empty">This visual recording could not be played back.</p>';
+      container.innerHTML = '<p class="rp-empty">This recording could not be played back.</p>';
       return null;
     }
-    return wireControls(handles, mounted, marks, chips, opts, match);
+    return wireControls(handles, mounted, marks, chips);
   }
 
-  /** Open the visual replay full-screen. Mirrors replay.js's modal. */
-  function openModal(match, payload, opts) {
-    opts = opts || {};
+  /** Open the replay full-screen. */
+  function openModal(match, payload) {
     const back = document.createElement("div");
     back.className = "rp-modal-backdrop";
     const d = match.startedAt ? new Date(match.startedAt) : null;
@@ -346,11 +333,11 @@
       match.myScore ?? 0
     }–${match.opponentScore ?? 0} · ${esc(match.result || "unknown")}`;
     back.innerHTML = `
-      <div class="rp-modal vr-modal" role="dialog" aria-label="Visual match replay">
+      <div class="rp-modal vr-modal" role="dialog" aria-label="Match replay">
         <div class="rp-modal-head">
           <div>
             <h2>${title}</h2>
-            <p class="rp-modal-sub">Visual replay · ${sub}</p>
+            <p class="rp-modal-sub">Replay · ${sub}</p>
           </div>
           <button class="rp-btn rp-close" title="Close (Esc)">✕ Close</button>
         </div>
@@ -360,10 +347,7 @@
     document.body.appendChild(back);
     document.body.classList.add("rp-modal-open");
 
-    const ctl = mount(back.querySelector(".rp-modal-body"), match, payload, {
-      openStructured: opts.openStructured,
-      onLeave: () => close(),
-    });
+    const ctl = mount(back.querySelector(".rp-modal-body"), match, payload);
 
     function close() {
       document.removeEventListener("keydown", onKey);
