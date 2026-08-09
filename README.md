@@ -34,7 +34,7 @@ Storage in `chrome.storage.local` is roughly 0.5 KB per match record, ~20 KB for
 
 Earlier versions also kept a ~430 KB board-snapshot replay per match under `replay_` keys. Those are gone: the visual replay replaced them, and the first time you open the dashboard after updating, the leftover `replay_` keys are deleted automatically to reclaim the space.
 
-When you want to reclaim more, use **Archive & clear**: it downloads one JSON file containing every match, log and card list, then (after you confirm) wipes them from the extension. Later, **View archive** opens that file read-only — full stats and summaries, with editing disabled and your live data untouched. **Import JSON** does the opposite: merges an archive back into your live data permanently. Archives from before this version still import; their old replay data is ignored.
+When you want to reclaim more, use **Archive & clear**: it downloads one JSON file containing every match, log and card list, then (after you confirm) wipes them from the extension. Later, **View archive** opens that file read-only — full stats and summaries, with editing disabled and your live data untouched. **Import JSON** does the opposite: merges an archive back into your live data permanently. Archives from before 0.12.0 still import; their old replay data is ignored.
 
 ## Deck detection from the cards you played
 
