@@ -14,10 +14,7 @@
 (function (root) {
   "use strict";
 
-  const esc = (s) =>
-    String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-    );
+  const { esc, fmtClock } = root.RATrackerFormat;
 
   const FULL_SNAPSHOT = 2; // rrweb EventType.FullSnapshot
   const CUSTOM = 5; // rrweb EventType.Custom
@@ -26,12 +23,6 @@
   const MIN_STAGE_H = 240;
   const STAGE_MARGIN = 108; // room the controls and hint line need below the stage
   const DEFAULT_VIEWPORT = { w: 1280, h: 800 };
-
-  function fmtClock(ms) {
-    if (!Number.isFinite(ms)) return "0:00";
-    const t = Math.max(0, Math.round(ms / 1000));
-    return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
-  }
 
   /** Turn number carried by an rrweb custom event, or null if it isn't one. */
   function turnOf(event) {
@@ -85,27 +76,11 @@
       : `${covered} of this match`;
   }
 
-  /** Mount a visual replay into `container`. Returns a controller, or null. */
-  function mount(container, match, payload, opts) {
-    opts = opts || {};
-    const meta = (payload && payload.meta) || {};
-    const events = (payload && payload.events) || [];
-    if (events.length < 2) {
-      container.innerHTML =
-        '<p class="rp-empty">No visual recording was captured for this match. Use the step-through replay instead.</p>';
-      return null;
-    }
-    if (!root.rrwebReplay || typeof root.rrwebReplay.Replayer !== "function") {
-      container.innerHTML = '<p class="rp-empty">The replay engine failed to load.</p>';
-      return null;
-    }
-
-    const vp = meta.viewport || DEFAULT_VIEWPORT;
-    const vw = Math.max(1, Math.round(Number(vp.w) || DEFAULT_VIEWPORT.w));
-    const vh = Math.max(1, Math.round(Number(vp.h) || DEFAULT_VIEWPORT.h));
-
-    const marks = timeline(events);
-    const chips = evenly(marks, MAX_CHIPS);
+  /**
+   * Write the viewer's chrome into `container` and hand back every element the
+   * transport controls touch. `chips` is the already-thinned chapter list.
+   */
+  function renderShell(container, match, meta, marks, chips, opts) {
     const truncated = meta.state === "truncated";
     const lostTail = !!meta.incomplete || meta.truncatedAtChunk != null;
 
@@ -143,17 +118,35 @@
       }
       <div class="vr-stage"><div class="vr-scale"></div></div>`;
 
-    const stage = container.querySelector(".vr-stage");
-    const scaleEl = container.querySelector(".vr-scale");
-    const slider = container.querySelector(".vr-slider");
-    const timeEl = container.querySelector(".vr-time");
-    const playBtn = container.querySelector(".vr-play");
+    return {
+      container,
+      stage: container.querySelector(".vr-stage"),
+      scaleEl: container.querySelector(".vr-scale"),
+      slider: container.querySelector(".vr-slider"),
+      timeEl: container.querySelector(".vr-time"),
+      playBtn: container.querySelector(".vr-play"),
+      prevBtn: container.querySelector(".vr-prev"),
+      nextBtn: container.querySelector(".vr-next"),
+      structuredBtn: container.querySelector(".vr-structured"),
+      chapterEls: container.querySelectorAll(".vr-chapter"),
+    };
+  }
+
+  /**
+   * Start rrweb inside the stage. Returns the replayer together with the two
+   * functions that keep it at its recorded size — `pin` forces the iframe back
+   * to the captured viewport, `fit` scales the result down to the room we have
+   * — or null if the recording will not play at all.
+   */
+  function mountReplayer(handles, events, viewport) {
+    const { stage, scaleEl } = handles;
+    const vw = viewport.w;
+    const vh = viewport.h;
 
     let replayer;
     try {
       replayer = new root.rrwebReplay.Replayer(events, {
         root: scaleEl,
-        events,
         mouseTail: false,
         speedOption: [1],
         showWarning: false,
@@ -161,21 +154,8 @@
       });
     } catch (err) {
       console.warn("[RA-Tracker] visual replay failed to start:", err);
-      container.innerHTML = '<p class="rp-empty">This visual recording could not be played back.</p>';
       return null;
     }
-
-    const total = Math.max(1, replayer.getMetaData().totalTime || 0);
-    slider.max = String(total);
-
-    // Board states we step between: every keyframe, bounded by both ends.
-    const stops = [...new Set([0, ...marks.map((m) => m.ms), total])]
-      .filter((ms) => ms >= 0 && ms <= total)
-      .sort((a, b) => a - b);
-
-    let playing = false;
-    let raf = null;
-    let at = 0;
 
     // rrweb sizes its iframe from the recorded meta event and re-sizes it on
     // any viewport-resize event in the stream; both are overridden here so the
@@ -201,6 +181,30 @@
       stage.style.height = Math.ceil(vh * scale) + "px";
     }
 
+    return { replayer, pin, fit };
+  }
+
+  /**
+   * Hook the transport controls, the chapter chips and the window resize up to
+   * a mounted replayer. Returns the controller `mount` hands back; its
+   * `destroy` is the teardown for everything wired here.
+   */
+  function wireControls(handles, mounted, marks, chips, opts, match) {
+    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, structuredBtn, chapterEls } = handles;
+    const { replayer, pin, fit } = mounted;
+
+    const total = Math.max(1, replayer.getMetaData().totalTime || 0);
+    slider.max = String(total);
+
+    // Board states we step between: every keyframe, bounded by both ends.
+    const stops = [...new Set([0, ...marks.map((m) => m.ms), total])]
+      .filter((ms) => ms >= 0 && ms <= total)
+      .sort((a, b) => a - b);
+
+    let playing = false;
+    let raf = null;
+    let at = 0;
+
     function paint() {
       slider.value = String(Math.round(at));
       timeEl.textContent = `${fmtClock(at)} / ${fmtClock(total)}`;
@@ -208,7 +212,7 @@
       chips.forEach((c, n) => {
         if (c.ms <= at + 1) active = n;
       });
-      container.querySelectorAll(".vr-chapter").forEach((el, n) => el.classList.toggle("on", n === active));
+      chapterEls.forEach((el, n) => el.classList.toggle("on", n === active));
     }
 
     function track() {
@@ -259,14 +263,13 @@
     });
 
     playBtn.addEventListener("click", togglePlay);
-    container.querySelector(".vr-prev").addEventListener("click", () => stepTo(-1));
-    container.querySelector(".vr-next").addEventListener("click", () => stepTo(1));
+    prevBtn.addEventListener("click", () => stepTo(-1));
+    nextBtn.addEventListener("click", () => stepTo(1));
     slider.addEventListener("input", () => seek(parseInt(slider.value, 10) || 0));
     container.addEventListener("click", (e) => {
       const ms = e.target?.dataset?.ms;
       if (ms !== undefined) seek(parseInt(ms, 10) || 0);
     });
-    const structuredBtn = container.querySelector(".vr-structured");
     if (structuredBtn) {
       structuredBtn.addEventListener("click", () => {
         if (opts.onLeave) opts.onLeave();
@@ -296,6 +299,39 @@
         } catch (_) { /* already torn down with the modal */ }
       },
     };
+  }
+
+  /** Mount a visual replay into `container`. Returns a controller, or null. */
+  function mount(container, match, payload, opts) {
+    opts = opts || {};
+    const meta = (payload && payload.meta) || {};
+    const events = (payload && payload.events) || [];
+    if (events.length < 2) {
+      container.innerHTML =
+        '<p class="rp-empty">No visual recording was captured for this match. Use the step-through replay instead.</p>';
+      return null;
+    }
+    if (!root.rrwebReplay || typeof root.rrwebReplay.Replayer !== "function") {
+      container.innerHTML = '<p class="rp-empty">The replay engine failed to load.</p>';
+      return null;
+    }
+
+    const vp = meta.viewport || DEFAULT_VIEWPORT;
+    const viewport = {
+      w: Math.max(1, Math.round(Number(vp.w) || DEFAULT_VIEWPORT.w)),
+      h: Math.max(1, Math.round(Number(vp.h) || DEFAULT_VIEWPORT.h)),
+    };
+
+    const marks = timeline(events);
+    const chips = evenly(marks, MAX_CHIPS);
+
+    const handles = renderShell(container, match, meta, marks, chips, opts);
+    const mounted = mountReplayer(handles, events, viewport);
+    if (!mounted) {
+      container.innerHTML = '<p class="rp-empty">This visual recording could not be played back.</p>';
+      return null;
+    }
+    return wireControls(handles, mounted, marks, chips, opts, match);
   }
 
   /** Open the visual replay full-screen. Mirrors replay.js's modal. */

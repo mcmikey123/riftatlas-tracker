@@ -58,7 +58,7 @@
     <input type="checkbox" id="visualEnabled" />
   </label>
   <label title="How much compressed data one match's visual replay may use before capture stops. The step-through replay carries on either way.">Visual budget per match (MB)
-    <input type="number" id="visualBudget" min="1" max="64" step="1" />
+    <input type="number" id="visualBudget" step="1" />
   </label>
 </section>
 
@@ -130,10 +130,10 @@
     <tbody></tbody>
     <tfoot></tfoot>
   </table>
-  <p class="hint" id="visualShown" hidden></p>
 </section>
 
 <footer>All data is stored locally in your browser. Nothing is uploaded anywhere.</footer>
+<script src="format.js"></script>
 <script src="analysis.js"></script>
 <script src="fingerprint.js"></script>
 <script src="replay.js"></script>

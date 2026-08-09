@@ -28,10 +28,7 @@
 
   const SIZES = ["sm", "md", "lg"];
 
-  const esc = (s) =>
-    String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-    );
+  const esc = root.RATrackerFormat.esc;
 
   function cardTile(card, extraClass) {
     if (!card) return "";
@@ -70,11 +67,7 @@
   const prettyPhase = (p) =>
     PHASE_NAMES[p] || String(p || "Setup").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-  function fmtClock(ms) {
-    if (!Number.isFinite(ms)) return "";
-    const t = Math.round(ms / 1000);
-    return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
-  }
+  const fmtClock = (ms) => root.RATrackerFormat.fmtClock(ms, "");
 
   /** Every non-hidden opponent card seen anywhere up to snapshot `upto`. */
   function seenFromOpponent(snaps, upto) {

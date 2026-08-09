@@ -449,8 +449,7 @@
     return tr;
   }
 
-  const esc = (s) =>
-    String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const esc = window.RATrackerFormat.esc;
 
   // ---- visual replay diagnostics ---------------------------------------
 
@@ -1128,9 +1127,13 @@
   };
 
   function refreshVisualSettingsUI() {
+    // The spinner's bounds come from the constants above so the two can't drift.
+    const budget = $("#visualBudget");
+    budget.min = String(BUDGET_MIN_MB);
+    budget.max = String(BUDGET_MAX_MB);
     getSettings((s) => {
       $("#visualEnabled").checked = s.visualReplayEnabled !== false;
-      $("#visualBudget").value = clampBudget(s.visualReplayBudgetMb);
+      budget.value = clampBudget(s.visualReplayBudgetMb);
     });
   }
 
