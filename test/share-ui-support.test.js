@@ -19,6 +19,7 @@ const {
   PRUNE_GRACE_MS,
   expiryText,
   readShareList,
+  reusableShare,
   describeRecheck
 } = require("../share/share-ui-support.js");
 
@@ -279,6 +280,97 @@ test("entries that could never produce a link are dropped, not rendered", () => 
 test("a missing or non-array shares key reads as no shares", () => {
   for (const bad of [undefined, null, {}, "shares", 7]) {
     assert.deepStrictEqual(readShareList(bad), [], String(bad));
+  }
+});
+
+/* ---- which share gets reused -------------------------------------------
+ *
+ * This is what stands between "copy a link to this moment" and re-uploading
+ * 3.5 MB every time someone presses it, so it is tested as the decision it is
+ * rather than left as a lookup inside a click handler.
+ */
+
+test("a match with no share at all has nothing to reuse", () => {
+  assert.strictEqual(reusableShare([], "m1", CREATED), null);
+  assert.strictEqual(reusableShare([record({ matchId: "m2" })], "m1", CREATED), null);
+});
+
+test("a live share for this match is what gets reused", () => {
+  const found = reusableShare([record()], "m1", CREATED + HOUR);
+  assert.ok(found, "a share created an hour ago must be reusable");
+  assert.strictEqual(found.objectId, "A".repeat(22));
+  assert.strictEqual(found.key, "B".repeat(43));
+  // The record's own endpoint comes back, not the one in Settings: the object
+  // lives where it was uploaded, however the setting has moved since.
+  assert.strictEqual(found.endpoint, "https://share.example.workers.dev");
+});
+
+// Records are keyed by object id, so a match can hold several. The newest has
+// the most days left on it, and that is the one worth handing out.
+test("the newest live share wins when a match has several", () => {
+  const found = reusableShare(
+    [
+      record({ objectId: "A".repeat(22), createdAt: CREATED }),
+      record({ objectId: "C".repeat(22), createdAt: CREATED + 2 * HOUR }),
+      record({ objectId: "B".repeat(22), createdAt: CREATED + HOUR })
+    ],
+    "m1",
+    CREATED + 3 * HOUR
+  );
+  assert.strictEqual(found.objectId, "C".repeat(22));
+});
+
+// The object behind an expired record is gone or going, so reusing it would
+// hand over a link that opens to nothing. Uploading again is the right answer.
+test("an expired share is never reused, however recent it is otherwise", () => {
+  const stale = record({ createdAt: CREATED });
+  assert.strictEqual(reusableShare([stale], "m1", CREATED + SHARE_TTL_MS - 1).objectId, "A".repeat(22));
+  assert.strictEqual(reusableShare([stale], "m1", CREATED + SHARE_TTL_MS), null);
+});
+
+test("the newest UNEXPIRED share wins, not simply the newest", () => {
+  const found = reusableShare(
+    [
+      record({ objectId: "A".repeat(22), createdAt: CREATED - 3 * HOUR }),
+      record({ objectId: "C".repeat(22), createdAt: CREATED - SHARE_TTL_MS - HOUR })
+    ],
+    "m1",
+    CREATED
+  );
+  assert.strictEqual(found.objectId, "A".repeat(22), "the expired newer record must be skipped");
+});
+
+test("shares for other matches are never reused for this one", () => {
+  const found = reusableShare(
+    [record({ objectId: "C".repeat(22), matchId: "m2", createdAt: CREATED + HOUR }), record()],
+    "m1",
+    CREATED + 2 * HOUR
+  );
+  assert.strictEqual(found.objectId, "A".repeat(22));
+});
+
+/* A record that cannot rebuild a link is not a share to reuse - reusing it
+ * would produce a link that decrypts to nothing, and it would do so instead of
+ * the upload that would have worked. readShareList already drops these; this
+ * asserts the reuse path is behind that filter rather than beside it. */
+test("a record that could never produce a link is not reused", () => {
+  const broken = [
+    record({ key: "" }),
+    record({ key: "B".repeat(42) }),
+    record({ objectId: "A".repeat(21) }),
+    record({ createdAt: 0 }),
+    null,
+    "nonsense"
+  ];
+  assert.strictEqual(reusableShare(broken, "m1", CREATED), null);
+});
+
+test("an unreadable shares key or a missing match id reuses nothing", () => {
+  for (const bad of [undefined, null, {}, "shares", 7]) {
+    assert.strictEqual(reusableShare(bad, "m1", CREATED), null, String(bad));
+  }
+  for (const bad of [undefined, null, ""]) {
+    assert.strictEqual(reusableShare([record()], bad, CREATED), null, String(bad));
   }
 });
 

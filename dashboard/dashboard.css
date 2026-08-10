@@ -275,6 +275,19 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
   color: #ffe6bf; font-size: 12px;
 }
 .vr-note { flex: 0 0 auto; margin: 0 0 8px; font-size: 11px; color: var(--ink-3); }
+/* The seek slider takes the slack, so this sits at the right-hand end of the
+   control row. It never wraps mid-label: what it flashes when clicked is
+   shorter than the label, and a control that resizes as it answers you drags
+   the whole row around with it. */
+.vr-moment { margin-left: auto; white-space: nowrap; }
+/* Where the disclosure and the progress for a first share are shown, inside the
+   modal rather than in the row it covers. Same box as .share-box, because it is
+   the same thing being said in a different place. */
+.vr-share {
+  flex: 0 0 auto; margin: 0 0 8px; padding: 10px 12px; border-radius: 8px;
+  background: #0b1424; border: 1px solid var(--border);
+}
+.vr-share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* --- replay sharing --- */
 /* The disclosure leads and stays visible in every state, including once the

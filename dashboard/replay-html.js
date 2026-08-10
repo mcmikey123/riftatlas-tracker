@@ -27,8 +27,15 @@
   /**
    * Write the viewer's chrome into `container` and hand back every element the
    * transport controls touch. `chips` is the already-thinned chapter list.
+   *
+   * `withMoment` adds the "copy link to this moment" control and the empty
+   * panel it works in. Both are rendered only when a caller supplied a handler:
+   * turning a local replay into a link needs chrome.storage, the share
+   * pipeline and the endpoint setting, none of which this file has or should
+   * have, so a modal opened without one simply has no such button rather than a
+   * dead one.
    */
-  function renderShell(container, match, meta, marks, chips) {
+  function renderShell(container, match, meta, marks, chips, withMoment) {
     const truncated = meta.state === "truncated";
     const lostTail = !!meta.incomplete || meta.truncatedAtChunk != null;
 
@@ -49,7 +56,13 @@
         <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
         <span class="rp-meta vr-time"></span>
         <button class="rp-btn vr-full" title="Fullscreen (f)" aria-pressed="false">⛶ Fullscreen</button>
+        ${
+          withMoment
+            ? `<button class="rp-btn vr-moment" title="Copy a link that opens this replay at the moment it is showing now">Copy link to this moment</button>`
+            : ""
+        }
       </div>
+      ${withMoment ? '<div class="vr-share" aria-live="polite" hidden></div>' : ""}
       ${
         chips.length > 1
           ? `<div class="rp-chapters">${chips
@@ -74,6 +87,8 @@
       prevBtn: container.querySelector(".vr-prev"),
       nextBtn: container.querySelector(".vr-next"),
       fullBtn: container.querySelector(".vr-full"),
+      momentBtn: container.querySelector(".vr-moment"),
+      momentPanel: container.querySelector(".vr-share"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
     };
   }
@@ -84,7 +99,7 @@
    * drives, or null if the recording will not play; `destroy` is the teardown
    * for everything wired here and for the core underneath.
    */
-  function wireControls(handles, meta, events, marks, chips) {
+  function wireControls(handles, meta, events, marks, chips, shareMoment) {
     const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, chapterEls } = handles;
 
     function paint(at, total) {
@@ -215,6 +230,24 @@
       const ms = e.target?.dataset?.ms;
       if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
     });
+    // Wired directly rather than through the dashboard's document-level click
+    // delegation: the handler needs the transport's position, which only this
+    // closure holds, and a data attribute the document also listens for would
+    // give the same click two owners.
+    //
+    // The position is read at the click, not when the handler finishes. A
+    // first share has an upload in the middle of it, and the link is supposed
+    // to name the moment the button was pressed, not the moment the network
+    // came back.
+    if (shareMoment && handles.momentBtn) {
+      handles.momentBtn.addEventListener("click", () =>
+        shareMoment({
+          atMs: playback.getTime(),
+          button: handles.momentBtn,
+          panel: handles.momentPanel,
+        })
+      );
+    }
     if (canFullscreen) {
       fullBtn.addEventListener("click", toggleFullscreen);
       document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -246,8 +279,14 @@
     };
   }
 
-  /** Mount a replay into `container`. Returns a controller, or null. */
-  function mount(container, match, payload) {
+  /**
+   * Mount a replay into `container`. Returns a controller, or null.
+   *
+   * `options.shareMoment({ atMs, button, panel })` is the dashboard's hook for
+   * turning the current position into a link; see `renderShell`.
+   */
+  function mount(container, match, payload, options) {
+    const shareMoment = (options && options.shareMoment) || null;
     const meta = (payload && payload.meta) || {};
     const events = (payload && payload.events) || [];
     if (events.length < 2) {
@@ -263,8 +302,8 @@
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
 
-    const handles = renderShell(container, match, meta, marks, chips);
-    const ctl = wireControls(handles, meta, events, marks, chips);
+    const handles = renderShell(container, match, meta, marks, chips, !!shareMoment);
+    const ctl = wireControls(handles, meta, events, marks, chips, shareMoment);
     if (!ctl) {
       container.innerHTML = '<p class="rp-empty">This recording could not be played back.</p>';
       return null;
@@ -272,8 +311,8 @@
     return ctl;
   }
 
-  /** Open the replay full-screen. */
-  function openModal(match, payload) {
+  /** Open the replay full-screen. `options` is passed straight to `mount`. */
+  function openModal(match, payload, options) {
     const back = document.createElement("div");
     back.className = "rp-modal-backdrop";
     const d = match.startedAt ? new Date(match.startedAt) : null;
@@ -298,7 +337,7 @@
     document.body.appendChild(back);
     document.body.classList.add("rp-modal-open");
 
-    const ctl = mount(back.querySelector(".rp-modal-body"), match, payload);
+    const ctl = mount(back.querySelector(".rp-modal-body"), match, payload, options);
 
     function close() {
       document.removeEventListener("keydown", onKey);

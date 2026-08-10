@@ -291,6 +291,47 @@
   }
 
   /**
+   * The share to rebuild a link from instead of uploading the replay again, or
+   * null when there is nothing usable.
+   *
+   * This is the whole decision behind "copy a link to this moment" in the
+   * replay modal. Uploading again would cost about 600 ms of blocked main
+   * thread and a 3.5 MB PUT to produce a link the browser could have assembled
+   * from a record it already holds - and it would leave a second copy on the
+   * endpoint that nothing can delete before its own TTL elapses. So an
+   * unexpired share for this match is reused, always.
+   *
+   * Three things this has to get right, none of them obvious from a lookup:
+   *
+   *   Records are keyed by object id, not by match id. A match can have been
+   *   shared several times, so this is a search, not a get, and the NEWEST
+   *   unexpired one wins - it has the most days left on it.
+   *
+   *   Expiry is the record's own createdAt plus the fixed TTL. An expired
+   *   record cannot be reused however recently it was made: the object behind
+   *   it is gone or going, and handing over a link to it would be handing over
+   *   a link that opens to nothing.
+   *
+   *   The link is rebuilt against the RECORD's endpoint, not the one in
+   *   Settings - that is the caller's job, but it is why the whole record comes
+   *   back rather than an object id. A share uploaded before the setting
+   *   changed still lives where it was put.
+   *
+   * Pure over the raw stored array and a clock, so which share gets reused is
+   * decidable without chrome.storage, a replay or a network.
+   */
+  function reusableShare(raw, matchId, now) {
+    const wanted = String(matchId == null ? "" : matchId);
+    if (!wanted) return null;
+    // readShareList drops every record that could not produce a link and hands
+    // back what is left newest first, which is the order this wants.
+    for (const record of readShareList(raw)) {
+      if (record.matchId === wanted && !isExpired(record, now)) return record;
+    }
+    return null;
+  }
+
+  /**
    * What a re-check learned. Four outcomes, deliberately not two: "couldn't
    * reach the endpoint" is not "expired", and reporting it as expired would
    * tell someone their share was gone when it is still being served.
@@ -369,6 +410,7 @@
     pruneShares,
     expiryText,
     readShareList,
+    reusableShare,
     describeRecheck
   };
 
