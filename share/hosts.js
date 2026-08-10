@@ -136,6 +136,14 @@
     const hash = text.slice(at);
 
     const parts = hash.slice(1).split(".");
+    // A link that ended a sentence brings the full stop with it. On a link with
+    // no timestamp that stop is already harmless - it makes an empty fourth
+    // field, which reads as "no timestamp" - and it must be equally harmless on
+    // one with a timestamp, where it would otherwise make a fifth field and cost
+    // the recipient the whole share. Exactly one trailing empty field is dropped,
+    // and only when there is a real field in front of it: a genuine fifth field
+    // still means the link was rewritten.
+    if (parts.length > 3 && parts[parts.length - 1] === "") parts.pop();
     // Three or four: the fourth is the optional playback position. Five is not a
     // format anyone has ever shipped, so it is a mangled link, not a future one.
     if (parts.length < 3 || parts.length > 4) throw new ShareLinkError("link fragment is malformed");

@@ -103,6 +103,23 @@ test("a timestamp rides as a fourth fragment field in whole seconds", () => {
   assert.strictEqual(parseLink(link).atSeconds, 95);
 });
 
+/* The subtlety the whole helper exists for, and the one case where "no position"
+ * and "the very beginning" are a single keystroke apart: 0 is a position and has
+ * to reach the link as `.0`, where null, undefined and "" must add nothing. A
+ * `Number(null)` slipping through anywhere in that chain turns every link built
+ * without a timestamp into one pinned to 0:00. */
+test("zero is a position and rides as .0, not as no timestamp", () => {
+  const link = buildLink({ endpoint: ENDPOINT, objectId: OBJECT_ID, keyBytes: KEY, atSeconds: 0 });
+  assert.strictEqual(link, `${ENDPOINT}/#1.${OBJECT_ID}.${toBase64Url(KEY)}.0`);
+  assert.strictEqual(parseLink(link).atSeconds, 0);
+  // The same round trip from the millisecond end, which is where it comes from.
+  assert.strictEqual(
+    buildLink({ endpoint: ENDPOINT, objectId: OBJECT_ID, keyBytes: KEY, atSeconds: toLinkSeconds(0) }),
+    link,
+    "a replay parked at the start must still name the moment it was shared at"
+  );
+});
+
 // Real three-part links are in the wild and their recipients have not upgraded
 // anything - the viewer is a web page they may already have open.
 test("an existing three-part link still parses, and reports no timestamp", () => {
@@ -128,13 +145,39 @@ test("an unusable timestamp reads as no timestamp rather than a broken link", ()
 // seconds by construction - so five fields means something rewrote the link,
 // and "check the whole link was copied" is the honest remedy for that.
 test("extra fields are a mangled link, not a future format", () => {
-  for (const bad of ["5.5", "1.5", "5.", "5.x"]) {
+  for (const bad of ["5.5", "1.5", "5.x", "5..x"]) {
     assert.throws(
       () => parseLink(`#1.${OBJECT_ID}.${toBase64Url(KEY)}.${bad}`),
       { name: "ShareLinkError", message: /malformed/ },
       `expected refusal for ${bad}`
     );
   }
+});
+
+/* A link pasted at the end of a sentence comes back with the full stop attached.
+ * On a three-part link that stop was already harmless - it made an empty fourth
+ * field, which reads as "no timestamp" - and leniency that stopped one character
+ * short of the timestamped form would have cost the recipient the whole share
+ * for the same typing. */
+test("a full stop after the link costs the timestamp nothing, timestamped or not", () => {
+  const key = toBase64Url(KEY);
+  const timed = parseLink(`#1.${OBJECT_ID}.${key}.95.`);
+  assert.strictEqual(timed.objectId, OBJECT_ID);
+  assert.strictEqual(timed.atSeconds, 95, "the trailing stop must not become a fifth field");
+
+  const plain = parseLink(`#1.${OBJECT_ID}.${key}.`);
+  assert.strictEqual(plain.objectId, OBJECT_ID);
+  assert.strictEqual(plain.atSeconds, null);
+});
+
+// Exactly one trailing stop is forgiven, and only behind a field that is really
+// there. A fifth field with content in it means something rewrote the link.
+test("only one trailing empty field is forgiven", () => {
+  const key = toBase64Url(KEY);
+  assert.strictEqual(parseLink(`#1.${OBJECT_ID}.${key}..`).atSeconds, null, "'..' is no timestamp");
+  assert.throws(() => parseLink(`#1.${OBJECT_ID}.${key}.95..`), { name: "ShareLinkError" });
+  // A missing key is not a stray full stop, however alike they look.
+  assert.throws(() => parseLink(`#1.${OBJECT_ID}.`), { name: "ShareLinkError" });
 });
 
 // The key is checked before the timestamp is looked at, so the one failure that
