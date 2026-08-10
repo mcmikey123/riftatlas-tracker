@@ -50,8 +50,8 @@ cp wrangler.toml.example wrangler.toml    # also gitignored
 ```
 
 Set `bucket_name` to whatever you want to call your bucket. Adjust `MAX_UPLOAD_BYTES` if you
-want a cap other than 12 MB — the largest replay measured so far is 3.59 MB, so 12 MB is roughly
-3× headroom.
+want a cap other than 12 MB — the largest encrypted frame measured so far is 3,644,834 bytes
+(3.48 MB), so 12 MB is roughly 3.4× headroom.
 
 ### 4. Create the bucket
 

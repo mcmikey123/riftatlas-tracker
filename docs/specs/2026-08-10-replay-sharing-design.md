@@ -199,13 +199,15 @@ guard, because `Content-Length` is client-supplied and trivially wrong.
 
 ### Sizing
 
-Measured against 7 real recordings: largest 3.59 MB, mean 2.67 MB, both compressed and
-CSS-stripped. Adding the CSS back costs roughly 50–80 KB deflated (993.3 KB uncompressed across
-4 shared stylesheets; a single match uses a subset, and Tailwind deflates 6–10×). Worst case
-observed is therefore **~3.65 MB**.
+Two figures get confused here, so both are stated. Across 7 real recordings the **store's**
+`meta.compressedBytes` runs to 3,760,696 B (3.59 MB) at worst, mean 2.67 MB — a per-chunk total,
+and explicitly **not** what the size check may use. What is actually uploaded is one whole-stream
+deflate of a re-stripped replay, encrypted: for that same worst recording the frame measures
+**3,644,834 B (3.48 MB)**, the figure `share/share-ui-support.js` checks against.
 
-**Upload cap: 12 MB** — 3.3× the largest observed replay. The cap exists for legitimate headroom,
-not as abuse control; a match long enough to exceed it should be shareable. The share dialog
+**Upload cap: 12,582,912 B (12 MB)** — 3.4× the largest frame measured. The cap exists for
+legitimate headroom, not as abuse control; a match long enough to exceed it should be
+shareable. The share dialog
 computes payload size and refuses early with a clear reason rather than failing a PUT.
 
 ## Abuse and cost control
