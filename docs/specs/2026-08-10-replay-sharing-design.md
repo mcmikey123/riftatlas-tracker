@@ -312,7 +312,7 @@ load" is useless.
 | Corrupt or truncated frame | bad magic, or short buffer | "This isn't a valid replay file." |
 | Card-art CDN unreachable | images fail to load | Replay plays, cards blank — **say so** rather than looking broken |
 | Payload over cap | size computed before upload | Refused before uploading, with the size and the cap |
-| Uploads disabled | 503 from `PUT /u` | "Sharing is temporarily unavailable." |
+| Uploads disabled, or R2 unavailable | 503 from `PUT /u` | The endpoint isn't accepting uploads — may be transient, or the operator turned sharing off. The two are indistinguishable to the client, so the message covers both. |
 | Rate limited | 429 from `PUT /u` | "Too many uploads — try again shortly." |
 | No usable replay | meta state is `error`, 0 B | **Share** control absent entirely for that match |
 
