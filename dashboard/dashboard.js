@@ -624,6 +624,22 @@
     }
   }
 
+  /* A failure that came out of the upload call, and only out of the upload
+   * call. share/share-ui-support.js reads a status off it and maps "no status"
+   * to a transport failure, which is only true of a fetch that was actually
+   * attempted: a local failure has no status either, and reporting one as
+   * "couldn't reach the share endpoint" would offer a retry for something that
+   * repeats identically. Wrapped rather than sniffed, so the distinction is
+   * made where it is known rather than guessed from shape afterwards. */
+  class ShareUploadError extends Error {
+    constructor(cause) {
+      super(String((cause && cause.message) || cause));
+      this.name = "ShareUploadError";
+      this.status = cause && cause.status;
+      this.cause = cause;
+    }
+  }
+
   /* Let the browser paint the phase label before the phase begins. Shared with
    * the standalone viewer rather than reimplemented: waiting on a frame alone
    * never resolves in a backgrounded tab, which would park the pipeline with
@@ -683,16 +699,18 @@
    * here, so the extension ships no wildcard origin access and a self-hoster can
    * point Settings at their own instance with no manifest edit and no prompt.
    *
-   * The URL is still validated, because a malformed endpoint should fail with a
-   * clear message rather than an opaque fetch rejection. */
-  function ensureEndpointAccess(endpoint, cb) {
+   * The endpoint is still validated, because a malformed one should fail with a
+   * clear message rather than an opaque fetch rejection.
+   *
+   * Returns what to tell the user, or null when there is nothing to say. */
+  function endpointProblem(endpoint) {
     try {
       const { protocol } = new URL(endpoint);
       if (protocol !== "https:" && protocol !== "http:") throw new Error("bad protocol");
     } catch (_) {
-      return cb(false, "The share endpoint in Settings isn't a valid URL.");
+      return "The share endpoint in Settings isn't a valid URL.";
     }
-    cb(true, null);
+    return null;
   }
 
   function readReplay(matchId) {
@@ -795,11 +813,16 @@
 
     setShare(matchId, { phase: "uploading" });
     await paintYield();
-    const objectId = await window.RAShareHosts.hostFor("w").upload(frame, {
-      endpoint,
-      token: window.RAShareConfig.SHARE_TOKEN,
-      fetch: (url, init) => fetch(url, init),
-    });
+    let objectId;
+    try {
+      objectId = await window.RAShareHosts.hostFor("w").upload(frame, {
+        endpoint,
+        token: window.RAShareConfig.SHARE_TOKEN,
+        fetch: (url, init) => fetch(url, init),
+      });
+    } catch (err) {
+      throw new ShareUploadError(err);
+    }
 
     setShare(matchId, { phase: "verifying" });
     await paintYield();
@@ -825,11 +848,16 @@
    * key is stored because it exists nowhere else - the endpoint never sees it,
    * and without it a link cannot be rebuilt, only lost. Task 8's shares list
    * reads this. A write that fails must not lose the link the user is looking
-   * at, so the flow carries on either way. */
+   * at, so the flow carries on either way.
+   *
+   * Every write drops the records whose objects are certainly gone. Nothing
+   * else ever would: there is no expiry job and no server to run one, so
+   * without this a browser accumulates every key it has ever generated, long
+   * after the only thing they could decrypt stopped existing. */
   function rememberShare(record) {
     return new Promise((resolve) =>
       chrome.storage.local.get({ shares: [] }, (data) => {
-        const shares = Array.isArray(data.shares) ? data.shares : [];
+        const shares = SHARE.pruneShares(data.shares, Date.now());
         shares.push(record);
         chrome.storage.local.set({ shares }, () => {
           void chrome.runtime.lastError;
@@ -851,30 +879,44 @@
       return;
     }
     const endpoint = shareEndpoint;
-    ensureEndpointAccess(endpoint, (granted, why) => {
-      if (!granted) {
-        setShare(matchId, { phase: "idle", error: why, retry: true });
-        return;
-      }
-      shareBusy = matchId;
-      setShare(matchId, { phase: "preparing", error: null, retry: false });
-      runShare(matchId, endpoint)
-        .then(
-          ({ link, createdAt }) => setShare(matchId, { phase: "done", link, createdAt, error: null }),
-          (err) => {
-            // A ShareUiError already knows what it wants said; anything else came
-            // out of the upload and gets the status-to-message mapping.
-            const shown = err && err.shareMessage
-              ? { message: err.shareMessage, retry: err.shareRetry }
-              : SHARE.describeUploadFailure(err);
-            console.warn("[RA-Tracker] sharing failed:", err);
-            setShare(matchId, { phase: "idle", link: null, error: shown.message, retry: shown.retry });
-          }
-        )
-        .then(() => {
-          shareBusy = null;
-        });
-    });
+    const problem = endpointProblem(endpoint);
+    if (problem) {
+      setShare(matchId, { phase: "idle", error: problem, retry: true });
+      return;
+    }
+    shareBusy = matchId;
+    setShare(matchId, { phase: "preparing", error: null, retry: false });
+    runShare(matchId, endpoint)
+      .then(
+        ({ link, createdAt }) => setShare(matchId, { phase: "done", link, createdAt, error: null }),
+        (err) => {
+          console.warn("[RA-Tracker] sharing failed:", err);
+          setShare(matchId, Object.assign({ phase: "idle", link: null }, shareFailure(err)));
+        }
+      )
+      // finally, not then: a throw inside either settle handler above would
+      // otherwise leave shareBusy set for good, disabling sharing for every
+      // match until the page is reloaded.
+      .finally(() => {
+        shareBusy = null;
+      });
+  }
+
+  /* What to show for a failed share. Three sources, and only the middle one may
+   * be read as a network or endpoint problem:
+   *
+   *   ShareUiError      raised here, already carrying its own message
+   *   ShareUploadError  came out of the PUT, so the status mapping applies
+   *   anything else     a local failure - the CSS re-strip, the crypto, a
+   *                     script tag that did not load - which nothing about the
+   *                     endpoint explains and a retry would repeat exactly */
+  function shareFailure(err) {
+    if (err instanceof ShareUiError) return { error: err.shareMessage, retry: err.shareRetry };
+    if (err instanceof ShareUploadError) {
+      const shown = SHARE.describeUploadFailure(err);
+      return { error: shown.message, retry: shown.retry };
+    }
+    return { error: SHARE.MESSAGES.unprepared, retry: false };
   }
 
   /* The field is selected either way, so a blocked clipboard still leaves the
@@ -929,6 +971,13 @@
     if (archive) return;
     chrome.storage.local.get({ shares: [] }, (data) => {
       shares = SHARE.readShareList(data && data.shares);
+      // Records go on their own - pruned on write, or cleared with everything
+      // else - so an answer held for one that is no longer listed is an answer
+      // about a row that will never be drawn again.
+      const listed = new Set(shares.map((r) => r.objectId));
+      for (const objectId of [...recheckState.keys()]) {
+        if (!listed.has(objectId)) recheckState.delete(objectId);
+      }
       renderSharesPanel();
     });
   }
@@ -1063,7 +1112,10 @@
     );
     if (!ok) return;
     chrome.storage.local.get({ shares: [] }, (data) => {
-      const kept = (Array.isArray(data.shares) ? data.shares : []).filter(
+      // Pruned on this write like any other. Everything it removes alongside
+      // the chosen record is a share whose object the endpoint deleted days
+      // ago, so no row disappears that could still have been opened.
+      const kept = SHARE.pruneShares(data.shares, Date.now()).filter(
         (s) => !(s && s.objectId === objectId)
       );
       chrome.storage.local.set({ shares: kept }, () => {
@@ -1524,14 +1576,18 @@
       setTimeout(() => {
         const ok = confirm(
           `Archive downloaded (${bundle.matches.length} matches, ${sizeMb} MB).\n\n` +
-            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs and card data from the extension.\n\n` +
+            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs, card data and share links from the extension.\n\n` +
             `You can view it again any time with "View archive", or restore it with Import JSON.\n\n` +
+            `The archive does not carry share links: any share still on the endpoint keeps being served until it expires, but the record here is the only copy of the key that opens it.\n\n` +
             `Press Cancel to keep everything.`
         );
         if (!ok) return;
         chrome.storage.local.get(null, (data) => {
+          // "shares" goes with the rest: each record holds a decryption key,
+          // and a wipe that leaves every key a browser ever made behind is not
+          // the clean slate the button offers.
           const keys = Object.keys(data || {}).filter(
-            (k) => k.startsWith("deckcards_") || k.startsWith("log_")
+            (k) => k === "shares" || k.startsWith("deckcards_") || k.startsWith("log_")
           );
           chrome.storage.local.remove(keys, () => {
             all = [];
@@ -1586,14 +1642,18 @@
 
   $("#clearAll").addEventListener("click", () => {
     if (readOnly()) return;
-    if (confirm("Delete ALL recorded matches, logs and replays? Consider using Archive & clear instead, which saves a copy first.")) {
+    if (confirm(
+      "Delete ALL recorded matches, logs, replays and share links? " +
+        "Any share already uploaded keeps being served until it expires, but the key that opens it is kept only here. " +
+        "Consider using Archive & clear instead, which saves a copy first."
+    )) {
       all = [];
       expanded.clear();
       logCache.clear();
       forgetAllVisual();
       chrome.storage.local.get(null, (data) => {
         const keys = Object.keys(data || {}).filter(
-          (k) => k.startsWith("deckcards_") || k.startsWith("log_")
+          (k) => k === "shares" || k.startsWith("deckcards_") || k.startsWith("log_")
         );
         if (keys.length) chrome.storage.local.remove(keys);
       });

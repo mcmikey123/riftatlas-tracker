@@ -47,7 +47,12 @@
     unverified:
       "The upload could not be confirmed, so no link is being shown. " +
       "Try again - the unconfirmed copy expires on its own.",
-    unreadable: "The replay for this match could not be read."
+    unreadable: "The replay for this match could not be read.",
+    // Everything that goes wrong on this machine before anything is sent.
+    // Distinct from `network` on purpose: nothing was uploaded, nothing was
+    // reached, and a second attempt would fail in exactly the same way, so
+    // offering a retry button would be a lie.
+    unprepared: "This replay could not be prepared for sharing."
   };
 
   // Only a rate limit, a temporary outage, a transport failure and an
@@ -146,7 +151,8 @@
    *
    * The record is local bookkeeping only. Deleting it does not delete the
    * object, and there is no way to delete the object early - see
-   * docs/specs/2026-08-10-replay-sharing-design.md.
+   * docs/specs/2026-08-10-replay-sharing-design.md. It is dropped from the
+   * store once its object is certainly gone; see `isPrunable`.
    */
   function shareRecord(fields) {
     const f = fields || {};
@@ -176,6 +182,34 @@
   /** Whether a share has passed its TTL. Nothing here can bring it back. */
   function isExpired(record, now) {
     return Number(now) >= expiresAt(record);
+  }
+
+  /**
+   * A record holds a 256-bit key that exists nowhere else, so it is dropped as
+   * soon as it is certainly residue - but not one moment before.
+   *
+   * The bucket's lifecycle rule removes an object within about a day of its
+   * TTL, so a share that has just expired by this clock may still be being
+   * served. Pruning at exactly the TTL would therefore throw away the key to a
+   * live object, and the shares panel's own "Clear from list" confirm promises
+   * the record is the only copy of it. The grace window is what keeps automatic
+   * pruning from contradicting that promise: everything it removes is a link
+   * that already opens to nothing.
+   */
+  const PRUNE_GRACE_MS = 2 * 86400000;
+
+  function isPrunable(record, now) {
+    return Number(now) >= expiresAt(record) + PRUNE_GRACE_MS;
+  }
+
+  /**
+   * The `shares` array with the certainly-dead records dropped, for writing
+   * back. Anything undatable is kept rather than discarded: this decides what
+   * to delete, and "I can't read this record" is not evidence that its object
+   * is gone. `readShareList` is what keeps such a record off the screen.
+   */
+  function pruneShares(raw, now) {
+    return (Array.isArray(raw) ? raw : []).filter((entry) => entry && !isPrunable(entry, now));
   }
 
   const MINUTE_MS = 60000;
@@ -291,6 +325,7 @@
     MAX_UPLOAD_BYTES,
     SHARE_TTL_DAYS,
     SHARE_TTL_MS,
+    PRUNE_GRACE_MS,
     MESSAGES,
     RECHECK_MESSAGES,
     fmtSize,
@@ -301,6 +336,8 @@
     shareRecord,
     expiresAt,
     isExpired,
+    isPrunable,
+    pruneShares,
     expiryText,
     readShareList,
     describeRecheck

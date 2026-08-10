@@ -13,6 +13,9 @@ const {
   shareRecord,
   expiresAt,
   isExpired,
+  isPrunable,
+  pruneShares,
+  PRUNE_GRACE_MS,
   expiryText,
   readShareList,
   describeRecheck
@@ -104,7 +107,7 @@ test("a transport failure with no status is a retryable network error", () => {
   }
 });
 
-test("the four distinct messages are actually distinct", () => {
+test("every failure message is distinct from every other", () => {
   const shown = Object.values(MESSAGES);
   assert.strictEqual(new Set(shown).size, shown.length, "every failure needs its own wording");
 });
@@ -204,6 +207,41 @@ test("a share past its TTL says so, and says how long ago", () => {
   assert.strictEqual(expiryText(r, expiresAt(r)), "expired just now");
   assert.strictEqual(expiryText(r, expiresAt(r) + 2 * HOUR), "expired 2 hours ago");
   assert.strictEqual(expiryText(r, expiresAt(r) + 50 * HOUR), "expired 2 days ago");
+});
+
+// Records are dropped from storage on every write, because each one holds a
+// 256-bit key that exists nowhere else and is pure residue once its object is
+// gone. The grace window is the whole subtlety: the bucket removes an object
+// within about a day of its TTL, so a share that has only just expired may
+// still be live, and pruning it would destroy the key to something the endpoint
+// is still serving - which is exactly what the panel's own clear-from-list
+// confirm promises will not happen behind the user's back.
+test("a record is prunable only once its object is certainly gone, not at expiry", () => {
+  const r = record();
+  assert.ok(PRUNE_GRACE_MS >= 86400000, "the grace must cover the bucket's own deletion lag");
+  assert.strictEqual(isPrunable(r, expiresAt(r)), false, "expired is not yet certainly deleted");
+  assert.strictEqual(isPrunable(r, expiresAt(r) + PRUNE_GRACE_MS - 1), false);
+  assert.strictEqual(isPrunable(r, expiresAt(r) + PRUNE_GRACE_MS), true);
+});
+
+test("pruning keeps live shares, recently expired ones, and anything undatable", () => {
+  const live = record({ objectId: "A".repeat(22) });
+  const justExpired = record({ objectId: "B".repeat(22), createdAt: CREATED - SHARE_TTL_MS });
+  const longGone = record({ objectId: "C".repeat(22), createdAt: CREATED - 30 * 24 * HOUR });
+  const undatable = record({ objectId: "D".repeat(22), createdAt: "whenever" });
+
+  const kept = pruneShares([live, justExpired, longGone, undatable, null, undefined], CREATED);
+  assert.deepStrictEqual(
+    kept.map((r) => r.objectId),
+    ["A".repeat(22), "B".repeat(22), "D".repeat(22)],
+    "only the certainly-dead record is dropped, and order is preserved"
+  );
+});
+
+test("pruning a missing or non-array shares key yields an empty list", () => {
+  for (const bad of [undefined, null, {}, "shares", 7]) {
+    assert.deepStrictEqual(pruneShares(bad, CREATED), [], String(bad));
+  }
 });
 
 test("the stored list comes back newest first", () => {
