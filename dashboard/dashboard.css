@@ -61,6 +61,11 @@ input[type="number"] {
   font-variant-numeric: tabular-nums;
 }
 input[type="number"]:focus { outline: none; border-color: var(--accent); }
+input[type="url"] {
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; width: 260px;
+}
+input[type="url"]:focus { outline: none; border-color: var(--accent); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 14px 0 8px; }
 .tile {
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
@@ -231,7 +236,7 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 .vd-total .vd-note { color: var(--ink-3); font-size: 11.5px; font-weight: 400; }
 /* The state is the column you scan for, so each one is a distinct colour
    rather than another line of grey text. */
-.vd-state {
+.vd-state, .sh-state {
   display: inline-block; padding: 1px 8px; border-radius: 999px;
   font-size: 11px; letter-spacing: 0.03em;
   border: 1px solid rgba(134, 168, 246, 0.3); color: var(--ink-2);
@@ -270,3 +275,48 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
   color: #ffe6bf; font-size: 12px;
 }
 .vr-note { flex: 0 0 auto; margin: 0 0 8px; font-size: 11px; color: var(--ink-3); }
+
+/* --- replay sharing --- */
+/* The disclosure leads and stays visible in every state, including once the
+   link exists: what a share exposes and the fact that it cannot be unshared
+   matter most at the moment someone is about to paste the link somewhere. */
+.share-box {
+  margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+  background: #0b1424; border: 1px solid var(--border);
+}
+.share-lead { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.share-caveats { margin: 0 0 10px; font-size: 11.5px; color: var(--ink-3); max-width: 62ch; }
+.share-progress { margin: 0; font-size: 12px; color: var(--accent); }
+.share-error { margin: 0 0 8px; font-size: 12px; color: #f3c0c0; max-width: 62ch; }
+.share-note { margin: 6px 0 0; font-size: 11px; color: var(--ink-3); }
+.share-link-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.share-link {
+  flex: 1 1 280px; min-width: 0;
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.share-link:focus { outline: none; border-color: var(--accent); }
+
+/* --- shares list --- */
+/* Read-only bookkeeping: nothing in this table can delete anything from the
+   endpoint, so the only destructive control is "clear from list", and it is
+   offered on expired rows only. */
+#sharesTable td { vertical-align: top; }
+#sharesTable td:first-child { color: var(--ink-2); }
+.sh-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sh-link-cell { min-width: 300px; }
+.sh-actions { white-space: nowrap; }
+/* An expired row stays legible - it is still a record of something that was
+   shared - but reads as spent rather than live. */
+.sh-expired-row > td { color: var(--ink-3); }
+.sh-expired-row .share-link { color: var(--ink-3); }
+.sh-msg { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-3); white-space: normal; max-width: 44ch; }
+.sh-alive { border-color: rgba(98, 201, 156, 0.5); background: rgba(98, 201, 156, 0.14); color: var(--win); }
+.sh-gone { border-color: rgba(224, 138, 138, 0.55); background: rgba(224, 138, 138, 0.16); color: var(--loss); }
+/* Nothing was learned either way, so both read as a caution rather than as an
+   answer - one for silence, one for an answer that wasn't the share. */
+.sh-unreachable,
+.sh-unexpected { border-color: rgba(240, 190, 110, 0.5); background: rgba(240, 190, 110, 0.14); color: #ffcf8a; }
+.sh-expired { border-color: rgba(134, 168, 246, 0.3); background: rgba(134, 168, 246, 0.1); color: var(--ink-3); }
+.sh-forget { margin-left: 6px; }

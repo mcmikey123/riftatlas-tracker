@@ -1,0 +1,27 @@
+# Cloudflare — never commit anything that identifies or authenticates an account
+share/worker/wrangler.toml
+share/worker/.env
+share/worker/.dev.vars
+.wrangler/
+.dev.vars
+.env
+
+# Generated: synced into the Worker's static assets directory before deploy
+share/worker/public/vendor/
+share/worker/public/replay/
+share/worker/public/share/
+share/worker/public/store/
+
+# Spike scratch. Exported replays carry the opponent's display name and the match
+# chat, so these directories must never be committable.
+share/spike/
+scratch/
+
+# Tooling
+node_modules/
+*.local
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini

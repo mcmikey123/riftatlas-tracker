@@ -63,6 +63,9 @@
   <label title="A safeguard, not a target — you should not normally need to touch it. If one match's recording somehow runs past this, capture stops there and the replay is marked truncated rather than being recorded at lower fidelity. Leave blank for no ceiling at all.">Stop a runaway recording at (MB, blank = no limit)
     <input type="number" id="visualCeiling" step="1" placeholder="no limit" />
   </label>
+  <label title="Where a shared replay is uploaded. Leave this alone unless you run your own instance. Blank restores the default.">Share endpoint
+    <input type="url" id="shareEndpoint" placeholder="https://…" spellcheck="false" />
+  </label>
 </section>
 
 <section class="tiles">
@@ -137,12 +140,42 @@
   </table>
 </section>
 
-<footer>All data is stored locally in your browser. Nothing is uploaded anywhere.</footer>
+<section id="sharesPanel" hidden>
+  <h2>Shared replay links</h2>
+  <p class="hint">
+    Every share link created from this browser, newest first. A link is a bearer token: anyone it reaches can watch
+    the replay, which includes your opponent's display name and the match chat.
+    <b>A share can't be unshared.</b> There is no way to revoke one early &mdash; each expires on its own
+    7&nbsp;days after it was created, when the endpoint deletes the encrypted copy, and that sweep can run up to a
+    day late. <b>Re-check</b> asks the endpoint whether a share's copy is still there.
+    Clearing an expired share removes this local record and nothing else; the record is the only place its
+    decryption key is kept, so a cleared link can never be rebuilt.
+  </p>
+  <table id="sharesTable">
+    <thead><tr>
+      <th>Match</th><th>Created</th><th>Expires</th><th>Link</th><th>Re-check</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<footer>All data is stored locally in your browser. Nothing is uploaded anywhere unless you create a share link for a replay, which uploads that one replay encrypted.</footer>
 <script src="format.js"></script>
 <script src="analysis.js"></script>
 <script src="fingerprint.js"></script>
 <script src="../vendor/rrweb-replay.min.js"></script>
+<script src="../replay/replay-timeline.js"></script>
+<script src="../replay/replay-core.js"></script>
 <script src="replay-html.js"></script>
+<!-- Sharing. css-assets.js is loaded here as well as in the service worker: a
+     share re-strips the CSS that get() rehydrated, using the same pure function
+     storage uses, before anything is compressed. -->
+<script src="../store/css-assets.js"></script>
+<script src="../share/config.js"></script>
+<script src="../share/payload.js"></script>
+<script src="../share/hosts.js"></script>
+<script src="../share/share-ui-support.js"></script>
+<script src="../share/repaint.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>

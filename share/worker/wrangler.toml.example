@@ -1,0 +1,30 @@
+# Copy to wrangler.toml and fill in. wrangler.toml is gitignored — never commit it.
+# Account id and API token come from the environment, not from this file:
+#   export CLOUDFLARE_ACCOUNT_ID=...
+#   export CLOUDFLARE_API_TOKEN=...
+# See env.example.
+
+name = "riftatlas-replay-share"
+main = "src/worker.js"
+compatibility_date = "2026-08-10"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "REPLACE_WITH_YOUR_BUCKET_NAME"
+
+# Per-IP upload limit. This is the Workers rate-limiting binding, not a WAF rate-limiting
+# rule: WAF rules are zone-scoped and do not apply to a workers.dev deployment.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+[vars]
+UPLOADS_ENABLED = "true"
+MAX_UPLOAD_BYTES = "12582912"
+
+# UPLOAD_TOKEN is set with `wrangler secret put UPLOAD_TOKEN`, never here.

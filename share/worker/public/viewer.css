@@ -1,0 +1,201 @@
+/* Rift Atlas Stats Tracker - share viewer
+ *
+ * Dark only, on the dashboard's palette so a shared replay looks like the one
+ * the sharer was watching. There is no light branch and no theme toggle.
+ *
+ * The page is one flex column from <body> down to .stage: every band of chrome
+ * takes only the height it needs and the stage claims the remainder. That is
+ * what gives replay-core.js a real box to fit the board into — it measures
+ * .stage with clientWidth/clientHeight, and a stage with no height would leave
+ * the board pinned at 1:1 in the corner.
+ */
+:root {
+  color-scheme: dark;
+  --bg: #0d1626;
+  --surface: #16233b;
+  --surface-2: #1d2d4a;
+  --border: rgba(134, 168, 246, 0.28);
+  --ink: #edf3ff;
+  --ink-2: #a9bcdd;
+  --ink-3: #7e93b8;
+  --accent: #86a8f6;
+  --warn-bg: rgba(124, 92, 45, 0.28);
+  --warn-border: rgba(240, 190, 110, 0.45);
+  --warn-ink: #ffe6bf;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  height: 100dvh;
+  display: flex;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.viewer {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px clamp(12px, 3vw, 32px) 10px;
+  gap: 8px;
+}
+
+.head { flex: 0 0 auto; }
+.head h1 { margin: 0; font-size: 16px; letter-spacing: 0.01em; }
+.sub { margin: 2px 0 0; font-size: 12px; color: var(--ink-3); }
+
+/* --- notices: truncation, lost tail, unreachable card art --- */
+.notices { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.notice {
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  color: var(--warn-ink);
+  font-size: 12px;
+}
+.notice-quiet {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--ink-3);
+}
+
+/* --- loading and failure --- */
+.status {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+}
+.status-msg { margin: 0; font-size: 15px; }
+.status-detail { margin: 0; font-size: 12px; color: var(--ink-3); max-width: 46ch; }
+.status.failed .status-msg { color: var(--ink); }
+
+/* Indeterminate: the work is a fetch of unknown speed followed by a decrypt of
+   known-but-unmeasurable progress, so the bar says "still working", nothing more. */
+.bar {
+  width: min(280px, 60vw);
+  height: 3px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: slide 1.2s ease-in-out infinite;
+}
+@keyframes slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bar span { animation: none; width: 100%; opacity: 0.5; }
+}
+
+/* --- transport --- */
+.player {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.btn {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.btn:hover { background: #27395c; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The slider is labelled for screen readers; sighted users have the clock beside it. */
+.seek-label {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip-path: inset(50%);
+  white-space: nowrap;
+}
+.seek { flex: 1 1 120px; min-width: 80px; accent-color: var(--accent); }
+.clock {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapters {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+.chapter {
+  padding: 3px 9px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chapter.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b1424;
+  font-weight: 700;
+}
+
+/* The stage clips the replayer, which is laid out at its captured viewport and
+   then translated and scaled from its top-left corner. The iframe's own width
+   and height never change: changing them would fire different media queries
+   than the capture ran under, which is the drift this whole feature removes. */
+.stage {
+  flex: 1 1 auto;
+  min-height: 180px;
+  position: relative;
+  overflow: hidden;
+  background: #0b1424;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+/* Nothing here may pin a raster scale — no will-change, no filter, no
+   backface-visibility. Those freeze the iframe's texture at 1x and leave an
+   upscaled board blurry; letting the compositor re-raster at the transform's
+   scale keeps the text sharp. */
+.scale { transform-origin: top left; }
+.scale iframe { border: 0; display: block; background: #fff; image-rendering: auto; }
+
+.hint {
+  flex: 0 0 auto;
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  text-align: center;
+}
