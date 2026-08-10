@@ -1,0 +1,10 @@
+# Static assets are served by Cloudflare's asset layer BEFORE the Worker runs, so the
+# Worker's own response headers never apply to the viewer page. These do.
+#
+# Using _headers rather than [assets] run_worker_first keeps asset fetches from consuming
+# Worker invocations — the Workers Free daily invocation ceiling is this instance's only
+# hard spend cap, so it is not spent on serving static files. See docs/adr/0001.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://assets.riftatlas-workers.com; connect-src 'self'; frame-src 'self' blob:
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
