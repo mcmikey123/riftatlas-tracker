@@ -65,7 +65,7 @@ test("the replay bundle exports a Replayer constructor", () => {
   assert.strictEqual(
     typeof rrwebReplay.Replayer,
     "function",
-    "dashboard/replay-html.js constructs new rrwebReplay.Replayer(...)"
+    "replay/replay-core.js constructs new rrwebReplay.Replayer(...)"
   );
 });
 
@@ -106,7 +106,7 @@ test("every rrweb member the browser code calls is present on a bundle", () => {
   const replay = loadBundle("vendor/rrweb-replay.min.js").rrwebReplay;
   const sources = {
     "capture/dom-recorder.js": record,
-    "dashboard/replay-html.js": replay
+    "replay/replay-core.js": replay
   };
   for (const [file, exported] of Object.entries(sources)) {
     const global = exported === record ? "rrwebRecord" : "rrwebReplay";
@@ -114,6 +114,10 @@ test("every rrweb member the browser code calls is present on a bundle", () => {
     const used = new Set(
       [...source.matchAll(new RegExp(`${global}\\.([A-Za-z_$][\\w$]*)`, "g"))].map((m) => m[1])
     );
+    // A file that touches no member at all makes the loop below pass vacuously,
+    // which is how this test would silently stop guarding anything if the rrweb
+    // calls were ever moved to another file again.
+    assert.ok(used.size > 0, `${file} calls no ${global} member — has the code moved?`);
     for (const member of used) {
       assert.ok(
         typeof exported[member] !== "undefined",
