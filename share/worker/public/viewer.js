@@ -6,6 +6,9 @@
  *
  *   /#1.<object-id>.<key>   ->   GET /b/<object-id>   ->   AES-GCM   ->   rrweb
  *
+ * An optional fourth fragment field is a position in whole seconds, and the
+ * replay opens there. "Copy link to this moment" is the other half of it.
+ *
  * The fragment never leaves the browser, so the instance serving this page
  * cannot read what it is storing. It follows that everything here runs in the
  * client and that every failure has to be explained in the page itself.
@@ -35,7 +38,8 @@
     "RAShareHosts",
     "rehydrateCssAssets",
     "RAShareViewer",
-    "RARepaint"
+    "RARepaint",
+    "RAClipboard"
   ];
 
   // Secondary lines. The headline says what happened; these say what to do,
@@ -214,7 +218,30 @@
     }, CARD_ART_INTERVAL_MS);
   }
 
-  function mount(meta, events) {
+  /**
+   * A link to this same share, opening wherever the replay is right now.
+   *
+   * The endpoint is this page's own origin, which is the whole point of the
+   * Worker serving both the viewer and the object: the link a recipient
+   * forwards is the link they were given, pointing at the instance that
+   * actually holds the bytes.
+   *
+   * The address bar is deliberately left alone. Rewriting location.hash as
+   * playback advanced would push a history entry every few seconds and turn
+   * Back into "one second earlier"; this button is the explicit gesture
+   * instead.
+   */
+  function copyMoment(link, button) {
+    const url = root.RAShareHosts.buildLink({
+      endpoint: root.location.origin,
+      objectId: link.objectId,
+      keyBytes: link.keyBytes,
+      atSeconds: root.RAShareHosts.toLinkSeconds(playback.getTime())
+    });
+    root.RAClipboard.copyToButton(url, button);
+  }
+
+  function mount(meta, events, link) {
     const { ViewerError, fmtClock } = root.RAShareViewer;
     const { MAX_CHIPS, SEEK, timeline, evenly, truncationText } = root.RAReplayTimeline;
 
@@ -256,6 +283,10 @@
       meta,
       marks,
       autoplay: true,
+      // A link that names a moment opens at it. Autoplay is decided by the same
+      // rule either way, prefers-reduced-motion included - a timestamp says
+      // where to start, never whether to start moving.
+      startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
       onTime: paintTime,
       onPlayState: paintPlayState
     });
@@ -266,6 +297,7 @@
 
     ui.sub.textContent = summarise(meta, marks, playback.totalTime);
     ui.play.addEventListener("click", () => playback.togglePlay());
+    ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));
     ui.prev.addEventListener("click", () => playback.stepTo(-1));
     ui.next.addEventListener("click", () => playback.stepTo(1));
     // `input` fires all the way through a drag, so the drag holds playback and
@@ -338,7 +370,7 @@
       const events = rehydrate(payload);
 
       try {
-        mount((payload && payload.meta) || {}, events);
+        mount((payload && payload.meta) || {}, events, link);
       } catch (err) {
         // Everything from here down is the engine refusing the recording, which
         // is one remedy — reading it — not the generic "something went wrong".
@@ -354,7 +386,7 @@
 
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
-      "player", "play", "prev", "next", "seek", "clock", "chapters", "stage", "scale"]) {
+      "player", "play", "prev", "next", "seek", "clock", "copyAt", "chapters", "stage", "scale"]) {
       ui[id] = doc.getElementById(id);
     }
 

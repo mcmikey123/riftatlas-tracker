@@ -152,6 +152,11 @@ body {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* The seek slider takes the slack, so this sits at the right-hand end of the
+   row. It never wraps mid-label: the message it flashes when it is clicked is
+   shorter than the label, and a control that changes width as it answers you
+   drags the whole control row around with it. */
+.moment { margin-left: auto; white-space: nowrap; }
 
 .chapters {
   flex: 0 0 auto;

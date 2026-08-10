@@ -24,6 +24,7 @@
 <script defer src="/store/css-assets.js"></script>
 <script defer src="/share/viewer-support.js"></script>
 <script defer src="/share/repaint.js"></script>
+<script defer src="/share/clipboard.js"></script>
 <script defer src="/viewer.js"></script>
 </head>
 <body>
@@ -50,6 +51,8 @@
       <label class="seek-label" for="seek">Position</label>
       <input class="seek" id="seek" type="range" min="0" max="1000" value="0" step="1">
       <span class="clock" id="clock">0:00 / 0:00</span>
+      <button class="btn moment" id="copyAt" type="button"
+              title="Copy a link that opens this replay at the moment it is showing now">Copy link to this moment</button>
     </div>
     <div class="chapters" id="chapters" hidden></div>
     <div class="stage" id="stage"><div class="scale" id="scale"></div></div>
