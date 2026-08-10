@@ -148,31 +148,53 @@ textarea.notes:focus { outline: none; border-color: var(--accent); }
 .log-t { color: var(--ink-3); margin-right: 8px; font-variant-numeric: tabular-nums; }
 
 /* --- replay viewer --- */
-.rp-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-.rp-chapters { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; }
+.rp-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.rp-chapters { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
 .rp-chapter { padding: 3px 9px; font-size: 11px; font-variant-numeric: tabular-nums; }
 .rp-chapter.on { background: var(--accent); border-color: var(--accent); color: #0b1424; font-weight: 700; }
 
 /* full-screen replay */
+/* The overlay is one flex column from the backdrop down to the stage: every
+   band of chrome is `flex: 0 0 auto` and takes only the height it needs, and
+   .vr-stage takes the whole remainder. That is what makes the board fill the
+   screen, and it is also why fullscreen needs no second set of measurements —
+   the same column just gets a taller box to divide up. */
 body.rp-modal-open { overflow: hidden; }
 .rp-modal-backdrop {
   position: fixed; inset: 0; z-index: 1000; background: rgba(4, 9, 18, 0.86);
-  display: grid; place-items: center; padding: 2vh 1.5vw;
+  display: flex; padding: 8px;
   backdrop-filter: blur(2px);
 }
 .rp-modal {
-  width: min(1600px, 97vw); max-height: 96vh; overflow: auto;
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
   background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
-  padding: 16px 20px 14px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  padding: 10px 14px 8px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
 }
 .rp-modal-head {
+  flex: 0 0 auto;
   display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 16px; margin-bottom: 12px;
+  gap: 16px; margin-bottom: 8px;
 }
-.rp-modal-head h2 { margin: 0; font-size: 18px; }
-.rp-modal-sub { margin: 3px 0 0; font-size: 12px; color: var(--ink-3); }
+.rp-modal-head h2 { margin: 0; font-size: 16px; }
+.rp-modal-sub { margin: 2px 0 0; font-size: 12px; color: var(--ink-3); }
 .rp-close { padding: 6px 12px; font-size: 12px; }
-.rp-hint { margin: 10px 0 0; font-size: 11px; color: var(--ink-3); text-align: center; }
+/* Scrolls only when the chrome plus the stage's floor no longer fit, i.e. on a
+   window short enough that something has to give. */
+.rp-modal-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.rp-hint { flex: 0 0 auto; margin: 6px 0 0; font-size: 11px; color: var(--ink-3); text-align: center; }
+
+/* Fullscreen is the same overlay with the window's own frame gone: no rounded
+   corners floating on a backdrop nobody can see, and a little less padding. The
+   box is restated in full rather than left to the UA's :fullscreen rule, which
+   author styles here would otherwise partly outrank; pinned to the viewport, it
+   is out of the backdrop's flex flow and the flex sizing above stops applying. */
+.rp-modal.rp-full {
+  position: fixed; inset: 0; margin: 0;
+  width: 100%; height: 100%; max-width: none; max-height: none;
+  border: 0; border-radius: 0; box-shadow: none; padding: 8px 12px 6px;
+}
+.rp-modal.rp-full::backdrop { background: #0d1626; }
 
 .rp-btn {
   padding: 3px 9px; font-size: 12px; line-height: 1.2;
@@ -221,18 +243,30 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 
 /* --- visual replay viewer --- */
 /* The stage clips the replayer, which is laid out at its captured viewport and
-   scaled from the top-left corner by replay-html.js. Its height is set inline
-   to the scaled height, so the controls sit right under the board. */
+   then translated and scaled from its top-left corner by replay-html.js. The
+   stage claims every pixel the chrome left over, and the board is centred
+   inside it; the iframe's own width and height never change, because changing
+   them would fire different media queries than the capture ran under. The floor
+   keeps it from collapsing to nothing on a very short window — past that the
+   modal body scrolls instead. */
 .vr-stage {
+  flex: 1 1 auto; min-height: 180px;
   position: relative; overflow: hidden;
   background: #0b1424; border: 1px solid var(--border); border-radius: 8px;
 }
 .vr-scale { transform-origin: top left; }
-.vr-scale iframe { border: 0; display: block; background: #fff; }
+/* Nothing here may pin a raster scale — no will-change, no filter, no
+   backface-visibility. Those would freeze the iframe's texture at 1x and leave
+   an upscaled board blurry, where letting the compositor re-raster at the
+   transform's scale keeps the text sharp. Card art is bitmap and does get
+   resampled above 1:1, and smooth is the right resampling for artwork, so the
+   default is stated rather than overridden. */
+.vr-scale iframe { border: 0; display: block; background: #fff; image-rendering: auto; }
 .vr-banner {
+  flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  flex-wrap: wrap; margin: 0 0 10px; padding: 9px 14px; border-radius: 10px;
+  flex-wrap: wrap; margin: 0 0 8px; padding: 7px 12px; border-radius: 10px;
   background: rgba(124, 92, 45, 0.28); border: 1px solid rgba(240, 190, 110, 0.45);
   color: #ffe6bf; font-size: 12px;
 }
-.vr-note { margin: 0 0 10px; font-size: 11px; color: var(--ink-3); }
+.vr-note { flex: 0 0 auto; margin: 0 0 8px; font-size: 11px; color: var(--ink-3); }

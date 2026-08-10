@@ -19,9 +19,40 @@
   const FULL_SNAPSHOT = 2; // rrweb EventType.FullSnapshot
   const CUSTOM = 5; // rrweb EventType.Custom
   const MAX_CHIPS = 30; // more than this and the chip row stops being scannable
-  const MIN_STAGE_H = 240;
-  const STAGE_MARGIN = 108; // room the controls and hint line need below the stage
   const DEFAULT_VIEWPORT = { w: 1280, h: 800 };
+
+  /**
+   * Captures are ~1280x800, so on anything bigger than a laptop panel a replay
+   * that refused to pass 1:1 would sit in one corner of the screen — which is
+   * the complaint fullscreen exists to answer. Upscaling is therefore allowed,
+   * capped at 2x: the board is DOM text that the compositor re-rasters at the
+   * transform's scale, so it stays sharp, but past 2x there is no more detail
+   * in the capture to reveal and the card art is only getting blurrier.
+   */
+  const MAX_SCALE = 2;
+  /**
+   * Scale is quantised to this step, and snapped to exactly 1 whenever it lands
+   * within one step of it. 1:1 is the one ratio where every captured pixel maps
+   * onto one device pixel with no resampling at all, so it is worth a percent
+   * of unused room; the quantising itself stops a drag-resize from re-rastering
+   * the iframe at a new fractional scale on every single frame.
+   */
+  const SCALE_STEP = 0.01;
+  /**
+   * Escape is consumed by the browser to leave fullscreen, but not every engine
+   * agrees on whether the page also sees the keydown. Any Escape this soon after
+   * leaving fullscreen is treated as that one, so a single press never both
+   * leaves fullscreen and closes the modal behind it.
+   */
+  const ESCAPE_GRACE_MS = 300;
+
+  /** The scale to render at, given how much room the raw fit would allow. */
+  function quantise(raw) {
+    const capped = Math.min(raw, MAX_SCALE);
+    if (Math.abs(capped - 1) < SCALE_STEP) return 1;
+    // Floored, never rounded: a scale above the raw fit would overflow the stage.
+    return Math.max(SCALE_STEP, Math.floor(capped / SCALE_STEP) * SCALE_STEP);
+  }
 
   /** Turn number carried by an rrweb custom event, or null if it isn't one. */
   function turnOf(event) {
@@ -99,6 +130,7 @@
         <button class="rp-btn vr-next" title="Next board state (→)">▶|</button>
         <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
         <span class="rp-meta vr-time"></span>
+        <button class="rp-btn vr-full" title="Fullscreen (f)" aria-pressed="false">⛶ Fullscreen</button>
       </div>
       ${
         chips.length > 1
@@ -123,6 +155,7 @@
       playBtn: container.querySelector(".vr-play"),
       prevBtn: container.querySelector(".vr-prev"),
       nextBtn: container.querySelector(".vr-next"),
+      fullBtn: container.querySelector(".vr-full"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
     };
   }
@@ -130,8 +163,8 @@
   /**
    * Start rrweb inside the stage. Returns the replayer together with the two
    * functions that keep it at its recorded size — `pin` forces the iframe back
-   * to the captured viewport, `fit` scales the result down to the room we have
-   * — or null if the recording will not play at all.
+   * to the captured viewport, `fit` scales the result to the room we have — or
+   * null if the recording will not play at all.
    */
   function mountReplayer(handles, events, viewport) {
     const { stage, scaleEl } = handles;
@@ -167,13 +200,19 @@
       }
     }
 
+    // The stage is a flex item that has already been given every pixel the
+    // chrome did not take, in the window or in fullscreen alike, so the room is
+    // simply its own box — no measuring of the viewport, and nothing here to
+    // re-tune when the modal's chrome changes. The iframe itself is never
+    // resized; only the scale it is drawn at moves.
     function fit() {
-      const room = stage.clientWidth || vw;
-      const top = stage.getBoundingClientRect().top;
-      const tall = Math.max(MIN_STAGE_H, root.innerHeight - top - STAGE_MARGIN);
-      const scale = Math.min(room / vw, tall / vh, 1);
-      scaleEl.style.transform = `scale(${scale})`;
-      stage.style.height = Math.ceil(vh * scale) + "px";
+      const roomW = stage.clientWidth || vw;
+      const roomH = stage.clientHeight || vh;
+      const scale = quantise(Math.min(roomW / vw, roomH / vh));
+      // Integer offsets: centring on a half pixel would blur the whole board.
+      const x = Math.max(0, Math.round((roomW - vw * scale) / 2));
+      const y = Math.max(0, Math.round((roomH - vh * scale) / 2));
+      scaleEl.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     }
 
     return { replayer, pin, fit };
@@ -185,7 +224,7 @@
    * `destroy` is the teardown for everything wired here.
    */
   function wireControls(handles, mounted, marks, chips) {
-    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, chapterEls } = handles;
+    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, chapterEls } = handles;
     const { replayer, pin, fit } = mounted;
 
     const total = Math.max(1, replayer.getMetaData().totalTime || 0);
@@ -199,6 +238,30 @@
     let playing = false;
     let raf = null;
     let at = 0;
+    let dead = false;
+
+    // Fullscreen goes on the modal shell, not the stage, so the transport, the
+    // chapter chips and the truncation banner come along with the board. When
+    // the viewer is mounted somewhere other than the modal, that element is the
+    // container itself.
+    const shell = (typeof container.closest === "function" && container.closest(".rp-modal")) || container;
+    const canFullscreen =
+      !!fullBtn &&
+      typeof shell.requestFullscreen === "function" &&
+      typeof document.exitFullscreen === "function" &&
+      document.fullscreenEnabled !== false;
+    let wasFull = false;
+    let leftFullAt = 0;
+
+    /** Refit, but never after teardown — deferred fits outlive the modal. */
+    function refit() {
+      if (dead) return;
+      fit();
+    }
+
+    function isFull() {
+      return document.fullscreenElement === shell;
+    }
 
     function paint() {
       slider.value = String(Math.round(at));
@@ -247,9 +310,80 @@
       seek(next == null ? (dir > 0 ? total : 0) : next);
     }
 
+    function paintFullscreen() {
+      const on = isFull();
+      shell.classList.toggle("rp-full", on);
+      fullBtn.textContent = on ? "⤢ Exit fullscreen" : "⛶ Fullscreen";
+      fullBtn.title = on ? "Leave fullscreen (f or Esc)" : "Fullscreen (f)";
+      fullBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
+    /** Leave fullscreen if we are in it. Never throws, never rejects outward. */
+    function leaveFullscreen() {
+      let done;
+      try {
+        done = document.exitFullscreen();
+      } catch (err) {
+        console.warn("[RA-Tracker] could not leave fullscreen:", err);
+        return;
+      }
+      if (done && typeof done.catch === "function") {
+        done.catch((err) => console.warn("[RA-Tracker] could not leave fullscreen:", err));
+      }
+    }
+
+    /**
+     * requestFullscreen can be refused outright — an iframe without the
+     * permission, a user gesture the browser did not credit — and it reports
+     * that by rejecting, not throwing. Either way the viewer stays exactly as it
+     * was, so all we owe is repainting the button back to its real state.
+     */
+    function toggleFullscreen() {
+      if (!canFullscreen) return;
+      if (isFull()) return leaveFullscreen();
+      let done;
+      try {
+        done = shell.requestFullscreen();
+      } catch (err) {
+        console.warn("[RA-Tracker] fullscreen was refused:", err);
+        paintFullscreen();
+        return;
+      }
+      if (done && typeof done.catch === "function") {
+        done.catch((err) => {
+          console.warn("[RA-Tracker] fullscreen was refused:", err);
+          paintFullscreen();
+        });
+      }
+    }
+
+    /**
+     * True when this Escape belongs to fullscreen and the modal must stay open:
+     * either we are still in fullscreen, or the browser has just taken us out of
+     * it with the very keypress now arriving here.
+     */
+    function escapeHandled() {
+      if (isFull()) {
+        leaveFullscreen();
+        return true;
+      }
+      return Date.now() - leftFullAt < ESCAPE_GRACE_MS;
+    }
+
+    function onFullscreenChange() {
+      const on = isFull();
+      if (wasFull && !on) leftFullAt = Date.now();
+      wasFull = on;
+      paintFullscreen();
+      // The box the stage lands in is not final on this event in every engine,
+      // so fit once now and again once layout has settled.
+      refit();
+      root.requestAnimationFrame(refit);
+    }
+
     replayer.on("resize", () => {
       pin();
-      fit();
+      refit();
     });
     replayer.on("finish", () => {
       at = total;
@@ -265,8 +399,16 @@
       const ms = e.target?.dataset?.ms;
       if (ms !== undefined) seek(parseInt(ms, 10) || 0);
     });
-    const onResize = () => fit();
+    const onResize = () => refit();
     root.addEventListener("resize", onResize);
+    if (canFullscreen) {
+      fullBtn.addEventListener("click", toggleFullscreen);
+      document.addEventListener("fullscreenchange", onFullscreenChange);
+      paintFullscreen();
+    } else if (fullBtn) {
+      // Nothing to toggle into; the button would only be a dead control.
+      fullBtn.hidden = true;
+    }
 
     pin();
     fit();
@@ -278,10 +420,19 @@
       first: () => seek(0),
       last: () => seek(total),
       togglePlay,
+      toggleFullscreen,
+      escapeHandled,
       stop,
       destroy() {
+        dead = true;
         stop();
         root.removeEventListener("resize", onResize);
+        if (canFullscreen) {
+          fullBtn.removeEventListener("click", toggleFullscreen);
+          document.removeEventListener("fullscreenchange", onFullscreenChange);
+          if (document.fullscreenElement === shell) leaveFullscreen();
+        }
+        shell.classList.remove("rp-full");
         try {
           replayer.destroy();
         } catch (_) { /* already torn down with the modal */ }
@@ -342,7 +493,7 @@
           <button class="rp-btn rp-close" title="Close (Esc)">✕ Close</button>
         </div>
         <div class="rp-modal-body"></div>
-        <p class="rp-hint">← → step between board states · space play/pause · the board is the site's own, replayed at its recorded size</p>
+        <p class="rp-hint">← → step between board states · space play/pause · f fullscreen · the board is the site's own, replayed at its recorded size</p>
       </div>`;
     document.body.appendChild(back);
     document.body.classList.add("rp-modal-open");
@@ -356,13 +507,20 @@
       back.remove();
     }
     function onKey(e) {
-      if (e.key === "Escape") return close();
+      if (e.key === "Escape") {
+        // One Escape does one thing: it leaves fullscreen, or it closes the
+        // modal — never both, which would drop the user back on the dashboard
+        // when all they asked for was the window back.
+        if (ctl && ctl.escapeHandled()) { e.preventDefault(); return; }
+        return close();
+      }
       if (!ctl) return;
       if (e.key === "ArrowRight") { e.preventDefault(); ctl.next(); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); ctl.prev(); }
       else if (e.key === " ") { e.preventDefault(); ctl.togglePlay(); }
       else if (e.key === "Home") { e.preventDefault(); ctl.first(); }
       else if (e.key === "End") { e.preventDefault(); ctl.last(); }
+      else if (e.key === "f" || e.key === "F") { e.preventDefault(); ctl.toggleFullscreen(); }
     }
     document.addEventListener("keydown", onKey);
     back.querySelector(".rp-close").addEventListener("click", close);
