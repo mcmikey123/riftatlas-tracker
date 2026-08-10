@@ -19,7 +19,8 @@ during a grilling pass and are folded in below; the sections the first draft mar
 research (host testing, payload measurements, crypto timings, rejected designs) survive unchanged
 and are restated in the design doc rather than repeated here.
 
-Nothing is implemented yet.
+Tasks 0-3 and Task 5 are implemented and committed. Task 4 (the spike) is blocked on a
+browser; Tasks 6-8 follow it.
 
 ---
 
@@ -115,6 +116,43 @@ What this settles:
   UI thread before any compression happens. Task 7 must not block the UI on it, and it is the
   strongest argument for adding a `ra:visual:getRaw` message that skips rehydration.
 - Every replay references exactly **3** shared stylesheets.
+
+### Full-scale validation against a real exported replay, 2026-08-10
+
+Run headlessly in Node against the largest of the six replays (39,659 events, 34 keyframes,
+31.75 min). This is the worst case in the table above.
+
+| | |
+|---|---|
+| Uncompressed JSON | 43,391,045 B |
+| Deflated | 3,644,801 B (11.9×) |
+| **Encrypted frame** | **3,644,834 B — exactly +33 B, 29.0% of the 12 MB cap** |
+| Round trip | `deepStrictEqual` passes |
+| Rehydrated in memory | 61,639,113 B (58.78 MB) |
+
+Timings, and where the cost actually is:
+
+| Step | ms | | Step | ms |
+|---|---|---|---|---|
+| `JSON.stringify` | 224 | | decrypt | 3 |
+| deflate | 273 | | decompress | 179 |
+| encrypt | **3** | | `JSON.parse` | 136 |
+| **build total** | **596** | | **parse total** | **321** |
+
+**Crypto is free; serialisation and compression are the whole cost.** ~600 ms of main-thread
+block to build a share, ~320 ms to open one. Peak RSS 380 MB building, 298 MB parsing.
+
+Error taxonomy re-verified at 3.48 MB rather than on tiny fixtures: wrong key, flipped
+ciphertext byte, flipped IV bit, flipped GCM tag and a dropped final byte all give
+`OperationError`; a corrupt magic gives `ShareFormatError`.
+
+**Card art is entirely on one host.** 49,738 image references, 698 distinct URLs, all on
+`assets.riftatlas-workers.com`. The CSP `img-src` covers it exactly, with nothing to add.
+Other hosts in the stream (`play.riftatlas.com`, `www.w3.org`, `clerk.riftatlas.com`) appear
+only as namespaces, preloads and preconnects — the replayer fetches none of them.
+
+Rehydration is the exact inverse: 102 `__cssRef` nodes (3 sheets × 34 keyframes), all resolved,
+zero dangling, 17 ms.
 
 ### Earlier per-match storage figures, from 7 recordings
 
@@ -955,20 +993,36 @@ away afterwards; what survives is a findings section appended to the design doc.
    `assets.riftatlas-workers.com` is not in the local proxy allowlist, so card art cannot load
    from in here. The host browser fetches the CDN directly and the proxy never sees it.
 
-Pass criteria — all must hold before Task 5 starts:
+#### Already settled headlessly — no browser needed
 
-- [ ] Replayer mounts on a plain `https://` page outside the extension
-- [ ] plays through at least one keyframe boundary without tearing
-- [ ] CSS rehydration produces a styled board, not unstyled markup
-- [ ] card art loads from `assets.riftatlas-workers.com`
-- [ ] `subtle.decrypt` handles the real ~3.6 MB payload in-page
-- [ ] `DecompressionStream('deflate-raw')` round-trips it
-- [ ] the CSP in Task 3 does not break rrweb
-- [ ] measured deflated size of the real `assets` store, to replace the 50–80 KB estimate
-- [ ] **measured deflated size of a re-stripped share payload, against the 12 MB cap** — and the
-      deflated size of the naive rehydrated stream alongside it, to confirm decision 12 with a
-      number rather than arithmetic
-- [ ] `rehydrateCssAssets` in the viewer reproduces a styled board from the re-stripped payload
+These were open when the spike was written and have since been verified in Node against the real
+exported replay. They are recorded here so the spike does not re-do them.
+
+- [x] the payload round-trips at full scale — `deepStrictEqual` passes on 39,659 events
+- [x] `subtle.decrypt` handles the real payload — 3 ms on a 3.48 MB frame; crypto is free
+- [x] `DecompressionStream('deflate-raw')` round-trips it — 179 ms
+- [x] deflated size of the real `assets` store — 3 sheets, 522,575 B uncompressed; the whole
+      encrypted frame is 3,644,834 B, **29% of the 12 MB cap**
+- [x] re-stripped vs naive, measured — 3.48 MB vs 5.95 MB, confirming decision 12
+- [x] the error taxonomy holds at 3.48 MB, not just on fixtures
+- [x] `rehydrateCssAssets` resolves all 102 refs with zero dangling, 17 ms
+- [x] every image URL is on `assets.riftatlas-workers.com` (698 distinct, 49,738 refs), so the
+      Task 3 `img-src` covers card art exactly with nothing to add
+
+#### Still genuinely unknown — these need a real browser
+
+Only these remain, and none can be checked from inside the container: `assets.riftatlas-workers.com`
+is not in the local proxy allowlist, and there is no browser here.
+
+- [ ] the rrweb Replayer mounts on a plain `https://` page outside the extension
+- [ ] it plays through at least one keyframe boundary without tearing
+- [ ] rehydrated CSS produces a **styled** board — the silent-failure path in Task 6 makes this
+      the single most important visual check, because getting it wrong looks merely ugly rather
+      than broken
+- [ ] card art actually loads and renders (the CSP permits it; whether the CDN serves it
+      cross-origin to a `workers.dev` page is untested)
+- [ ] the Task 3 CSP does not break rrweb at runtime
+- [ ] ~600 ms of build time and ~380 MB peak RSS are tolerable in a real tab
 
 Free diagnostic while a replay is open — this settles suspect T2 in the known-issues section at
 no extra cost:
@@ -1055,6 +1109,39 @@ CSS, mounts `replay/replay-core.js`.
 Scripts load as separate same-origin `<script src>` tags, not inline — `script-src 'self'` has no
 `'unsafe-inline'` on purpose.
 
+**Assert that every `__cssRef` resolved before mounting. This is not optional.**
+
+There is a silent-failure path here that produces no error at all:
+
+- `rehydrateCssAssets(events, assets)` requires a **`Map`**. Handed a plain object it does not
+  throw — `lookup` checks `typeof assets.get === "function"` and falls back to `""` for every
+  ref. Verified.
+- Vendored rrweb converts a `<link>` to a `<style>` with `t==="link" && e.attributes._cssText
+  && (t="style")` — **truthiness**. An empty string fails that test, so the node stays a
+  `<link>`, and the extracted link nodes carry no `href` (their only attributes are
+  `data-precedence` and `__cssRef`). Verified in `vendor/rrweb-replay.min.js`.
+
+Net effect of one wrong line: a completely unstyled replay, no exception, no console error.
+Since the payload arrives as JSON, `assets` is *always* a plain object at this point, so the
+conversion is mandatory and easy to forget:
+
+```js
+const assets = new Map(Object.entries(payload.assets || {}));
+const events = rehydrateCssAssets(payload.events, assets);
+
+// Fail loudly rather than rendering an unstyled board that looks merely ugly.
+const unresolved = events.filter((e) => JSON.stringify(e).includes('"_cssText":""')).length;
+if (unresolved > 0) throw new Error(`${unresolved} stylesheet refs failed to resolve`);
+```
+
+Two related traps from the same analysis:
+
+- **Key off `assets` only, never `meta.cssRefs`.** They can legitimately diverge — `meta.cssRefs`
+  holds sha-256 hashes from the store while the payload's `assets` keyspace is whatever the
+  builder produced.
+- **The capture has no mouse events** (rrweb sources 1 and 2 are absent; only mutation and
+  scroll). No cursor renders. The viewer must not assume pointer data exists.
+
 Every failure gets its own message, because the remedies differ completely and one generic
 "failed to load" is useless:
 
@@ -1116,7 +1203,12 @@ after decrypting, which is the exact inverse.
   browser rules and check the magic bytes before showing a link. This is exactly what would have
   caught the filebin failure during research — a host that passed a `curl` test and served an HTML
   interstitial to real browsers. Never present an unverified link.
-- Refuse oversized payloads *before* uploading, showing the size and the 12 MB cap.
+- Refuse oversized payloads *before* uploading, showing the size and the 12 MB cap. Measure the
+  built frame — **do not predict it from `meta.compressedBytes`**, which is the store's chunked
+  figure and differs (3,760,696 vs 3,644,834 on the measured replay).
+- **Building a share blocks the main thread for ~600 ms** and peaks around 380 MB RSS on the
+  worst-case replay (`JSON.stringify` 224 ms + deflate 273 ms; crypto is 3 ms). Show progress
+  and disable the control while it runs — do not let it look frozen.
 - Disclosure, reassurance-forward with the caveats present and secondary:
 
   > **End-to-end encrypted — only people with the link can view this replay.**
