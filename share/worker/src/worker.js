@@ -115,7 +115,7 @@ async function upload(request, env) {
   // Content-Length is required, not optional: R2 will not accept a stream of unknown
   // length, and FixedLengthStream below needs a number to enforce.
   const size = checkUploadSize(request.headers.get("content-length"), env.MAX_UPLOAD_BYTES);
-  if (!size.ok) return json(size.body, size.status);
+  if (!size.ok) return json(size.body, size.status, request);
   if (!request.body) return json({ error: "empty body" }, 400, request);
 
   // FixedLengthStream gives R2 the known length it needs while keeping the body streamed,

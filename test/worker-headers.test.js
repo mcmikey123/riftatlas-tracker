@@ -42,6 +42,22 @@ test("the CSP allows what rrweb needs and nothing broader", () => {
   assert.match(csp, /default-src 'none'/);
 });
 
+// An extension page's fetch rejects outright when a response carries no CORS header, so a
+// json() call that forgets `request` turns a precise 413 or 411 into "couldn't reach the
+// server" — the wrong remedy, on the paths a first-run self-hoster is most likely to hit.
+// One call was missed exactly this way, so the invariant is asserted rather than reviewed.
+test("every json() response in the Worker carries the request, so CORS headers are set", () => {
+  const calls = [...workerSource.matchAll(/return json\(([\s\S]*?)\);/g)].map((m) => m[1]);
+  assert.ok(calls.length > 5, "expected to find the Worker's json() responses");
+  for (const args of calls) {
+    assert.match(
+      args.replace(/\s+/g, " "),
+      /,\s*request$/,
+      `json(${args.replace(/\s+/g, " ").slice(0, 60)}…) must pass request as its third argument`
+    );
+  }
+});
+
 test("the object id length agrees between the Worker and the link parser", () => {
   const { OBJECT_ID_CHARS } = require("../share/hosts.js");
   const bytes = Number(workerSource.match(/const OBJECT_ID_BYTES = (\d+)/)[1]);
