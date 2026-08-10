@@ -6,6 +6,7 @@ const {
   SHARE_TTL_MS,
   MESSAGES,
   RECHECK_MESSAGES,
+  RECHECK_LABELS,
   fmtSize,
   checkPayloadSize,
   describeUploadFailure,
@@ -281,9 +282,9 @@ test("a missing or non-array shares key reads as no shares", () => {
   }
 });
 
-// The three outcomes need three different reactions from the reader: the link
-// works, the link is dead, or nothing was learned. Collapsing "unreachable"
-// into "gone" would tell someone a share had expired when it had not.
+// The outcomes need different reactions from the reader: the link works, the
+// link is dead, or nothing was learned. Collapsing "unreachable" into "gone"
+// would tell someone a share had expired when it had not.
 test("a re-check separates alive, gone and learned-nothing", () => {
   const alive = describeRecheck({ reached: true, status: 200, magic: true });
   assert.strictEqual(alive.state, "alive");
@@ -301,27 +302,56 @@ test("a re-check separates alive, gone and learned-nothing", () => {
 // interstitial rather than the object. It is not proof the share is gone.
 test("a 200 that is not a share frame is not reported as alive or as gone", () => {
   const odd = describeRecheck({ reached: true, status: 200, magic: false });
-  assert.strictEqual(odd.state, "unreachable");
+  assert.strictEqual(odd.state, "unexpected");
   assert.strictEqual(odd.message, RECHECK_MESSAGES.unexpected);
 });
 
 test("an unexpected status names itself so the number is not lost", () => {
   const busy = describeRecheck({ reached: true, status: 503 });
-  assert.strictEqual(busy.state, "unreachable");
+  assert.strictEqual(busy.state, "unexpected");
   assert.match(busy.message, /503/);
 });
 
-test("every re-check outcome carries a short label and a distinct message", () => {
-  const outcomes = [
+const ALL_OUTCOMES = [
+  { reached: true, status: 200, magic: true },
+  { reached: true, status: 206, magic: true },
+  { reached: true, status: 404 },
+  { reached: true, status: 410 },
+  { reached: true, status: 200, magic: false },
+  { reached: true, status: 503 },
+  { reached: false },
+  {}
+];
+
+test("every re-check outcome carries a short label and a message", () => {
+  for (const outcome of ALL_OUTCOMES) {
+    const o = describeRecheck(outcome);
+    assert.ok(o.label && o.label.length < 20, `a pill needs a short label, got ${o.label}`);
+    assert.ok(o.message, `every outcome needs a message: ${JSON.stringify(outcome)}`);
+  }
+});
+
+test("the four outcomes a reader must tell apart are worded apart", () => {
+  const shown = [
     { reached: true, status: 200, magic: true },
     { reached: true, status: 404 },
     { reached: true, status: 200, magic: false },
     { reached: false }
   ].map(describeRecheck);
-  for (const o of outcomes) {
-    assert.ok(o.label && o.label.length < 20, `a pill needs a short label, got ${o.label}`);
-    assert.ok(o.message, "every outcome needs a message");
+  assert.strictEqual(new Set(shown.map((o) => o.message)).size, 4, "outcomes must not share wording");
+  assert.strictEqual(new Set(shown.map((o) => o.label)).size, 4, "outcomes must not share a pill");
+});
+
+/* The label is a pill rendered immediately before the message, so the two read
+ * as one sentence. "no answer" beside "The endpoint answered with something
+ * that isn't a replay" reads as a bug in the checker, and that pairing shipped
+ * once - asserting the label is merely short does not catch it. */
+test("only an endpoint that said nothing is labelled as silence", () => {
+  for (const outcome of ALL_OUTCOMES) {
+    const o = describeRecheck(outcome);
+    const silent = !outcome.reached;
+    const where = `${JSON.stringify(outcome)} -> "${o.label}" / "${o.message}"`;
+    assert.strictEqual(o.label === RECHECK_LABELS.unreachable, silent, `label contradicts ${where}`);
+    assert.strictEqual(/couldn't reach/i.test(o.message), silent, `message contradicts ${where}`);
   }
-  const messages = outcomes.map((o) => o.message);
-  assert.strictEqual(new Set(messages).size, messages.length, "outcomes must not share wording");
 });

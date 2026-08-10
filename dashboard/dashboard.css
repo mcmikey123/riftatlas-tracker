@@ -314,6 +314,9 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 .sh-msg { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-3); white-space: normal; max-width: 44ch; }
 .sh-alive { border-color: rgba(98, 201, 156, 0.5); background: rgba(98, 201, 156, 0.14); color: var(--win); }
 .sh-gone { border-color: rgba(224, 138, 138, 0.55); background: rgba(224, 138, 138, 0.16); color: var(--loss); }
-.sh-unreachable { border-color: rgba(240, 190, 110, 0.5); background: rgba(240, 190, 110, 0.14); color: #ffcf8a; }
+/* Nothing was learned either way, so both read as a caution rather than as an
+   answer - one for silence, one for an answer that wasn't the share. */
+.sh-unreachable,
+.sh-unexpected { border-color: rgba(240, 190, 110, 0.5); background: rgba(240, 190, 110, 0.14); color: #ffcf8a; }
 .sh-expired { border-color: rgba(134, 168, 246, 0.3); background: rgba(134, 168, 246, 0.1); color: var(--ink-3); }
 .sh-forget { margin-left: 6px; }

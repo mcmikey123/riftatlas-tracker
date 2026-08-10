@@ -14,9 +14,10 @@
   "use strict";
 
   // Must equal MAX_UPLOAD_BYTES in share/worker/wrangler.toml.example. The cap is
-  // headroom, not abuse control - the worst replay measured builds a 3.48 MB
-  // frame, so this is 3.4x the real ceiling. Refusing here rather than at the
-  // Worker means the user learns the size instead of watching a PUT fail.
+  // headroom, not abuse control - the worst replay measured builds a 3,644,834
+  // byte frame (3.48 MB), so this is 3.4x the real ceiling. Refusing here rather
+  // than at the Worker means the user learns the size instead of watching a PUT
+  // fail.
   const MAX_UPLOAD_BYTES = 12582912;
 
   // Fixed at the bucket by an R2 lifecycle rule, not per share. Nothing in the
@@ -41,7 +42,9 @@
     rejected: "The share endpoint rejected this upload. Check the share endpoint in Settings.",
     tooLarge: "The share endpoint refused this replay as too large.",
     rateLimited: "Too many uploads just now - try again in a few minutes.",
-    unavailable: "Sharing is temporarily unavailable. Try again later.",
+    unavailable:
+      "The share endpoint isn't accepting uploads right now. That may be temporary, or its " +
+      "operator may have turned sharing off - trying again later is the only way to tell.",
     misconfigured: "The share endpoint is misconfigured and cannot accept uploads.",
     network: "Couldn't reach the share endpoint. Check your connection and try again.",
     unverified:
@@ -61,9 +64,14 @@
   const RETRYABLE = ["rateLimited", "unavailable", "network", "unverified"];
 
   // 500 means one thing only: the Worker refused because its own configuration is
-  // broken, which no amount of retrying fixes. Its transient failures - R2 being
-  // unavailable - answer 503, so "misconfigured" here is never told to someone whose
-  // next attempt would have worked.
+  // broken, which no amount of retrying fixes. So "misconfigured" here is never told
+  // to someone whose next attempt would have worked.
+  //
+  // 503 covers two things the Worker does not distinguish and this side cannot
+  // tell apart: R2 being unavailable, which passes, and UPLOADS_ENABLED being off,
+  // which is an operator's kill switch and may never come back. It stays retryable
+  // because a retry is genuinely right for one of them, and `unavailable` is worded
+  // to promise nothing about which one is happening.
   const BY_STATUS = {
     403: "rejected",
     411: "rejected",
@@ -85,8 +93,8 @@
   /**
    * Whether a built frame may be uploaded. Takes the frame's real byteLength -
    * never `meta.compressedBytes`, which is the store's per-chunk total and
-   * differs from a whole-stream frame (3,760,696 against 3,644,834 on the
-   * measured worst case).
+   * differs from a whole-stream frame: 3,760,696 B (3.59 MB) against the frame's
+   * 3,644,834 B (3.48 MB) on the measured worst case.
    */
   function checkPayloadSize(bytes, limit) {
     const size = Number(bytes);
@@ -95,7 +103,14 @@
       return { ok: false, kind: "empty", message: "This replay produced an empty share." };
     }
     if (!Number.isFinite(cap) || cap <= 0) {
-      return { ok: false, kind: "misconfigured", message: MESSAGES.misconfigured };
+      // The cap is MAX_UPLOAD_BYTES, a constant a few lines up this same file -
+      // nothing the endpoint said. Blaming the endpoint for it would send
+      // someone to the Settings field for a fault that is in this build.
+      return {
+        ok: false,
+        kind: "misconfigured",
+        message: "This build's share size limit is broken, so nothing can be uploaded."
+      };
     }
     if (size > cap) {
       return { ok: false, kind: "tooLarge", message: oversizeMessage(size, cap) };
@@ -276,9 +291,13 @@
   }
 
   /**
-   * What a re-check learned. Three outcomes, deliberately not two: "couldn't
+   * What a re-check learned. Four outcomes, deliberately not two: "couldn't
    * reach the endpoint" is not "expired", and reporting it as expired would
    * tell someone their share was gone when it is still being served.
+   *
+   * `unreachable` and `unexpected` teach the same thing - nothing - but they
+   * are separate because the label sits beside the message on screen, and "no
+   * answer" next to "the endpoint answered" reads as a bug in the checker.
    */
   const RECHECK_MESSAGES = {
     alive: "Still on the endpoint - this link opens.",
@@ -290,7 +309,12 @@
       "this share either way."
   };
 
-  const RECHECK_LABELS = { alive: "still there", gone: "gone", unreachable: "no answer" };
+  const RECHECK_LABELS = {
+    alive: "still there",
+    gone: "gone",
+    unreachable: "no answer",
+    unexpected: "odd answer"
+  };
 
   const out = (state, message) => ({ state, label: RECHECK_LABELS[state], message });
 
@@ -315,10 +339,10 @@
     if (status === 200 || status === 206) {
       return o.magic
         ? out("alive", RECHECK_MESSAGES.alive)
-        : out("unreachable", RECHECK_MESSAGES.unexpected);
+        : out("unexpected", RECHECK_MESSAGES.unexpected);
     }
     return out(
-      "unreachable",
+      "unexpected",
       `The share endpoint answered ${Number.isFinite(status) ? status : "oddly"}, so nothing was ` +
         "learned about this share either way."
     );
@@ -332,6 +356,7 @@
     PRUNE_GRACE_MS,
     MESSAGES,
     RECHECK_MESSAGES,
+    RECHECK_LABELS,
     fmtSize,
     checkPayloadSize,
     oversizeMessage,
