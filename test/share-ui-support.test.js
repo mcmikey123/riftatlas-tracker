@@ -126,7 +126,7 @@ test("the magic check accepts a real frame and rejects an HTML interstitial", as
   assert.strictEqual(hasShareMagic(null), false);
 });
 
-// Task 8 reads these records back to list and re-check shares. Every field is
+// The shares list reads these records back to list and re-check shares. Every field is
 // load-bearing, and the key most of all: it exists nowhere else in the world.
 test("a share record keeps exactly the fields a link can be rebuilt from", () => {
   const record = shareRecord({

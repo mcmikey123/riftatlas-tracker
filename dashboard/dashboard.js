@@ -605,13 +605,19 @@
   /* Reassurance first, because the encryption property is real and is the whole
    * point; the caveats stay present but secondary. Self-hosting is deliberately
    * not mentioned - that is documentation, and it only confuses someone who is
-   * standing at the point of sharing. */
+   * standing at the point of sharing.
+   *
+   * The caveat says "everything on your screen" rather than listing fields
+   * because that is literally what a replay is: capture/dom-recorder.js records
+   * the DOM with only input values masked, so the sharer's own display name and
+   * whatever else was on the page travel with it. Naming two items would read as
+   * an exhaustive list and understate what is being handed over. */
   const SHARE_DISCLOSURE = `
     <p class="share-lead">End-to-end encrypted — only people with the link can view this replay.</p>
     <p class="share-caveats">
-      The replay includes your opponent's display name and the match chat, and anyone the link
-      reaches can open it. It expires after ${SHARE.SHARE_TTL_DAYS} days, and it can't be
-      unshared before then.
+      The replay shows everything that was on your screen during the match, including your
+      opponent's display name and the match chat, and anyone the link reaches can open it. It
+      expires after ${SHARE.SHARE_TTL_DAYS} days, and it can't be unshared before then.
     </p>`;
 
   /** A failure the share flow raised itself, carrying what to show for it. */
@@ -713,6 +719,10 @@
     paintShare(matchId);
   }
 
+  // The only endpoints that legitimately cannot offer https, and the only ones
+  // http is accepted for. `new URL()` keeps the brackets on an IPv6 hostname.
+  const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
   /* An extension page's fetch obeys CORS like any other page, so uploading needs
    * the endpoint's cooperation. The share Worker grants it: it answers the
    * preflight and echoes Access-Control-Allow-Origin for chrome-extension://
@@ -725,13 +735,20 @@
    *
    * Returns what to tell the user, or null when there is nothing to say. */
   function endpointProblem(endpoint) {
+    let url;
     try {
-      const { protocol } = new URL(endpoint);
-      if (protocol !== "https:" && protocol !== "http:") throw new Error("bad protocol");
+      url = new URL(endpoint);
     } catch (_) {
       return "The share endpoint in Settings isn't a valid URL.";
     }
-    return null;
+    /* The payload is encrypted before it leaves here, so plain http would not
+     * expose a replay - but the upload token and the object id are not part of
+     * the payload, and both travel in the clear. The one endpoint that
+     * legitimately cannot offer https is a `wrangler dev` on this machine, so
+     * that is the only place http is allowed. */
+    if (url.protocol === "https:") return null;
+    if (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname)) return null;
+    return "The share endpoint in Settings must be an https:// URL (http:// only for localhost).";
   }
 
   function readReplay(matchId) {
@@ -873,14 +890,23 @@
   /* chrome.storage.local key "shares": an array of share records in creation
    * order, whose shape share/share-ui-support.js documents and validates. The
    * key is stored because it exists nowhere else - the endpoint never sees it,
-   * and without it a link cannot be rebuilt, only lost. Task 8's shares list
-   * reads this. A write that fails must not lose the link the user is looking
-   * at, so the flow carries on either way.
+   * and without it a link cannot be rebuilt, only lost. The shares list reads
+   * this. A write that fails must not lose the link the user is looking at, so
+   * the flow carries on either way.
    *
    * Every write drops the records whose objects are certainly gone. Nothing
    * else ever would: there is no expiry job and no server to run one, so
    * without this a browser accumulates every key it has ever generated, long
-   * after the only thing they could decrypt stopped existing. */
+   * after the only thing they could decrypt stopped existing.
+   *
+   * KNOWN RACE: get-then-set is not atomic, and chrome.storage.local is shared
+   * across every dashboard tab. Two tabs completing a share at the same moment
+   * can have the second write back a list read before the first landed, losing
+   * a record - and a lost record takes a key that exists nowhere else. Sharing
+   * twice within the same few milliseconds from two tabs is the only way to hit
+   * it, so it is left as it stands; closing it properly needs the writes
+   * serialised through the service worker, which is more machinery than this
+   * feature justifies. `forgetShare` writes the same way and has the same race. */
   function rememberShare(record) {
     return new Promise((resolve) =>
       chrome.storage.local.get({ shares: [] }, (data) => {
@@ -1151,6 +1177,9 @@
       // Pruned on this write like any other. Everything it removes alongside
       // the chosen record is a share whose object the endpoint deleted days
       // ago, so no row disappears that could still have been opened.
+      //
+      // Same non-atomic get-then-set as rememberShare, and the same race with a
+      // second dashboard tab. See the note there.
       const kept = SHARE.pruneShares(data.shares, Date.now()).filter(
         (s) => !(s && s.objectId === objectId)
       );
