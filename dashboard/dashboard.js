@@ -737,7 +737,11 @@
    *   status   its HTTP status, 0 when the fetch itself failed
    *   bytes    the first few bytes of the body, empty unless it answered 2xx */
   async function fetchObjectHead(endpoint, objectId) {
-    const url = `${window.RAShareHosts.normaliseEndpoint(endpoint)}/b/${objectId}`;
+    const base = window.RAShareHosts.normaliseEndpoint(endpoint);
+    // Encoded like the viewer's own download does. Ids that reach here are the
+    // validated 22-char shape, so this changes nothing today - it is what keeps
+    // that still being true if one ever arrives from somewhere else.
+    const url = `${base}/b/${encodeURIComponent(objectId)}`;
     const empty = new Uint8Array(0);
     let res;
     try {

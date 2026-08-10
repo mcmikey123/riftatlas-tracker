@@ -18,6 +18,14 @@
   // (share/worker/src/worker.js). Change one and every new link stops parsing.
   const OBJECT_ID_CHARS = 22; // 128 bits, base64url, unpadded
 
+  // One shape, checked in both directions: on the way in from a link fragment,
+  // and on the way back out of an upload. An id that fails this cannot produce
+  // a link that survives a round trip - share/share-ui-support.js applies the
+  // same test when it reads the stored share list back, and silently drops any
+  // record that fails it, taking the only copy of the key with it.
+  const OBJECT_ID_RE = new RegExp(`^[A-Za-z0-9_-]{${OBJECT_ID_CHARS}}$`);
+  const isObjectId = (value) => typeof value === "string" && OBJECT_ID_RE.test(value);
+
   class ShareLinkError extends Error {
     constructor(message) {
       super(message);
@@ -60,9 +68,7 @@
     if (version !== LINK_VERSION) {
       throw new ShareLinkError("this link uses a newer format than this viewer understands");
     }
-    if (objectId.length !== OBJECT_ID_CHARS || !/^[A-Za-z0-9_-]+$/.test(objectId)) {
-      throw new ShareLinkError("link fragment is malformed");
-    }
+    if (!isObjectId(objectId)) throw new ShareLinkError("link fragment is malformed");
     // Length is checked before decoding, not after. The alphabet test alone lets through
     // strings whose length makes them invalid base64, and atob then throws a DOMException
     // that escapes this file's error taxonomy — the viewer switches on that taxonomy to
@@ -74,7 +80,7 @@
     let keyBytes;
     try {
       keyBytes = fromBase64Url(keyText);
-    } catch (cause) {
+    } catch (_) {
       throw new ShareLinkError("link key is not valid base64url");
     }
     if (keyBytes.length !== KEY_BYTES) throw new ShareLinkError("link key is the wrong length");
@@ -97,7 +103,28 @@
         err.status = res.status;
         throw err;
       }
-      const { id } = await res.json();
+      /* A 2xx is not yet an answer. Both of these carry `.status` so the
+       * dashboard's failure mapping reads them as a refusal from an endpoint
+       * that answered, not as a transport failure - telling someone to check
+       * their connection when the connection worked perfectly is the one
+       * wrong thing to say here. */
+      let body;
+      try {
+        body = await res.json();
+      } catch (_) {
+        const err = new Error("the share endpoint answered with something that isn't JSON");
+        err.status = res.status;
+        throw err;
+      }
+      const id = body && body.id;
+      // An id that is not the shape a link is made of would be shown, verified
+      // and stored, and then dropped by the share list's own validation - which
+      // discards the key with it, since the record is the only copy.
+      if (!isObjectId(id)) {
+        const err = new Error("the share endpoint returned no usable object id");
+        err.status = res.status;
+        throw err;
+      }
       return id;
     }
   };
@@ -117,6 +144,7 @@
     KEY_BYTES,
     KEY_CHARS,
     OBJECT_ID_CHARS,
+    isObjectId,
     toBase64Url,
     fromBase64Url,
     normaliseEndpoint,

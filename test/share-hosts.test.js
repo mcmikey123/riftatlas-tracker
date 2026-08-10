@@ -112,6 +112,45 @@ test("an upload failure carries the HTTP status through", async () => {
   }
 });
 
+// A 200 whose body is not JSON used to throw a SyntaxError with no `.status`,
+// which the dashboard maps to "check your connection" - about an endpoint that
+// answered perfectly well.
+test("a 200 that is not JSON is reported against the status it came with", async () => {
+  await assert.rejects(
+    () =>
+      hostFor("w").upload(new Uint8Array([1]), {
+        endpoint: ENDPOINT,
+        token: "tok",
+        fetch: async () => ({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw new SyntaxError("Unexpected token <");
+          }
+        })
+      }),
+    (err) => err.status === 200 && /isn't JSON/.test(err.message)
+  );
+});
+
+// The id is interpolated into a link that is shown, stored and later re-read.
+// The share list drops any record whose id is the wrong shape, and the record
+// is the only place the decryption key exists - so a malformed id loses the key.
+test("an object id that is not the link shape is refused rather than turned into a link", async () => {
+  for (const id of [undefined, null, "", 42, "short", `${OBJECT_ID}A`, "AAAAAAAAAAAAAAAAAAAA/+"]) {
+    await assert.rejects(
+      () =>
+        hostFor("w").upload(new Uint8Array([1]), {
+          endpoint: ENDPOINT,
+          token: "tok",
+          fetch: async () => ({ ok: true, status: 200, json: async () => ({ id }) })
+        }),
+      (err) => err.status === 200 && /object id/.test(err.message),
+      `expected refusal for ${JSON.stringify(id)}`
+    );
+  }
+});
+
 test("the worker host is registered and unknown ids are refused", () => {
   assert.strictEqual(hostFor("w").id, "w");
   assert.throws(() => hostFor("zz"), { name: "ShareLinkError" });
