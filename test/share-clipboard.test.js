@@ -8,7 +8,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { FLASH_MS, copyText, flash, copyToButton } = require("../share/clipboard.js");
+const { copyText, flash, copyToButton } = require("../share/clipboard.js");
 
 /** A button with just enough of one to be flashed at. */
 function fakeButton(label) {
@@ -95,8 +95,24 @@ test("a button that has gone by the time the message expires is left alone", () 
   assert.strictEqual(button.textContent, "Copied", "nothing is written back to a detached button");
 });
 
-test("the message stays up long enough to be read", () => {
-  assert.ok(FLASH_MS >= 1000 && FLASH_MS <= 3000, "1.5s is the treatment the other buttons use");
+/* A button still showing its message is a button lying about what the next
+ * click does, so every outcome is a flash - not just the happy one, which is
+ * the only one anyone exercises by hand. */
+test("no outcome leaves a message on the button for good", async () => {
+  const cases = [
+    ["Copied", { navigator: wrote([]) }],
+    ["Press Ctrl+C", { navigator: refuses, field: { focus() {}, select() {} } }],
+    ["Copy failed", { navigator: refuses, prompt() {} }]
+  ];
+  for (const [message, extra] of cases) {
+    const timers = fakeTimers();
+    const button = fakeButton("Copy link");
+    await copyToButton("LINK", button, Object.assign({ timers }, extra));
+    assert.strictEqual(button.textContent, message);
+    assert.strictEqual(timers.size, 1, `"${message}" must be on a timer, not left up for good`);
+    timers.runAll();
+    assert.strictEqual(button.textContent, "Copy link", `"${message}" must be taken back down`);
+  }
 });
 
 test("a successful copy reports Copied and selects the field it was given", async () => {
