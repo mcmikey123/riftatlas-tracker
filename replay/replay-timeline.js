@@ -47,7 +47,7 @@
    * policy below, so every caller that seeks names one.
    */
   const SEEK = Object.freeze({
-    SCRUB: "scrub", // the slider was released, or clicked straight to a spot
+    SCRUB: "scrub", // the drag is over: the slider was released or lost focus
     DRAG: "drag", // mid-drag, with more input events still coming
     CHAPTER: "chapter", // a chapter chip
     JUMP: "jump", // Home / End
@@ -55,7 +55,10 @@
   });
 
   /**
-   * Whether a seek leaves the transport running.
+   * Whether a seek leaves the transport running. `playing` is the transport as
+   * the viewer understands it, which is not always the engine's own state —
+   * `seekOutcome` below is what works that out and the only caller that should
+   * be answering this question directly.
    *
    * The rule is that seeking changes position, not play state: scrubbing to a
    * spot or jumping to a turn while the replay is playing carries on playing
@@ -64,7 +67,7 @@
    *   - STEP is a request to hold still and look at one board state;
    *   - DRAG is one of the dozens of `input` events a single drag fires, so it
    *     holds playback instead of restarting the engine on every pixel of
-   *     travel; the SCRUB at the end of the drag is what resumes.
+   *     travel; the SCRUB that ends the drag is what resumes.
    * Landing on the very end resumes nothing — there is nothing left to play, and
    * restarting from zero is togglePlay's job, only ever asked for explicitly.
    */
@@ -74,6 +77,39 @@
     if (reason === SEEK.STEP || reason === SEEK.DRAG) return false;
     const total = Number(seek.total);
     return !(Number.isFinite(total) && Number(seek.ms) >= total);
+  }
+
+  /**
+   * Everything a seek does to the transport, as one table: whether it plays on
+   * from where it landed, and what the drag latch becomes afterwards.
+   *
+   *   seekOutcome({ playing, held, finished, reason, ms, total }) -> { resume, held }
+   *
+   * The pair comes out of one call because the pair is the state machine. The
+   * boolean was easy to extract on its own and the latch was left behind in the
+   * rrweb-shaped code, updated in one branch and cleared in three others — and
+   * the path that did neither was a bug that no unit test could reach.
+   *
+   * Two of the inputs are stops that are not really stops:
+   *   - `held` says a drag began while the transport was running. Between the
+   *     `input` events of one drag the engine really is stopped, so the drag and
+   *     the release that ends it are the only two reasons allowed to read the
+   *     latch; a latch left behind by a drag whose end went unseen therefore
+   *     cannot make a chapter chip or a jump start playback on its own.
+   *   - `finished` says the transport stopped because it ran out rather than
+   *     because the viewer asked it to. Seeking back into the replay is then the
+   *     same gesture as seeking during playback, so it plays on — a chapter chip
+   *     clicked once the replay has ended is a natural thing to do.
+   */
+  function seekOutcome(state) {
+    const s = state || {};
+    const reason = s.reason || SEEK.SCRUB;
+    const latched = !!s.held && (reason === SEEK.DRAG || reason === SEEK.SCRUB);
+    const running = !!s.playing || !!s.finished || latched;
+    return {
+      resume: resumesAfterSeek({ playing: running, reason, ms: s.ms, total: s.total }),
+      held: reason === SEEK.DRAG && running,
+    };
   }
 
   /**
@@ -154,6 +190,7 @@
     SEEK,
     quantise,
     resumesAfterSeek,
+    seekOutcome,
     shouldAutoplay,
     turnOf,
     timeline,

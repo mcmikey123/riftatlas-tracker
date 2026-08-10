@@ -19,14 +19,25 @@
  *
  * Seeking moves the position and leaves the play state alone: scrubbing or
  * jumping to a turn mid-playback keeps playing. Which seeks are exempt from
- * that, and whether autoplay survives `prefers-reduced-motion`, are decided by
- * `resumesAfterSeek` and `shouldAutoplay` in replay-timeline.js, where they are
- * pure and unit tested rather than tangled up in rrweb.
+ * that, what a drag leaves latched behind it, and whether autoplay survives
+ * `prefers-reduced-motion`, are decided by `seekOutcome`, `resumesAfterSeek`
+ * and `shouldAutoplay` in replay-timeline.js, where they are pure and unit
+ * tested rather than tangled up in rrweb.
  */
 (function (root) {
   "use strict";
 
   const DEFAULT_VIEWPORT = { w: 1280, h: 800 };
+
+  /**
+   * The events a surface hands to `endDrag`, in one place so the two surfaces
+   * cannot drift apart on it. All of them are no-ops unless a drag is actually
+   * being held, so the transport hears one release however many of them fire.
+   * `blur` and `keyup` are the backstops: a pointer release the slider itself
+   * never sees, and the keys that move a range natively (Page Up / Page Down).
+   * `change` is deliberately absent — see `endDrag`.
+   */
+  const DRAG_END_EVENTS = Object.freeze(["pointerup", "pointercancel", "blur", "keyup"]);
 
   /** True when the vendored replay engine loaded and can be constructed. */
   function available() {
@@ -34,15 +45,20 @@
   }
 
   /**
-   * True when the viewer has asked the platform for less motion. Guarded: an
-   * embedder without matchMedia, or one that throws on an unsupported query,
-   * should get a working replay rather than none.
+   * True when the viewer has asked the platform for less motion. Guarded, and
+   * the guard answers "yes": an embedder without matchMedia, or one that throws
+   * on the query, leaves us unable to read the preference, and the two ways of
+   * being wrong are not equal. Guessing "no motion wanted" costs a viewer one
+   * click on the play button; guessing the other way starts motion at someone
+   * who asked their whole system never to do that. The replay itself works
+   * either way — only autoplay is at stake.
    */
   function reducedMotion() {
     try {
-      return !!(root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      if (!root.matchMedia) return true;
+      return !!root.matchMedia("(prefers-reduced-motion: reduce)").matches;
     } catch (_) {
-      return false;
+      return true;
     }
   }
 
@@ -66,14 +82,16 @@
    *
    * `onTime(ms, totalMs)` fires while playing, on seek and at the end; the
    * total is passed alongside because the first fire happens during this call,
-   * before the caller holds a controller to read it from.
+   * before the caller holds a controller to read it from. `onPlayState` fires
+   * during this call too whenever autoplay wins, so neither callback may reach
+   * for the controller create() has not returned yet.
    *
    * `autoplay` is off unless a surface asks for it: a core that started playing
    * on its own would be a surprise to any caller that mounts a replay somewhere
    * it is not the thing the viewer just opened.
    */
   function create(options) {
-    const { quantise, timeline, SEEK, resumesAfterSeek, shouldAutoplay } = root.RAReplayTimeline;
+    const { quantise, timeline, SEEK, seekOutcome, shouldAutoplay } = root.RAReplayTimeline;
 
     const stage = options.stage;
     const scaleEl = options.scaleEl;
@@ -143,10 +161,15 @@
     // The play state the caller has been told about, so a seek that pauses the
     // engine for a few milliseconds and resumes it does not flicker the glyph.
     let announced = false;
-    // A drag fires `input` continuously and `change` once, on release. Each
-    // `input` holds playback; this remembers that it was running so the release
-    // can put it back, since by then `playing` is long since false.
+    // A drag fires `input` continuously. Each one holds playback; this remembers
+    // that it was running so `endDrag` can put it back, since by then `playing`
+    // is long since false. Only ever assigned from `seekOutcome`, so there is no
+    // path that moves the transport and forgets the latch.
     let heldForDrag = false;
+    // The transport ran to the end on its own. Distinct from being paused there:
+    // seeking back into the replay resumes, where seeking after a deliberate
+    // pause does not.
+    let finished = false;
 
     /** Refit, but never after teardown — deferred fits outlive the modal. */
     function refit() {
@@ -180,11 +203,15 @@
       // Any stop settles the drag: a viewer who hits pause mid-drag meant it,
       // and releasing the slider must not undo that.
       heldForDrag = false;
-      if (!playing) return;
-      playing = false;
-      if (raf) root.cancelAnimationFrame(raf);
-      raf = null;
-      replayer.pause();
+      if (playing) {
+        playing = false;
+        if (raf) root.cancelAnimationFrame(raf);
+        raf = null;
+        replayer.pause();
+      }
+      // Announced even when the engine was already stopped: a held drag shows
+      // the playing glyph, and dropping the latch has to take it back down.
+      // `announce` dedupes, so the ordinary already-paused stop says nothing.
       if (!quiet) announce(false);
     }
 
@@ -196,6 +223,7 @@
     function start() {
       if (playing) return;
       playing = true;
+      finished = false;
       announce(true);
       replayer.play(at);
       raf = root.requestAnimationFrame(track);
@@ -208,23 +236,46 @@
      * resume policy's call rather than the caller's.
      */
     function seek(ms, reason) {
-      const wasPlaying = playing || heldForDrag;
       const target = Math.max(0, Math.min(total, ms));
-      const resume = resumesAfterSeek({ playing: wasPlaying, reason, ms: target, total });
-      halt(resume);
+      const next = seekOutcome({ playing, held: heldForDrag, finished, reason, ms: target, total });
+      // Quiet whenever the transport is coming back, either now or when the drag
+      // holding it ends: a click on the slider track is an `input` and a release
+      // a few milliseconds apart, and the play glyph must not blink in between.
+      halt(next.resume || next.held);
       at = target;
-      if (resume) {
+      finished = false;
+      // After halt(), which settles any drag in flight.
+      heldForDrag = next.held;
+      if (next.resume) {
         start();
       } else {
         replayer.pause(at);
-        heldForDrag = reason === SEEK.DRAG && wasPlaying;
       }
       emit();
     }
 
+    /**
+     * The drag is over, wherever the last `input` left the position.
+     *
+     * Surfaces call this from every event in DRAG_END_EVENTS, all of which
+     * always fire. `change` does not: Gecko fires it only when the value differs
+     * from the one the interaction started on, so dragging away and back, or
+     * cancelling with Escape, used to leave the latch set for some later seek to
+     * act on. A no-op unless a drag is actually pending, which is what lets it
+     * be wired to all of those events at once.
+     */
+    function endDrag() {
+      if (!heldForDrag) return;
+      const next = seekOutcome({ playing, held: true, finished, reason: SEEK.SCRUB, ms: at, total });
+      heldForDrag = next.held;
+      if (next.resume) start();
+      else announce(false); // released at the very end: the glyph goes back to ▶
+    }
+
     function togglePlay() {
-      if (playing) return stop();
-      heldForDrag = false;
+      // The latch counts as playing: while a drag holds the transport the glyph
+      // reads ❚❚, so space has to mean pause.
+      if (playing || heldForDrag) return stop();
       if (at >= total) at = 0;
       start();
     }
@@ -241,6 +292,8 @@
     });
     replayer.on("finish", () => {
       at = total;
+      // Stopped because it ran out, not because the viewer asked it to.
+      finished = true;
       stop();
       emit();
     });
@@ -250,8 +303,13 @@
 
     pin();
     fit();
-    seek(0);
+    at = 0;
+    // Branched rather than "seek to 0, then maybe play": pausing at 0 and then
+    // playing from 0 makes rrweb build the full snapshot twice, and each build
+    // is a visible flash of the board.
     if (shouldAutoplay(options.autoplay, reducedMotion())) start();
+    else replayer.pause(0);
+    emit();
 
     return {
       totalTime: total,
@@ -259,6 +317,7 @@
       getTime: () => at,
       isPlaying: () => playing,
       seek,
+      endDrag,
       play() {
         if (!playing) togglePlay();
       },
@@ -279,11 +338,11 @@
 
   // Same dual export as store/css-assets.js: a global for the browser, CommonJS
   // so tooling can load the file. There is nothing here to unit test — it is
-  // rrweb and the DOM all the way down; the transport's one real decision lives
-  // in replay-timeline.js, where it is pure and covered.
+  // rrweb and the DOM all the way down; the transport's decisions live in
+  // replay-timeline.js, where they are pure and covered.
   // viewportOf and DEFAULT_VIEWPORT stay internal: pinning is create()'s own
   // business, and nothing outside this file has ever needed to ask.
-  const api = { available, create };
+  const api = { available, create, DRAG_END_EVENTS };
 
   root.RAReplayCore = api;
 

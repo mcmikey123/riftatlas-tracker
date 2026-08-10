@@ -268,10 +268,13 @@
     ui.play.addEventListener("click", () => playback.togglePlay());
     ui.prev.addEventListener("click", () => playback.stepTo(-1));
     ui.next.addEventListener("click", () => playback.stepTo(1));
-    // `input` fires all the way through a drag and `change` once on release, so
-    // the drag holds playback and the release is what puts it back.
+    // `input` fires all the way through a drag, so the drag holds playback and
+    // the end of the drag is what puts it back. The end is taken from the events
+    // that always fire — never from `change`, which Gecko withholds when the
+    // value lands back where the interaction started it, and this page is served
+    // to whatever browser the link was opened in.
     ui.seek.addEventListener("input", () => playback.seek(parseInt(ui.seek.value, 10) || 0, SEEK.DRAG));
-    ui.seek.addEventListener("change", () => playback.seek(parseInt(ui.seek.value, 10) || 0, SEEK.SCRUB));
+    for (const type of root.RAReplayCore.DRAG_END_EVENTS) ui.seek.addEventListener(type, playback.endDrag);
     ui.chapters.addEventListener("click", (e) => {
       const ms = e.target && e.target.dataset ? e.target.dataset.ms : undefined;
       if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
@@ -286,8 +289,13 @@
     if (!playback) return;
     const target = e.target;
     const tag = (target && target.tagName) || "";
-    // The slider owns its own arrow keys, and a focused button owns space.
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    // Text entry owns its keys, and a focused button owns space. The seek slider
+    // does not own the arrows, here or in the extension's modal: its native
+    // nudge is one millisecond of a replay minutes long, where the transport's
+    // arrows land on the next board state, and letting the range move itself
+    // would start a drag that no pointer release ever ends.
+    if (tag === "TEXTAREA" || tag === "SELECT") return;
+    if (tag === "INPUT" && target.type !== "range") return;
     if (target && target.isContentEditable) return;
 
     if (e.key === " " || e.key === "Spacebar") {

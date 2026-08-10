@@ -205,10 +205,12 @@
     playBtn.addEventListener("click", playback.togglePlay);
     prevBtn.addEventListener("click", () => playback.stepTo(-1));
     nextBtn.addEventListener("click", () => playback.stepTo(1));
-    // `input` fires all the way through a drag and `change` once on release, so
-    // the drag holds playback and the release is what puts it back.
+    // `input` fires all the way through a drag, so the drag holds playback and
+    // the end of the drag is what puts it back. The end is taken from the events
+    // that always fire — never from `change`, which Gecko withholds when the
+    // value lands back where the interaction started it.
     slider.addEventListener("input", () => playback.seek(parseInt(slider.value, 10) || 0, SEEK.DRAG));
-    slider.addEventListener("change", () => playback.seek(parseInt(slider.value, 10) || 0, SEEK.SCRUB));
+    for (const type of root.RAReplayCore.DRAG_END_EVENTS) slider.addEventListener(type, playback.endDrag);
     container.addEventListener("click", (e) => {
       const ms = e.target?.dataset?.ms;
       if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);

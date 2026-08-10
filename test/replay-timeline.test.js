@@ -14,6 +14,7 @@ const {
   SEEK,
   quantise,
   resumesAfterSeek,
+  seekOutcome,
   shouldAutoplay,
   turnOf,
   timeline,
@@ -191,24 +192,108 @@ test("a mid-drag seek holds playback rather than restarting it per input event",
   assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.DRAG })), false);
 });
 
-test("releasing the slider after a drag is the seek that resumes", () => {
-  // The drag has already paused the engine, so the caller passes the play state
-  // it latched, not the engine's current one.
-  assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.SCRUB, playing: true })), true);
-});
-
 test("seeking to the very end resumes nothing, and does not restart from zero", () => {
   assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.JUMP, ms: 10000 })), false);
   assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.SCRUB, ms: 99999 })), false);
 });
 
-test("seeking backwards out of a finished replay carries on playing from there", () => {
+test("seeking to one tick short of the end still carries on playing", () => {
   assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.CHAPTER, ms: 9999 })), true);
 });
 
 test("an unnamed seek is treated as a scrub, not as a pause", () => {
   assert.strictEqual(resumesAfterSeek(seeking({})), true);
   assert.strictEqual(resumesAfterSeek(null), false, "no seek at all must not resume anything");
+});
+
+test("a reason nobody recognises resumes, because resuming is the general rule", () => {
+  // Every exemption is named; a reason that is not one of them — a caller from
+  // the future, a typo — must land on the rule rather than silently pausing.
+  assert.strictEqual(resumesAfterSeek(seeking({ reason: "teleport" })), true);
+});
+
+/* The transport's state machine: the resume decision and the drag latch, which
+ * have to be decided together. `seekOutcome` is the only thing that assigns the
+ * latch, so the table below is the whole of it. */
+
+const moving = (extra) =>
+  Object.assign({ playing: false, held: false, finished: false, ms: 1000, total: 10000 }, extra);
+
+test("a drag begun while playing latches, and every later input keeps the latch", () => {
+  const first = seekOutcome(moving({ reason: SEEK.DRAG, playing: true }));
+  assert.deepStrictEqual(first, { resume: false, held: true }, "the first input holds playback");
+  // By the second input the engine is long since stopped, so only the latch is
+  // left to say the transport was running.
+  const second = seekOutcome(moving({ reason: SEEK.DRAG, held: true, ms: 2000 }));
+  assert.deepStrictEqual(second, { resume: false, held: true });
+});
+
+test("a drag begun while paused latches nothing, so its release starts nothing", () => {
+  assert.deepStrictEqual(seekOutcome(moving({ reason: SEEK.DRAG })), { resume: false, held: false });
+});
+
+test("releasing the slider is the seek that reads the latch and resumes", () => {
+  assert.deepStrictEqual(seekOutcome(moving({ reason: SEEK.SCRUB, held: true })), {
+    resume: true,
+    held: false
+  });
+});
+
+test("releasing the slider on the very end resumes nothing", () => {
+  assert.deepStrictEqual(seekOutcome(moving({ reason: SEEK.SCRUB, held: true, ms: 10000 })), {
+    resume: false,
+    held: false
+  });
+});
+
+test("a latch left behind by a drag whose end went unseen cannot start playback", () => {
+  // Gecko fires `change` only when the value moved, so a drag away and back, or
+  // one cancelled with Escape, used to leave the latch set — and the next
+  // chapter chip started playing though nobody ever pressed play.
+  for (const reason of [SEEK.CHAPTER, SEEK.JUMP, SEEK.STEP]) {
+    assert.deepStrictEqual(
+      seekOutcome(moving({ reason, held: true })),
+      { resume: false, held: false },
+      `a stale latch made ${reason} resume`
+    );
+  }
+});
+
+test("any seek that is not a drag clears the latch rather than carrying it on", () => {
+  assert.strictEqual(seekOutcome(moving({ reason: SEEK.CHAPTER, held: true })).held, false);
+  assert.strictEqual(seekOutcome(moving({ reason: SEEK.SCRUB, held: true })).held, false);
+});
+
+test("seeking back into a replay that ran to its end carries on playing from there", () => {
+  // The state the core really produces after a finish: stopped, nothing latched,
+  // but stopped because it ran out rather than because the viewer asked.
+  assert.strictEqual(seekOutcome(moving({ reason: SEEK.CHAPTER, finished: true })).resume, true);
+  assert.strictEqual(seekOutcome(moving({ reason: SEEK.JUMP, finished: true, ms: 0 })).resume, true);
+});
+
+test("dragging out of a finished replay latches, so the release resumes", () => {
+  const held = seekOutcome(moving({ reason: SEEK.DRAG, finished: true })).held;
+  assert.strictEqual(held, true);
+  assert.strictEqual(seekOutcome(moving({ reason: SEEK.SCRUB, held })).resume, true);
+});
+
+test("stepping out of a finished replay stays put, and stepping again still does", () => {
+  // The step is the viewer parking the transport, so what it parks on is a
+  // deliberate pause: the finish no longer counts for the seeks that follow.
+  assert.deepStrictEqual(seekOutcome(moving({ reason: SEEK.STEP, finished: true })), {
+    resume: false,
+    held: false
+  });
+});
+
+test("a paused transport stays paused whatever the seek", () => {
+  for (const reason of Object.values(SEEK)) {
+    assert.deepStrictEqual(
+      seekOutcome(moving({ reason })),
+      { resume: false, held: false },
+      `${reason} started playback from a standing stop`
+    );
+  }
 });
 
 test("autoplay happens only when a surface asked for it", () => {
