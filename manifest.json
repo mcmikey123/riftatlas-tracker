@@ -5,11 +5,7 @@
   "description": "Records your Rift Atlas (Riftbound) matches locally: win/loss rate, match history, and win rate vs opponent champions. Passive observer - never plays for you.",
   "permissions": ["storage", "unlimitedStorage"],
   "optional_permissions": ["downloads"],
-  "host_permissions": [
-    "https://play.riftatlas.com/*",
-    "https://riftatlas-replay-share.curtyo18.workers.dev/*"
-  ],
-  "optional_host_permissions": ["https://*/*"],
+  "host_permissions": ["https://play.riftatlas.com/*"],
   "content_scripts": [
     {
       "matches": ["https://play.riftatlas.com/*"],

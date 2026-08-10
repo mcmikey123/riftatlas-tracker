@@ -673,27 +673,23 @@
     paintShare(matchId);
   }
 
-  /* An extension page's fetch obeys CORS like any other page, and the share
-   * endpoint sends no CORS headers by design - the viewer is same-origin with
-   * it, so it never needs any. Host access is what exempts us. The default
-   * endpoint is in the manifest and grants silently; a self-hoster's is not and
-   * cannot be, so it is asked for here. This must stay inside the click: the
-   * user gesture is what lets Chrome show the prompt. */
+  /* An extension page's fetch obeys CORS like any other page, so uploading needs
+   * the endpoint's cooperation. The share Worker grants it: it answers the
+   * preflight and echoes Access-Control-Allow-Origin for chrome-extension://
+   * origins only. That is deliberately server-side rather than a host permission
+   * here, so the extension ships no wildcard origin access and a self-hoster can
+   * point Settings at their own instance with no manifest edit and no prompt.
+   *
+   * The URL is still validated, because a malformed endpoint should fail with a
+   * clear message rather than an opaque fetch rejection. */
   function ensureEndpointAccess(endpoint, cb) {
-    let pattern;
     try {
-      pattern = new URL(endpoint).origin + "/*";
+      const { protocol } = new URL(endpoint);
+      if (protocol !== "https:" && protocol !== "http:") throw new Error("bad protocol");
     } catch (_) {
       return cb(false, "The share endpoint in Settings isn't a valid URL.");
     }
-    try {
-      chrome.permissions.request({ origins: [pattern] }, (granted) => {
-        void chrome.runtime.lastError;
-        cb(!!granted, granted ? null : "Access to the share endpoint was declined.");
-      });
-    } catch (_) {
-      cb(false, "This browser would not allow access to the share endpoint.");
-    }
+    cb(true, null);
   }
 
   function readReplay(matchId) {
