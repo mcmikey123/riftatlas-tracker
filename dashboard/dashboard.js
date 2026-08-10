@@ -1083,15 +1083,18 @@
     panel.innerHTML = "";
   }
 
-  /* A link that has just been uploaded, offered with its own Copy button rather
-   * than pushed straight at the clipboard.
+  /* The finished link, offered with its own Copy button rather than only pushed
+   * at the clipboard.
    *
-   * The upload took seconds, so the click that started it is long past counting
-   * as a user gesture and `writeText` would be refused - leaving the link in a
-   * fallback dialog, for a share the user did everything right to create. One
-   * fresh click on a button beside the link is a better ending, and it is the
-   * same read-only field and Copy pairing the row's own panel ends with. */
-  function showMomentLink(panel, link) {
+   * After an upload the click that started it is seconds past counting as a user
+   * gesture and `writeText` would be refused - leaving the link in a fallback
+   * dialog, for a share the user did everything right to create. One fresh click
+   * on a button beside the link is a better ending, and it is the same read-only
+   * field and Copy pairing the row's own panel ends with. The reuse path shows
+   * the same thing for the same reason: its clipboard write can be refused too,
+   * and a panel that has already closed leaves a prompt over the replay as the
+   * only place the link exists. */
+  function showMomentLink(panel, link, note) {
     panel.hidden = false;
     panel.innerHTML = `
       <div class="share-link-row">
@@ -1099,13 +1102,36 @@
                aria-label="Share link opening at this moment" value="${esc(link)}" />
         <button class="rp-btn vr-share-copy">Copy link</button>
       </div>
-      <p class="share-note">Uploaded and verified. Later moments from this match reuse it — no
-        second upload, and no second copy on the endpoint.</p>`;
+      <p class="share-note">${esc(note)}</p>`;
     const field = panel.querySelector(".vr-share-link");
     const copy = panel.querySelector(".vr-share-copy");
     copy.addEventListener("click", () => window.RAClipboard.copyToButton(link, copy, { field }));
     field.focus();
     field.select();
+    return field;
+  }
+
+  /* An existing share, handed over instead of uploading a second copy of the
+   * same replay. Nothing is uploaded and no record is written: a second record
+   * for the same object would be a duplicate row in the shares panel claiming to
+   * be a second share.
+   *
+   * What it has left is said out loud. A reused share carries whatever remains
+   * of its seven days, not seven fresh ones, and the sharer has no other way to
+   * learn that: they pressed a button and got a link, and the recipient is the
+   * one who finds out it died. `reusableShare` refuses anything with under a day
+   * on it, so this is never counting down in hours - but "in 2 days" and "in 6
+   * days" are different things to be handing someone, and only one of them is
+   * what a fresh share would have given. */
+  function offerReusedLink(panel, button, record, atSeconds) {
+    const link = shareLinkOf(record, atSeconds);
+    const field = showMomentLink(
+      panel,
+      link,
+      `Reusing the share already made for this match — no second upload, and no second copy on ` +
+        `the endpoint. It expires ${SHARE.expiryText(record, Date.now())}.`
+    );
+    window.RAClipboard.copyToButton(link, button, { field });
   }
 
   /* Entry point handed to the modal. `atMs` was read at the click, so it names
@@ -1113,14 +1139,7 @@
   async function shareMoment({ atMs, button, panel }, match) {
     const atSeconds = window.RAShareHosts.toLinkSeconds(atMs);
     const record = SHARE.reusableShare(await readStoredShares(), match.id, Date.now());
-    if (record) {
-      // Nothing is uploaded and no record is written: this share already exists
-      // and a second record for the same object would be a duplicate row in the
-      // shares panel claiming to be a second share.
-      closeMomentPanel(panel);
-      window.RAClipboard.copyToButton(shareLinkOf(record, atSeconds), button);
-      return;
-    }
+    if (record) return offerReusedLink(panel, button, record, atSeconds);
     // Nothing live to reuse, so this is a first upload. The disclosure comes
     // first and the upload is a second, deliberate click - the same two steps
     // the row's own share panel takes, because the thing being consented to is
@@ -1137,7 +1156,22 @@
         <button class="rp-btn vr-share-cancel">Cancel</button>
       </div>`;
     panel.querySelector(".vr-share-cancel").addEventListener("click", () => closeMomentPanel(panel));
-    panel.querySelector(".vr-share-go").addEventListener("click", () => {
+    const go = panel.querySelector(".vr-share-go");
+    go.addEventListener("click", async () => {
+      // Disabled synchronously: the re-read below is asynchronous, and a second
+      // click while it is out would start a second upload of the same replay.
+      go.disabled = true;
+      /* The reuse decision was made on the first click, which may be minutes
+       * back - long enough for a share of this match to have landed from the
+       * row's own panel behind the modal. Uploading now would put a second 3.5 MB
+       * object on the endpoint and write a second record, both undeletable for
+       * seven days, which is exactly what reuse exists to prevent. */
+      const landed = SHARE.reusableShare(await readStoredShares(), matchId, Date.now());
+      // The panel's own buttons go with its content, so a Cancel or a closed
+      // modal during the read detaches this one.
+      if (!go.isConnected) return;
+      if (landed) return offerReusedLink(panel, button, landed, atSeconds);
+
       button.disabled = true;
       momentFollow = { matchId, panel };
       panel.innerHTML = `<p class="share-progress">${esc(SHARE_PHASES.preparing)}</p>`;
@@ -1153,7 +1187,12 @@
           panel.innerHTML = `<p class="share-error">${esc(s.error || SHARE.MESSAGES.unprepared)}</p>`;
           return;
         }
-        showMomentLink(panel, shareLinkOf(made.record, atSeconds));
+        showMomentLink(
+          panel,
+          shareLinkOf(made.record, atSeconds),
+          "Uploaded and verified. Later moments from this match reuse it — no second upload, " +
+            "and no second copy on the endpoint."
+        );
       });
     });
   }

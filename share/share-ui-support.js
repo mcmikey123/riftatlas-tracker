@@ -222,6 +222,31 @@
   }
 
   /**
+   * How much life a share must have left before it is handed over again instead
+   * of uploading the replay afresh.
+   *
+   * The same asymmetry `isPrunable` reasons about, pointing the other way. There
+   * the question is "might this object still be alive?" and the answer keeps a
+   * record two days past its TTL. Here it is "will this link still work when it
+   * is opened?", and unexpired is not a good enough answer: a record made 6d23h
+   * ago is unexpired, and reusing it hands someone a link that dies within the
+   * hour, for a share they believe they just made. Nothing can re-share or
+   * revoke afterwards, and the sharer finds out only when the recipient says the
+   * link is dead.
+   *
+   * A day is the natural figure - it is the slack the bucket's own lifecycle
+   * rule runs with, so it is the shortest remaining life this side can honestly
+   * describe. Below it the answer is an upload: 3.5 MB and about 600 ms buys
+   * seven days instead of minutes, which is the trade every time.
+   */
+  const MIN_REUSE_MS = 86400000;
+
+  /** How long a share has left, in ms; negative once it has gone. */
+  function remainingMs(record, now) {
+    return expiresAt(record) - Number(now);
+  }
+
+  /**
    * The `shares` array with the certainly-dead records dropped, for writing
    * back. Anything undatable is kept rather than discarded: this decides what
    * to delete, and "I can't read this record" is not evidence that its object
@@ -307,10 +332,11 @@
    *   shared several times, so this is a search, not a get, and the NEWEST
    *   unexpired one wins - it has the most days left on it.
    *
-   *   Expiry is the record's own createdAt plus the fixed TTL. An expired
-   *   record cannot be reused however recently it was made: the object behind
-   *   it is gone or going, and handing over a link to it would be handing over
-   *   a link that opens to nothing.
+   *   Expiry is the record's own createdAt plus the fixed TTL, and a record has
+   *   to clear it by `MIN_REUSE_MS` rather than merely clear it. An expired
+   *   record cannot be reused however recently it was made - the object behind
+   *   it is gone or going - and one about to expire is barely better, because
+   *   the link is handed over to be opened later.
    *
    *   The link is rebuilt against the RECORD's endpoint, not the one in
    *   Settings - that is the caller's job, but it is why the whole record comes
@@ -326,7 +352,7 @@
     // readShareList drops every record that could not produce a link and hands
     // back what is left newest first, which is the order this wants.
     for (const record of readShareList(raw)) {
-      if (record.matchId === wanted && !isExpired(record, now)) return record;
+      if (record.matchId === wanted && remainingMs(record, now) >= MIN_REUSE_MS) return record;
     }
     return null;
   }
@@ -395,6 +421,7 @@
     SHARE_TTL_DAYS,
     SHARE_TTL_MS,
     PRUNE_GRACE_MS,
+    MIN_REUSE_MS,
     MESSAGES,
     RECHECK_MESSAGES,
     RECHECK_LABELS,
@@ -405,6 +432,7 @@
     hasShareMagic,
     shareRecord,
     expiresAt,
+    remainingMs,
     isExpired,
     isPrunable,
     pruneShares,

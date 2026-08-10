@@ -17,6 +17,8 @@ const {
   isPrunable,
   pruneShares,
   PRUNE_GRACE_MS,
+  MIN_REUSE_MS,
+  remainingMs,
   expiryText,
   readShareList,
   reusableShare,
@@ -324,8 +326,29 @@ test("the newest live share wins when a match has several", () => {
 // hand over a link that opens to nothing. Uploading again is the right answer.
 test("an expired share is never reused, however recent it is otherwise", () => {
   const stale = record({ createdAt: CREATED });
-  assert.strictEqual(reusableShare([stale], "m1", CREATED + SHARE_TTL_MS - 1).objectId, "A".repeat(22));
   assert.strictEqual(reusableShare([stale], "m1", CREATED + SHARE_TTL_MS), null);
+  assert.strictEqual(reusableShare([stale], "m1", CREATED + SHARE_TTL_MS + HOUR), null);
+});
+
+/* Unexpired is not the bar. A link is handed over to be opened later, so a
+ * record with minutes left on it is reused into a share the sharer believes they
+ * just made and the recipient finds dead tomorrow - and nothing can re-share or
+ * revoke it. A fresh upload costs 3.5 MB and buys seven days. */
+test("a share about to expire is uploaded afresh rather than reused", () => {
+  const stale = record({ createdAt: CREATED });
+  const dies = CREATED + SHARE_TTL_MS;
+  assert.ok(reusableShare([stale], "m1", dies - MIN_REUSE_MS), "exactly the minimum still reuses");
+  assert.strictEqual(reusableShare([stale], "m1", dies - MIN_REUSE_MS + 1), null, "one ms under does not");
+  assert.strictEqual(reusableShare([stale], "m1", dies - HOUR), null, "an hour left is not a share");
+});
+
+// The figure itself, because it is a promise about what a reused link is worth:
+// never less than the slack the bucket's own lifecycle rule runs with.
+test("the reuse floor is a day, and a day is less than the TTL", () => {
+  assert.strictEqual(MIN_REUSE_MS, 86400000);
+  assert.ok(MIN_REUSE_MS < SHARE_TTL_MS, "a floor at or above the TTL would reuse nothing, ever");
+  assert.strictEqual(remainingMs(record(), CREATED), SHARE_TTL_MS);
+  assert.strictEqual(remainingMs(record(), CREATED + SHARE_TTL_MS + HOUR), -HOUR, "gone reads negative");
 });
 
 test("the newest UNEXPIRED share wins, not simply the newest", () => {
