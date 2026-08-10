@@ -169,19 +169,137 @@
     return Number(record && record.createdAt) + SHARE_TTL_MS;
   }
 
+  /** Whether a share has passed its TTL. Nothing here can bring it back. */
+  function isExpired(record, now) {
+    return Number(now) >= expiresAt(record);
+  }
+
+  const MINUTE_MS = 60000;
+  const HOUR_MS = 3600000;
+  const DAY_MS = 86400000;
+
+  function plural(n, unit) {
+    return `${n} ${unit}${n === 1 ? "" : "s"}`;
+  }
+
+  /**
+   * How long a share has left, or how long ago it went, in words.
+   *
+   * Always rounded down. "in 6 days" on a share with 6.9 days left costs
+   * nothing; "in 7 days" on one with 6.1 days left promises time the bucket
+   * will not give, and the whole point of the shares list is that its dates
+   * are the only warning anyone gets.
+   */
+  function expiryText(record, now) {
+    const left = expiresAt(record) - Number(now);
+    if (left <= 0) {
+      const gone = -left;
+      if (gone >= DAY_MS) return `expired ${plural(Math.floor(gone / DAY_MS), "day")} ago`;
+      if (gone >= HOUR_MS) return `expired ${plural(Math.floor(gone / HOUR_MS), "hour")} ago`;
+      if (gone >= MINUTE_MS) return `expired ${plural(Math.floor(gone / MINUTE_MS), "minute")} ago`;
+      return "expired just now";
+    }
+    if (left >= DAY_MS) return `in ${plural(Math.floor(left / DAY_MS), "day")}`;
+    if (left >= HOUR_MS) return `in ${plural(Math.floor(left / HOUR_MS), "hour")}`;
+    if (left >= MINUTE_MS) return `in ${plural(Math.floor(left / MINUTE_MS), "minute")}`;
+    return "in under a minute";
+  }
+
+  // What a link is made of, so a record that cannot produce one is caught
+  // before it becomes a row. Both are unpadded base64url of a fixed length:
+  // 128 bits of object id, 256 bits of key.
+  const OBJECT_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+  const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+
+  /**
+   * The stored `shares` array as rows to render: valid records only, newest
+   * first. Anything unusable is dropped rather than shown, because a row whose
+   * link cannot be rebuilt is worse than no row - it claims a share exists and
+   * offers no way to reach it. Nothing is written back; dropping a record here
+   * does not delete anything, and could not delete the object even if it did.
+   */
+  function readShareList(raw) {
+    const rows = [];
+    for (const entry of Array.isArray(raw) ? raw : []) {
+      let record;
+      try {
+        record = shareRecord(entry);
+      } catch (_) {
+        continue; // half-built or from a format this build doesn't know
+      }
+      if (!OBJECT_ID_RE.test(record.objectId) || !KEY_RE.test(record.key)) continue;
+      rows.push(record);
+    }
+    return rows.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /**
+   * What a re-check learned. Three outcomes, deliberately not two: "couldn't
+   * reach the endpoint" is not "expired", and reporting it as expired would
+   * tell someone their share was gone when it is still being served.
+   */
+  const RECHECK_MESSAGES = {
+    alive: "Still on the endpoint - this link opens.",
+    gone: "Gone from the endpoint. It expired, or the operator removed it. This link opens to nothing.",
+    unreachable:
+      "Couldn't reach the share endpoint, so nothing was learned about this share either way.",
+    unexpected:
+      "The endpoint answered with something that isn't a replay, so nothing was learned about " +
+      "this share either way."
+  };
+
+  const RECHECK_LABELS = { alive: "still there", gone: "gone", unreachable: "no answer" };
+
+  const out = (state, message) => ({ state, label: RECHECK_LABELS[state], message });
+
+  /**
+   * `outcome` is what a HEAD-sized GET of `<endpoint>/b/<objectId>` produced:
+   *
+   *   reached  boolean  the endpoint answered at all
+   *   status   number   its HTTP status
+   *   magic    boolean  whether the first four bytes are the RAR1 magic
+   *
+   * The magic check is the same one the post-upload verification uses: a host
+   * that answers 200 with an HTML interstitial is not serving the share.
+   */
+  function describeRecheck(outcome) {
+    const o = outcome || {};
+    if (!o.reached) return out("unreachable", RECHECK_MESSAGES.unreachable);
+
+    const status = Number(o.status);
+    // 410 is not served today, but it means exactly "gone" and mistaking it
+    // for a transient failure would be the one wrong answer here.
+    if (status === 404 || status === 410) return out("gone", RECHECK_MESSAGES.gone);
+    if (status === 200 || status === 206) {
+      return o.magic
+        ? out("alive", RECHECK_MESSAGES.alive)
+        : out("unreachable", RECHECK_MESSAGES.unexpected);
+    }
+    return out(
+      "unreachable",
+      `The share endpoint answered ${Number.isFinite(status) ? status : "oddly"}, so nothing was ` +
+        "learned about this share either way."
+    );
+  }
+
   // Same dual export as store/css-assets.js: a global for the extension, CommonJS for tests.
   const api = {
     MAX_UPLOAD_BYTES,
     SHARE_TTL_DAYS,
     SHARE_TTL_MS,
     MESSAGES,
+    RECHECK_MESSAGES,
     fmtSize,
     checkPayloadSize,
     oversizeMessage,
     describeUploadFailure,
     hasShareMagic,
     shareRecord,
-    expiresAt
+    expiresAt,
+    isExpired,
+    expiryText,
+    readShareList,
+    describeRecheck
   };
 
   root.RAShareUI = api;

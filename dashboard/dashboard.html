@@ -140,6 +140,25 @@
   </table>
 </section>
 
+<section id="sharesPanel" hidden>
+  <h2>Shared replay links</h2>
+  <p class="hint">
+    Every share link created from this browser, newest first. A link is a bearer token: anyone it reaches can watch
+    the replay, which includes your opponent's display name and the match chat.
+    <b>A share can't be unshared.</b> There is no way to revoke one early &mdash; each expires on its own
+    7&nbsp;days after it was created, when the endpoint deletes the encrypted copy, and that sweep can run up to a
+    day late. <b>Re-check</b> asks the endpoint whether a share's copy is still there.
+    Clearing an expired share removes this local record and nothing else; the record is the only place its
+    decryption key is kept, so a cleared link can never be rebuilt.
+  </p>
+  <table id="sharesTable">
+    <thead><tr>
+      <th>Match</th><th>Created</th><th>Expires</th><th>Link</th><th>Re-check</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
 <footer>All data is stored locally in your browser. Nothing is uploaded anywhere unless you create a share link for a replay, which uploads that one replay encrypted.</footer>
 <script src="format.js"></script>
 <script src="analysis.js"></script>

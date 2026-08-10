@@ -5,12 +5,17 @@ const {
   MAX_UPLOAD_BYTES,
   SHARE_TTL_MS,
   MESSAGES,
+  RECHECK_MESSAGES,
   fmtSize,
   checkPayloadSize,
   describeUploadFailure,
   hasShareMagic,
   shareRecord,
-  expiresAt
+  expiresAt,
+  isExpired,
+  expiryText,
+  readShareList,
+  describeRecheck
 } = require("../share/share-ui-support.js");
 
 const { buildSharePayload, generateKey } = require("../share/payload.js");
@@ -153,4 +158,129 @@ test("a share expires seven days after it was created", () => {
   const created = 1770000000000;
   assert.strictEqual(SHARE_TTL_MS, 604800000);
   assert.strictEqual(expiresAt({ createdAt: created }), created + 604800000);
+});
+
+// ---- the shares list -----------------------------------------------------
+
+const CREATED = 1770000000000;
+const HOUR = 3600000;
+const record = (over) =>
+  Object.assign(
+    {
+      matchId: "m1",
+      objectId: "A".repeat(22),
+      key: "B".repeat(43),
+      endpoint: "https://share.example.workers.dev",
+      createdAt: CREATED
+    },
+    over
+  );
+
+test("expiry is reached at the TTL, not a moment before", () => {
+  const r = record();
+  assert.strictEqual(isExpired(r, expiresAt(r) - 1), false);
+  assert.strictEqual(isExpired(r, expiresAt(r)), true);
+  assert.strictEqual(isExpired(r, expiresAt(r) + HOUR), true);
+});
+
+// Never round up: "in 6 days" on a share with 6.9 days left is honest, while
+// "in 7 days" on one with 6.1 days left promises time the bucket will not give.
+test("time left reads in the largest unit that is not an overstatement", () => {
+  const at = (msLeft) => expiryText(record(), expiresAt(record()) - msLeft);
+  assert.strictEqual(at(7 * 24 * HOUR), "in 7 days");
+  assert.strictEqual(at(6.9 * 24 * HOUR), "in 6 days");
+  assert.strictEqual(at(47 * HOUR), "in 1 day");
+  assert.strictEqual(at(23.5 * HOUR), "in 23 hours");
+  assert.strictEqual(at(1.5 * HOUR), "in 1 hour");
+  assert.strictEqual(at(90000), "in 1 minute");
+  assert.strictEqual(at(20000), "in under a minute");
+});
+
+test("a share past its TTL says so, and says how long ago", () => {
+  const r = record();
+  assert.strictEqual(expiryText(r, expiresAt(r)), "expired just now");
+  assert.strictEqual(expiryText(r, expiresAt(r) + 2 * HOUR), "expired 2 hours ago");
+  assert.strictEqual(expiryText(r, expiresAt(r) + 50 * HOUR), "expired 2 days ago");
+});
+
+test("the stored list comes back newest first", () => {
+  const rows = readShareList([
+    record({ objectId: "A".repeat(22), createdAt: CREATED }),
+    record({ objectId: "C".repeat(22), createdAt: CREATED + 2 * HOUR }),
+    record({ objectId: "B".repeat(22), createdAt: CREATED + HOUR })
+  ]);
+  assert.deepStrictEqual(
+    rows.map((r) => r.objectId),
+    ["C".repeat(22), "B".repeat(22), "A".repeat(22)]
+  );
+});
+
+// A row whose link cannot be rebuilt is worse than no row: it claims a share
+// exists and offers no way to reach it. The key and the object id are the two
+// fields the link is made of, so both are checked for shape, not just presence.
+test("entries that could never produce a link are dropped, not rendered", () => {
+  const rows = readShareList([
+    record(),
+    null,
+    "nonsense",
+    record({ key: "" }),
+    record({ key: "B".repeat(42) }),
+    record({ key: "B".repeat(43).replace("B", "+") }),
+    record({ objectId: "A".repeat(21) }),
+    record({ objectId: "A".repeat(22).replace("A", "/") }),
+    record({ createdAt: 0 })
+  ]);
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].endpoint, "https://share.example.workers.dev");
+});
+
+test("a missing or non-array shares key reads as no shares", () => {
+  for (const bad of [undefined, null, {}, "shares", 7]) {
+    assert.deepStrictEqual(readShareList(bad), [], String(bad));
+  }
+});
+
+// The three outcomes need three different reactions from the reader: the link
+// works, the link is dead, or nothing was learned. Collapsing "unreachable"
+// into "gone" would tell someone a share had expired when it had not.
+test("a re-check separates alive, gone and learned-nothing", () => {
+  const alive = describeRecheck({ reached: true, status: 200, magic: true });
+  assert.strictEqual(alive.state, "alive");
+  assert.strictEqual(alive.message, RECHECK_MESSAGES.alive);
+
+  assert.strictEqual(describeRecheck({ reached: true, status: 206, magic: true }).state, "alive");
+  assert.strictEqual(describeRecheck({ reached: true, status: 404 }).state, "gone");
+  assert.strictEqual(describeRecheck({ reached: true, status: 404 }).message, RECHECK_MESSAGES.gone);
+  assert.strictEqual(describeRecheck({ reached: false }).state, "unreachable");
+  assert.strictEqual(describeRecheck({ reached: false }).message, RECHECK_MESSAGES.unreachable);
+  assert.strictEqual(describeRecheck({}).state, "unreachable");
+});
+
+// The failure the post-upload check exists to catch: a 200 carrying an HTML
+// interstitial rather than the object. It is not proof the share is gone.
+test("a 200 that is not a share frame is not reported as alive or as gone", () => {
+  const odd = describeRecheck({ reached: true, status: 200, magic: false });
+  assert.strictEqual(odd.state, "unreachable");
+  assert.strictEqual(odd.message, RECHECK_MESSAGES.unexpected);
+});
+
+test("an unexpected status names itself so the number is not lost", () => {
+  const busy = describeRecheck({ reached: true, status: 503 });
+  assert.strictEqual(busy.state, "unreachable");
+  assert.match(busy.message, /503/);
+});
+
+test("every re-check outcome carries a short label and a distinct message", () => {
+  const outcomes = [
+    { reached: true, status: 200, magic: true },
+    { reached: true, status: 404 },
+    { reached: true, status: 200, magic: false },
+    { reached: false }
+  ].map(describeRecheck);
+  for (const o of outcomes) {
+    assert.ok(o.label && o.label.length < 20, `a pill needs a short label, got ${o.label}`);
+    assert.ok(o.message, "every outcome needs a message");
+  }
+  const messages = outcomes.map((o) => o.message);
+  assert.strictEqual(new Set(messages).size, messages.length, "outcomes must not share wording");
 });

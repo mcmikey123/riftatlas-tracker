@@ -55,6 +55,7 @@
       refreshBackupUI();
       refreshVisualSettingsUI();
       refreshShareSettingsUI();
+      refreshShares();
       dropLegacyReplays();
     });
   }
@@ -297,6 +298,7 @@
     renderAgg($("#myTable tbody"), rows, (m) => champ(m.myChampion || m.myLegend));
     renderHistory(filtered(true));
     renderVisualPanel();
+    renderSharesPanel();
     renderArchiveBanner();
   }
 
@@ -700,24 +702,37 @@
     );
   }
 
-  /* Never show a link that has not been read back. This is the check that would
-   * have caught the host found during research which answered a curl probe with
-   * the bytes and a browser with an HTML interstitial. Only the first chunk is
-   * read - enough for the magic - and the rest of the body is cancelled, so
-   * confirming a 3.5 MB share costs a few hundred bytes. */
-  async function verifyObject(endpoint, objectId) {
+  /* Read just enough of an object to recognise it: the four magic bytes. Used
+   * both to verify a fresh upload and to re-check an old share from the shares
+   * list, which is why it reports what happened rather than throwing.
+   *
+   * No Range header, deliberately. The Worker's /b/ route hands R2's whole body
+   * back - `BUCKET.get(id)` takes no range - so a range request would be ignored
+   * and answered 200 with the full object anyway, while risking a CORS preflight
+   * against a route that answers OPTIONS with 405. Cancelling after the first
+   * chunk is what actually keeps this cheap: the head of a 3.5 MB share costs
+   * one chunk, not 3.5 MB, and it is the same read the upload verification has
+   * been doing against the deployed Worker all along.
+   *
+   *   reached  the endpoint answered at all
+   *   status   its HTTP status, 0 when the fetch itself failed
+   *   bytes    the first few bytes of the body, empty unless it answered 2xx */
+  async function fetchObjectHead(endpoint, objectId) {
     const url = `${window.RAShareHosts.normaliseEndpoint(endpoint)}/b/${objectId}`;
-    const fail = () => new ShareUiError(SHARE.MESSAGES.unverified, true);
+    const empty = new Uint8Array(0);
     let res;
     try {
       res = await fetch(url, { cache: "no-store" });
     } catch (_) {
-      throw fail();
+      return { reached: false, status: 0, bytes: empty };
     }
-    if (!res.ok || !res.body) throw fail();
+    if (!res.ok || !res.body) {
+      if (res.body) res.body.cancel().catch(() => {});
+      return { reached: true, status: res.status, bytes: empty };
+    }
 
     const reader = res.body.getReader();
-    let head = new Uint8Array(0);
+    let head = empty;
     try {
       while (head.length < 4) {
         const { value, done } = await reader.read();
@@ -731,7 +746,15 @@
     } finally {
       reader.cancel().catch(() => {});
     }
-    if (!SHARE.hasShareMagic(head)) throw fail();
+    return { reached: true, status: res.status, bytes: head };
+  }
+
+  /* Never show a link that has not been read back. This is the check that would
+   * have caught the host found during research which answered a curl probe with
+   * the bytes and a browser with an HTML interstitial. */
+  async function verifyObject(endpoint, objectId) {
+    const head = await fetchObjectHead(endpoint, objectId);
+    if (!SHARE.hasShareMagic(head.bytes)) throw new ShareUiError(SHARE.MESSAGES.unverified, true);
   }
 
   async function runShare(matchId, endpoint) {
@@ -853,27 +876,201 @@
     });
   }
 
-  function copyShareLink(matchId, button) {
-    const s = shareState.get(matchId);
-    if (!s || !s.link) return;
-    // Selected either way, so a blocked clipboard still leaves the link ready
-    // for a manual copy rather than leaving the user with nothing.
-    const field = document.querySelector(`[data-sharelink="${CSS.escape(matchId)}"]`);
+  /* The field is selected either way, so a blocked clipboard still leaves the
+   * link ready for a manual copy rather than leaving the user with nothing.
+   * The button says what happened and then goes back to whatever it said. */
+  function copyLink(link, field, button) {
     if (field) {
       field.focus();
       field.select();
     }
+    const label = button.textContent;
     const settle = (text) => {
       button.textContent = text;
       setTimeout(() => {
-        if (button.isConnected) button.textContent = "Copy link";
+        if (button.isConnected) button.textContent = label;
       }, 1500);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(s.link).then(() => settle("Copied"), () => settle("Press Ctrl+C"));
+      navigator.clipboard.writeText(link).then(() => settle("Copied"), () => settle("Press Ctrl+C"));
       return;
     }
     settle("Press Ctrl+C");
+  }
+
+  function copyShareLink(matchId, button) {
+    const s = shareState.get(matchId);
+    if (!s || !s.link) return;
+    copyLink(s.link, document.querySelector(`[data-sharelink="${CSS.escape(matchId)}"]`), button);
+  }
+
+  // ---- shares list ------------------------------------------------------
+
+  /* What has been shared from this browser, and what became of it.
+   *
+   * The panel exists because there is no delete button and cannot be one: a
+   * share is served until the endpoint's own 7-day lifecycle rule removes it,
+   * and the payload carries an opponent's display name and the match chat. The
+   * least this can do is keep an honest register of what is still out there.
+   *
+   * Re-check reads four bytes back off the endpoint. Clear removes a local
+   * record only - it deletes nothing, and the copy underneath an expired record
+   * is already gone or going. The pure parts - the record filter, the expiry
+   * wording and the outcome-to-message mapping - are in share/share-ui-support.js
+   * and are tested; what is here is DOM and network. */
+
+  let shares = [];
+  // objectId -> {busy} or a describeRecheck() result. Kept outside the DOM so a
+  // re-render cannot lose an answer that was just given.
+  const recheckState = new Map();
+
+  function refreshShares() {
+    if (archive) return;
+    chrome.storage.local.get({ shares: [] }, (data) => {
+      shares = SHARE.readShareList(data && data.shares);
+      renderSharesPanel();
+    });
+  }
+
+  function shareLinkOf(record) {
+    return window.RAShareHosts.buildLink({
+      endpoint: record.endpoint,
+      objectId: record.objectId,
+      keyBytes: window.RAShareHosts.fromBase64Url(record.key),
+    });
+  }
+
+  /* Which match this came from. A share outlives the match record - deleting a
+   * match cannot reach the copy on the endpoint - so an orphaned row says so
+   * rather than showing a bare id nobody can place. */
+  function shareMatchLabel(record) {
+    const m = all.find((x) => x.id === record.matchId);
+    if (!m) return "match no longer in your history";
+    const at = m.startedAt ? new Date(m.startedAt) : null;
+    const when = at
+      ? at.toLocaleDateString() + " " + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : DASH;
+    return `${when} · ${champ(m.myChampion || m.myLegend)} vs ${champ(m.opponentChampion || m.opponentLegend)}`;
+  }
+
+  function recheckInner(objectId) {
+    const state = recheckState.get(objectId);
+    if (!state) return "";
+    if (state.busy) return '<p class="sh-msg">Asking the endpoint…</p>';
+    return `<p class="sh-msg"><span class="sh-state sh-${esc(state.state)}">${esc(state.label)}</span>
+      ${esc(state.message)}</p>`;
+  }
+
+  function shareListRow(record, now) {
+    const expired = SHARE.isExpired(record, now);
+    const created = new Date(record.createdAt);
+    const oid = esc(record.objectId);
+    const label = shareMatchLabel(record);
+    return `<tr class="${expired ? "sh-expired-row" : ""}">
+        <td>${esc(label)}</td>
+        <td class="sh-when">${esc(created.toLocaleDateString())} ${esc(
+          created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        )}</td>
+        <td class="sh-when">${
+          expired
+            ? `<span class="sh-state sh-expired">${esc(SHARE.expiryText(record, now))}</span>`
+            : esc(SHARE.expiryText(record, now))
+        }</td>
+        <td class="sh-link-cell">
+          <div class="share-link-row">
+            <input class="share-link" type="text" readonly spellcheck="false"
+                   aria-label="Share link for ${esc(label)}"
+                   data-sharelistlink="${oid}" value="${esc(shareLinkOf(record))}" />
+            <button class="rp-btn" data-sharelistcopy="${oid}">Copy</button>
+          </div>
+        </td>
+        <td class="sh-actions">
+          <button class="rp-btn" data-sharerecheck="${oid}" ${
+            (recheckState.get(record.objectId) || {}).busy ? "disabled" : ""
+          }>Re-check</button>
+          ${
+            expired
+              ? `<button class="rp-btn sh-forget" data-shareforget="${oid}"
+                     title="Forget this record. It cannot delete the copy on the endpoint - that expires on its own.">Clear from list</button>`
+              : ""
+          }
+          <div data-sharestatus="${oid}" aria-live="polite">${recheckInner(record.objectId)}</div>
+        </td>
+      </tr>`;
+  }
+
+  function renderSharesPanel() {
+    const panel = $("#sharesPanel");
+    if (!panel) return;
+    // An archive view is a file, not this browser's data; its matches have no
+    // relationship to what was shared from here.
+    panel.hidden = readOnly();
+    if (panel.hidden) return;
+    const now = Date.now();
+    $("#sharesTable tbody").innerHTML = shares.length
+      ? shares.map((r) => shareListRow(r, now)).join("")
+      : `<tr><td colspan="5" class="empty">No share links have been created from this browser.
+           Open a match with a replay and choose “share a link”.</td></tr>`;
+  }
+
+  /** Repaint one row's outcome in place, so re-checking keeps keyboard focus. */
+  function paintRecheck(objectId) {
+    const cell = document.querySelector(`[data-sharestatus="${CSS.escape(objectId)}"]`);
+    if (cell) cell.innerHTML = recheckInner(objectId);
+    const button = document.querySelector(`[data-sharerecheck="${CSS.escape(objectId)}"]`);
+    if (button) button.disabled = !!(recheckState.get(objectId) || {}).busy;
+  }
+
+  function recheckShare(objectId) {
+    const record = shares.find((r) => r.objectId === objectId);
+    if (!record || (recheckState.get(objectId) || {}).busy) return;
+    recheckState.set(objectId, { busy: true });
+    paintRecheck(objectId);
+    const settle = (outcome) => {
+      recheckState.set(objectId, SHARE.describeRecheck(outcome));
+      paintRecheck(objectId);
+    };
+    fetchObjectHead(record.endpoint, record.objectId).then(
+      (head) =>
+        settle({
+          reached: head.reached,
+          status: head.status,
+          magic: SHARE.hasShareMagic(head.bytes),
+        }),
+      (err) => {
+        console.warn("[RA-Tracker] re-checking a share failed:", err);
+        settle({ reached: false });
+      }
+    );
+  }
+
+  /* Forgetting a record is the only thing this list can remove. The object on
+   * the endpoint is not ours to delete - there is no route for it - so the
+   * wording must never suggest this unshares anything. */
+  function forgetShare(objectId) {
+    if (readOnly()) return;
+    const record = shares.find((r) => r.objectId === objectId);
+    // Expired only, which is what the row offers - the wording below is about a
+    // share whose time is already up and must never be shown for a live one.
+    if (!record || !SHARE.isExpired(record, Date.now())) return;
+    const ok = confirm(
+      "Remove this expired share from the list?\n\n" +
+        "This forgets the local record only. It cannot delete the copy on the endpoint — that " +
+        "expired on its own, and the endpoint deletes it within about a day of expiring.\n\n" +
+        "The record is the only place this share's decryption key is kept, so the link can't be " +
+        "rebuilt afterwards."
+    );
+    if (!ok) return;
+    chrome.storage.local.get({ shares: [] }, (data) => {
+      const kept = (Array.isArray(data.shares) ? data.shares : []).filter(
+        (s) => !(s && s.objectId === objectId)
+      );
+      chrome.storage.local.set({ shares: kept }, () => {
+        void chrome.runtime.lastError;
+        recheckState.delete(objectId);
+        refreshShares();
+      });
+    });
   }
 
   // ---- share settings ---------------------------------------------------
@@ -1023,6 +1220,30 @@
     const shareCopyId = e.target?.dataset?.sharecopy;
     if (shareCopyId) {
       copyShareLink(shareCopyId, e.target);
+      return;
+    }
+    // The shares list. Keyed by object id, which is what identifies a share -
+    // a match can have been shared more than once.
+    const listCopyId = e.target?.dataset?.sharelistcopy;
+    if (listCopyId) {
+      const record = shares.find((r) => r.objectId === listCopyId);
+      if (record) {
+        copyLink(
+          shareLinkOf(record),
+          document.querySelector(`[data-sharelistlink="${CSS.escape(listCopyId)}"]`),
+          e.target
+        );
+      }
+      return;
+    }
+    const recheckId = e.target?.dataset?.sharerecheck;
+    if (recheckId) {
+      recheckShare(recheckId);
+      return;
+    }
+    const forgetId = e.target?.dataset?.shareforget;
+    if (forgetId) {
+      forgetShare(forgetId);
       return;
     }
     const logId = e.target?.dataset?.log;
@@ -1591,6 +1812,9 @@
     if (archive) return; // never let live writes disturb an archive view
     const busy = document.activeElement?.dataset;
     if (changes.matches && !busy?.notes && !busy?.deck) load();
+    // A share created in the row above writes this key, so the list picks the
+    // new link up without a reload.
+    if (changes.shares) refreshShares();
   });
 
   load();
