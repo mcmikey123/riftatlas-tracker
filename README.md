@@ -26,6 +26,8 @@ Open the dashboard by clicking the extension's icon in the toolbar (pin it via t
 
 Per match: your and your opponent's legend + champion, room code, mode, player names, running score, turn count, **match duration**, the **full game log** (with each line attributed to you, your opponent, or the system), and your own **notes**. Click any row in match history to open the game summary, notes box and raw log.
 
+**Best-of-3 vs best-of-1:** the format is chosen when you sign up for a game, so the tracker watches the sign-up/lobby screens for a "Best of 3" (or Bo3) marker and stamps each match with its format. A second game played in the same room also marks both games as Bo3 (it's a series), as does a "Game 2 of 3"-style marker appearing mid-game. The dashboard has **All / Best of 3 / Best of 1 tabs** — Bo3 games get their own tab since they hold more weight — and every stat, table and the match history follow the open tab. Detection can be corrected per match from the **Format** column in match history (hover it to see where the label came from); matches recorded before this feature carry no format and are counted under Best of 1.
+
 The **game summary** reads the log and reports a playstyle verdict — Aggressive, Balanced, Passive, Reactive or "No read" — from how many units each side committed to battlefields, battlefields conquered, cards lost to trash, showdown actions and focus passes. It also tells you how many log lines it understood, so you can judge how much to trust it.
 
 ## Archiving old games

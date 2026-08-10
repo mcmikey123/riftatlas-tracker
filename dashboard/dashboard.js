@@ -15,6 +15,13 @@
   const $ = (s) => document.querySelector(s);
   const readOnly = () => archive !== null;
 
+  // Which format tab is open: '' = all, 'bo3', 'bo1'. Bo3 games get their own
+  // tab because they hold more weight - the format is chosen at sign-up.
+  let formatTab = "";
+  // Matches recorded before format detection existed carry no format; they
+  // count as Bo1, so the Bo3 tab only ever shows games known to be a series.
+  const isBo3 = (m) => m.format === "bo3";
+
   // ---- data access -----------------------------------------------------
 
   function load() {
@@ -145,6 +152,29 @@
       ? `${DECK_SOURCE_LABEL[m.deckSource] || "source not recorded"} — pick another to override`
       : "Pick or add a deck name to override detection";
 
+  // Where a match's Bo3/Bo1 label came from, mirroring the deck-source hovers.
+  const FORMAT_SOURCE_LABEL = {
+    signup: "seen on the sign-up screen before the game",
+    mode: "read from the room mode",
+    rematch: "a second game was played in the same room (series)",
+    text: "a best-of-3 marker appeared during the game",
+    manual: "set by you",
+  };
+  const formatTitle = (m) =>
+    m.format
+      ? `${FORMAT_SOURCE_LABEL[m.formatSource] || "source not recorded"} — change it to override`
+      : "Format wasn't detected for this match (counted as Bo1) — set it here";
+
+  function formatSelect(m) {
+    const current = m.format || "";
+    return `<select class="fmt-edit fmt-${current || "none"}" data-fmt="${m.id}"
+              title="${esc(formatTitle(m))}" ${readOnly() ? "disabled" : ""}>
+        <option value="" ${current ? "" : "selected"}>–</option>
+        <option value="bo1" ${current === "bo1" ? "selected" : ""}>Bo1</option>
+        <option value="bo3" ${current === "bo3" ? "selected" : ""}>Bo3</option>
+      </select>`;
+  }
+
   function buildFilterOptions() {
     fillSelect($("#fMyChampion"), [...new Set(all.map((m) => champ(m.myChampion || m.myLegend)))]);
     fillSelect($("#fMode"), [...new Set(all.map((m) => m.mode).filter(Boolean))]);
@@ -196,6 +226,8 @@
     const deck = $("#fDeck").value;
     const inclUnknown = includeUnknownAnyway || $("#fUnknown").checked;
     return all.filter((m) => {
+      if (formatTab === "bo3" && !isBo3(m)) return false;
+      if (formatTab === "bo1" && isBo3(m)) return false;
       if (mc && champ(m.myChampion || m.myLegend) !== mc) return false;
       if (deck && deckOf(m) !== deck) return false;
       if (mode && m.mode !== mode) return false;
@@ -204,7 +236,18 @@
     });
   }
 
+  function renderTabs() {
+    const bo3 = all.filter(isBo3).length;
+    document.querySelectorAll("#formatTabs .tab").forEach((btn) => {
+      const f = btn.dataset.format;
+      btn.classList.toggle("active", f === formatTab);
+      const n = f === "bo3" ? bo3 : f === "bo1" ? all.length - bo3 : all.length;
+      btn.querySelector(".tab-n").textContent = n;
+    });
+  }
+
   function render() {
+    renderTabs();
     const rows = filtered(false);
     const wins = rows.filter((m) => m.result === "win").length;
     const losses = rows.filter((m) => m.result === "loss").length;
@@ -268,7 +311,7 @@
       });
   }
 
-  const COLSPAN = 13;
+  const COLSPAN = 14;
 
   function renderHistory(rows) {
     const tbody = $("#historyTable tbody");
@@ -286,6 +329,7 @@
         <td class="expander" data-toggle="${m.id}" title="Show game summary">${open ? "▾" : "▸"}</td>
         <td>${d ? d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–"}</td>
         <td>${esc(m.mode || "–")}</td>
+        <td class="fmt-cell">${formatSelect(m)}</td>
         <td>${esc(m.roomCode || "–")}</td>
         <td>${esc(m.myChampion || m.myLegend || "–")}</td>
         <td class="deck-cell">${deckSelect(m, "deck-inline")}</td>
@@ -398,6 +442,19 @@
       }
       return;
     }
+    const fmtId = t.dataset?.fmt;
+    if (fmtId) {
+      if (readOnly()) return;
+      const m = all.find((x) => x.id === fmtId);
+      if (m) {
+        m.format = t.value || null;
+        // Clearing the format is a decision too, but only a chosen value is
+        // protected from re-detection.
+        m.formatSource = t.value ? "manual" : null;
+        persist(all);
+      }
+      return;
+    }
     const deckId = t.dataset?.deck;
     if (deckId) {
       if (readOnly()) return;
@@ -457,6 +514,12 @@
   });
 
   document.addEventListener("click", (e) => {
+    const tab = e.target?.closest?.("#formatTabs .tab");
+    if (tab) {
+      formatTab = tab.dataset.format || "";
+      render();
+      return;
+    }
     const toggle = e.target?.dataset?.toggle;
     if (toggle) {
       if (expanded.has(toggle)) expanded.delete(toggle);
@@ -639,7 +702,7 @@
 
   $("#exportCsv").addEventListener("click", () => {
     buildBundle(false, (bundle) => {
-      const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","notes"];
+      const cols = ["startedAt","endedAt","durationMs","mode","format","formatSource","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","notes"];
       const extra = ["duration","verdict","myCommits","oppCommits","myConquers","oppConquers","myTrashed","oppTrashed","logLines"];
       const lines = [cols.concat(extra).join(",")].concat(
         bundle.matches.map((m) => {
@@ -952,7 +1015,7 @@
   chrome.storage.onChanged.addListener((changes) => {
     if (archive) return; // never let live writes disturb an archive view
     const busy = document.activeElement?.dataset;
-    if (changes.matches && !busy?.notes && !busy?.deck) load();
+    if (changes.matches && !busy?.notes && !busy?.deck && !busy?.fmt) load();
   });
 
   load();

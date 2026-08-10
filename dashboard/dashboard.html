@@ -36,6 +36,12 @@
   </div>
 </header>
 
+<nav id="formatTabs" class="tabs" aria-label="Match format">
+  <button class="tab active" data-format="" title="Every recorded match">All games <span class="tab-n">0</span></button>
+  <button class="tab" data-format="bo3" title="Matches detected or marked as best-of-3 — the format chosen at sign-up">Best of 3 <span class="tab-n">0</span></button>
+  <button class="tab" data-format="bo1" title="Best-of-1 matches, including older games recorded before format detection existed">Best of 1 <span class="tab-n">0</span></button>
+</nav>
+
 <section class="filters">
   <label>My champion
     <select id="fMyChampion"><option value="">All</option></select>
@@ -99,7 +105,7 @@
   <p class="hint">Click a row to open the game summary, notes and full log. Results can be changed at any time &mdash; edits are marked &ldquo;manual&rdquo;.</p>
   <table id="historyTable">
     <thead><tr>
-      <th></th><th>Date</th><th>Mode</th><th>Room</th><th>My champion</th><th>Deck</th><th>Opponent</th>
+      <th></th><th>Date</th><th>Mode</th><th>Format</th><th>Room</th><th>My champion</th><th>Deck</th><th>Opponent</th>
       <th>Opp. champion</th><th>Score</th><th>Length</th><th>Result</th><th>Source</th><th></th>
     </tr></thead>
     <tbody></tbody>

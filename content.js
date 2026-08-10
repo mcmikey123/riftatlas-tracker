@@ -40,6 +40,16 @@
   const END_TEXT_RE = /\b(victory|defeat|you win|you lose|you won|you lost|wins the game|conceded|concedes)\b/i;
   const WIN_TEXT_RE = /\b(victory|you win|you won)\b/i;
   const LOSS_TEXT_RE = /\b(defeat|you lose|you lost)\b/i;
+  // Match format (best-of-3 vs best-of-1). The format is chosen when you sign
+  // up for the game, so it's read off the lobby/sign-up screens before the
+  // board mounts, and remembered until the match actually starts.
+  const BO3_TEXT_RE = /\b(?:best\s*of\s*(?:3|three)|bo\s*-?\s*3)\b/i;
+  const BO1_TEXT_RE = /\b(?:best\s*of\s*(?:1|one)|bo\s*-?\s*1)\b/i;
+  const SERIES_GAME_RE = /\b(?:game|match)\s*[123]\s*(?:of|\/)\s*3\b/i;
+  const FORMAT_SCAN_MS = 1000; // page-text scans are throttled to this
+  // Long enough to cover queueing after sign-up, short enough that a Bo3
+  // signed up for an hour ago never labels an unrelated later game.
+  const FORMAT_MEMORY_MS = 30 * 60 * 1000;
 
   let currentMatch = null; // in-progress match record
   let lastSavedId = null; // id of last saved record (toast overrides edit it)
@@ -689,11 +699,54 @@
     return null;
   }
 
+  // ---------- match format (Bo3 / Bo1) ----------
+  // Best-of-3 is decided at sign-up, before any board exists, so the only
+  // place to see it is the lobby/sign-up screens. We scan the page text while
+  // no match is running and remember what was seen; startMatch then stamps it
+  // onto the record. A second game starting in the same room is treated as a
+  // series and upgrades both games to Bo3.
+
+  let pendingFormat = null; // { format: 'bo3'|'bo1', at }
+  let formatScanAt = 0;
+
+  function scanFormat() {
+    const now = Date.now();
+    if (now - formatScanAt < FORMAT_SCAN_MS) return;
+    formatScanAt = now;
+    let text;
+    try {
+      text = document.body ? document.body.textContent : "";
+    } catch (_) {
+      return;
+    }
+    if (!text) return;
+    let format = null;
+    if (BO3_TEXT_RE.test(text) || SERIES_GAME_RE.test(text)) format = "bo3";
+    else if (BO1_TEXT_RE.test(text)) format = "bo1";
+    if (!format) return;
+    if (!pendingFormat || pendingFormat.format !== format) {
+      console.info("[RA-Tracker] format seen at sign-up:", format);
+    }
+    pendingFormat = { format, at: now };
+  }
+
+  /** The format for a match that is starting now, and where it came from. */
+  function detectFormat(root) {
+    const mode = root?.dataset.roomMode || "";
+    if (BO3_TEXT_RE.test(mode)) return { format: "bo3", source: "mode" };
+    if (BO1_TEXT_RE.test(mode)) return { format: "bo1", source: "mode" };
+    if (pendingFormat && Date.now() - pendingFormat.at < FORMAT_MEMORY_MS) {
+      return { format: pendingFormat.format, source: "signup" };
+    }
+    return null;
+  }
+
   // ---------- match lifecycle ----------
 
   function startMatch(root) {
     const code =
       document.querySelector(SEL.roomCode)?.dataset.roomCode || null;
+    let seriesGame = false; // game 2/3 of a Bo3 in the same room
     // ONE ENTRY PER GAME: after a match ends, the site keeps the board in
     // "in_game" under the end overlay. Never start a new record in the same
     // room unless the turn counter has reset (a genuine rematch).
@@ -724,17 +777,31 @@
         console.info("[RA-Tracker] false end detected - resumed match", code);
         return;
       }
-      lastEnded = null; // turn counter reset: genuine rematch, record it
+      // Turn counter reset: genuine rematch, record it. A second game in the
+      // same room means this is a series, so both games are Bo3 - including
+      // the one that already ended, unless the player has said otherwise.
+      seriesGame = true;
+      if (prev.format !== "bo3" && prev.formatSource !== "manual") {
+        prev.format = "bo3";
+        prev.formatSource = "rematch";
+        saveMatch(prev);
+      }
+      lastEnded = null;
     }
     // Extra belt-and-braces: a fresh game never begins at match point.
     const my0 = readMyScore();
     if (my0 !== null && my0 >= WIN_SCORE) return;
     const names = readPlayerNames();
+    const fmt = seriesGame
+      ? { format: "bo3", source: "rematch" }
+      : detectFormat(root);
     currentMatch = {
       id: uid(),
       startedAt: new Date().toISOString(),
       endedAt: null,
       mode: root.dataset.roomMode || null,
+      format: fmt ? fmt.format : null, // 'bo3' | 'bo1' | null (unknown)
+      formatSource: fmt ? fmt.source : null, // 'signup' | 'mode' | 'rematch' | 'text' | 'manual'
       roomCode:
         document.querySelector(SEL.roomCode)?.dataset.roomCode || null,
       myName: names.mine,
@@ -812,6 +879,13 @@
         if (openDeck && (open.deckSource !== "last" || !fresh.deckName)) {
           fresh.deckName = openDeck;
           fresh.deckSource = open.deckSource || null;
+        }
+        // Format: the record from before the reload was written closer to
+        // sign-up, when the format was actually visible - it wins unless we
+        // detected something now and it recorded nothing.
+        if (open.formatSource === "manual" || (open.format && !fresh.format)) {
+          fresh.format = open.format || null;
+          fresh.formatSource = open.formatSource || null;
         }
         if (Array.isArray(open.log) && open.log.length) fresh.log = open.log; // legacy inline log
         // Resume the existing replay and log instead of starting new ones.
@@ -1062,6 +1136,17 @@
     if (host && host.closest && host.closest("#ra-tracker-toast")) return;
     const text = node.textContent;
     const m = currentMatch;
+    // A series marker rendered mid-game ("Game 2 of 3", "Best of 3") settles
+    // the format even when the sign-up screen was never seen.
+    if (
+      m.format !== "bo3" &&
+      m.formatSource !== "manual" &&
+      (SERIES_GAME_RE.test(text) || BO3_TEXT_RE.test(text))
+    ) {
+      m.format = "bo3";
+      m.formatSource = "text";
+      console.info("[RA-Tracker] Bo3 marker seen in-game");
+    }
     // "<PLAYER> LEFT" end-modal (appears with a "LEAVE GAME" button).
     const oppLeft =
       m.opponentName &&
@@ -1090,7 +1175,10 @@
 
     // Catch a deck change as it renders rather than on the next poll tick.
     // Self-throttled, so the mutation firehose on this site costs nothing.
-    if (!currentMatch) watchDeckPicker();
+    if (!currentMatch) {
+      watchDeckPicker();
+      scanFormat(); // Bo3/Bo1 is chosen at sign-up, before any match exists
+    }
 
     if (root && phase === "in_game") {
       if (!currentMatch) startMatch(root);

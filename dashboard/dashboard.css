@@ -18,6 +18,7 @@ body {
   color: var(--ink);
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
+.banner[hidden] { display: none; }
 .banner {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   flex-wrap: wrap; margin: 0 0 16px; padding: 11px 16px; border-radius: 10px;
@@ -49,6 +50,25 @@ button {
 }
 button:hover { background: #27395c; }
 button.danger { border-color: rgba(224, 138, 138, 0.5); color: #f3c0c0; }
+/* format tabs (All / Best of 3 / Best of 1) */
+.tabs { display: flex; gap: 6px; margin: 20px 0 0; border-bottom: 1px solid var(--border); }
+.tab {
+  border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+  background: transparent; color: var(--ink-2); padding: 8px 16px; font-size: 13px;
+  margin-bottom: -1px;
+}
+.tab:hover { background: rgba(134, 168, 246, 0.08); color: var(--ink); }
+.tab.active {
+  background: var(--surface); border-color: var(--border);
+  border-bottom: 1px solid var(--surface); color: var(--ink); font-weight: 600;
+}
+.tab-n {
+  display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px;
+  border-radius: 9px; background: rgba(134, 168, 246, 0.16); color: var(--ink-2);
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.tab.active .tab-n { background: var(--accent); color: #0b1424; }
+
 .filters { display: flex; gap: 20px; flex-wrap: wrap; margin: 18px 0 6px; color: var(--ink-2); font-size: 13px; }
 .filters label { display: flex; align-items: center; gap: 8px; }
 select {
@@ -329,6 +349,11 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 .deck-wide { flex: 1 1 200px; min-width: 160px; padding: 7px 10px; border-radius: 8px; }
 .deck-apply { font-size: 11px; padding: 6px 10px; }
 .deck-cell { padding: 4px 8px; }
+/* match format (Bo3 / Bo1) */
+.fmt-cell { padding: 4px 8px; }
+.fmt-edit { padding: 4px 7px; font-size: 12px; cursor: pointer; }
+.fmt-edit.fmt-bo3 { color: var(--accent); font-weight: 600; }
+.fmt-edit.fmt-none { color: var(--ink-3); font-style: italic; }
 .deck-inline { width: 100%; min-width: 120px; padding: 4px 7px; font-size: 12px; }
 .inline-btn { padding: 3px 9px; font-size: 11px; margin-left: 8px; }
 

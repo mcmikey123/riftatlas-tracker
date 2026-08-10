@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Rift Atlas Stats Tracker",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Records your Rift Atlas (Riftbound) matches locally: win/loss rate, match history, and win rate vs opponent champions. Passive observer - never plays for you.",
   "permissions": ["storage", "unlimitedStorage"],
   "optional_permissions": ["downloads"],
