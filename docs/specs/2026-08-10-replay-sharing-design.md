@@ -274,7 +274,7 @@ URLs rather than inlined, since `script-src 'self'` deliberately excludes `'unsa
 ```
 default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';
 img-src 'self' data: https://assets.riftatlas-workers.com; connect-src 'self';
-frame-src 'self' blob:
+frame-src 'self' blob:; frame-ancestors 'none'
 ```
 
 Applied in **two** places, because the two routes are served by different layers:
@@ -289,6 +289,9 @@ ahead of every asset fetch would spend Worker invocations on static files, and t
 daily invocation ceiling is this instance's only hard spend cap (ADR 0001). Verified against the
 deployed instance — an earlier revision of this document claimed the Worker could set the CSP
 for the viewer page, and that was wrong.
+
+`frame-ancestors` is stated explicitly because it has no fallback: `default-src 'none'` does not
+cover it, and without it any site could iframe the viewer.
 
 `style-src 'unsafe-inline'` is required because rrweb injects styles at runtime. `frame-src` is
 required because rrweb builds its own `sandbox="allow-same-origin"` replay iframe — scripting

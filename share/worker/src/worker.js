@@ -28,7 +28,11 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'", // rrweb injects styles at runtime
   "img-src 'self' data: https://assets.riftatlas-workers.com",
   "connect-src 'self'",
-  "frame-src 'self' blob:" // rrweb builds its own sandboxed replay iframe
+  "frame-src 'self' blob:", // rrweb builds its own sandboxed replay iframe
+  // Nothing here is meant to be embedded. default-src 'none' does not cover
+  // this: frame-ancestors has no fallback, so without it any site may iframe
+  // the viewer and dress a stranger's replay up as its own page.
+  "frame-ancestors 'none'"
 ].join("; ");
 
 const SECURITY_HEADERS = {
@@ -144,8 +148,14 @@ async function upload(request, env) {
     }
     // Never echo the underlying message: this endpoint is effectively unauthenticated,
     // and R2/runtime errors can carry binding names and object keys.
+    //
+    // 503, not 500: R2 being unavailable is transient and the client offers a retry for
+    // it. 500 is reserved for the one failure that is not transient — an operator whose
+    // MAX_UPLOAD_BYTES is unset or unparseable, which upload-size.js fails closed on —
+    // because the client maps that to "misconfigured" with no retry, and a retry button
+    // on a broken config would loop forever.
     console.error("r2 put failed", err);
-    return json({ error: "upload failed" }, 500, request);
+    return json({ error: "upload failed" }, 503, request);
   }
   return json({ id }, 201, request);
 }

@@ -60,6 +60,10 @@
   // 413 will fail identically every time, so offering a retry would be a lie.
   const RETRYABLE = ["rateLimited", "unavailable", "network", "unverified"];
 
+  // 500 means one thing only: the Worker refused because its own configuration is
+  // broken, which no amount of retrying fixes. Its transient failures - R2 being
+  // unavailable - answer 503, so "misconfigured" here is never told to someone whose
+  // next attempt would have worked.
   const BY_STATUS = {
     403: "rejected",
     411: "rejected",
