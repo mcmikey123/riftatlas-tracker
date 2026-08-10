@@ -624,10 +624,11 @@
     }
   }
 
-  // A frame, then a task: the frame paints what was just set, the task lets the
-  // next phase start after that paint rather than in the same block.
-  const paintYield = () =>
-    new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  /* Let the browser paint the phase label before the phase begins. Shared with
+   * the standalone viewer rather than reimplemented: waiting on a frame alone
+   * never resolves in a backgrounded tab, which would park the pipeline with
+   * shareBusy still held and every other match's Share button disabled. */
+  const paintYield = () => window.RARepaint.repaint(window);
 
   const sha256Hex = async (text) => {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));

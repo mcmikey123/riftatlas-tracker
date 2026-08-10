@@ -34,7 +34,8 @@
     "RAShare",
     "RAShareHosts",
     "rehydrateCssAssets",
-    "RAShareViewer"
+    "RAShareViewer",
+    "RARepaint"
   ];
 
   // Secondary lines. The headline says what happened; these say what to do,
@@ -56,23 +57,9 @@
   let playback = null;
   let running = false;
 
-  // A background tab never fires requestAnimationFrame, so waiting on one alone
-  // would leave a link opened in the background stuck on "Decrypting…" until it
-  // is looked at. The timer is the floor; the frame is the fast path.
-  const REPAINT_FLOOR_MS = 250;
-
   /** Let the browser paint before a step that blocks the thread for ~300 ms. */
   function repaint() {
-    return new Promise((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-      root.requestAnimationFrame(() => root.setTimeout(finish, 0));
-      root.setTimeout(finish, REPAINT_FLOOR_MS);
-    });
+    return root.RARepaint.repaint(root);
   }
 
   function working(message) {

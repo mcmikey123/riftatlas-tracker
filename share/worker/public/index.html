@@ -9,8 +9,9 @@
 <!--
   Every script is an external same-origin file because the CSP is
   `script-src 'self'` with no 'unsafe-inline': no inline <script>, no onclick=,
-  no javascript: URLs. share/worker/sync-assets.sh copies the first six in from
-  the repo before every deploy; git holds one copy of each at the repo root.
+  no javascript: URLs. share/worker/sync-assets.sh copies every one but
+  viewer.js in from the repo before every deploy; git holds one copy of each at
+  the repo root.
 
   Order is load-bearing. replay-core.js reads rrwebReplay and RAReplayTimeline
   as it initialises, and viewer.js reads all of the globals below it.
@@ -22,6 +23,7 @@
 <script defer src="/share/hosts.js"></script>
 <script defer src="/store/css-assets.js"></script>
 <script defer src="/share/viewer-support.js"></script>
+<script defer src="/share/repaint.js"></script>
 <script defer src="/viewer.js"></script>
 </head>
 <body>

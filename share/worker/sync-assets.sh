@@ -21,6 +21,7 @@ for rel in \
   share/payload.js \
   share/hosts.js \
   share/viewer-support.js \
+  share/repaint.js \
   store/css-assets.js
 do
   dest="$here/public/$(dirname "$rel")/"
