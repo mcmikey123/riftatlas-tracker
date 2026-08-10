@@ -15,6 +15,7 @@ const {
   quantise,
   resumesAfterSeek,
   seekOutcome,
+  startPosition,
   shouldAutoplay,
   turnOf,
   timeline,
@@ -293,6 +294,35 @@ test("a paused transport stays paused whatever the seek", () => {
       { resume: false, held: false },
       `${reason} started playback from a standing stop`
     );
+  }
+});
+
+// ---- where a replay opens -----------------------------------------------
+
+test("a replay nobody positioned opens at the start", () => {
+  for (const nothing of [undefined, null, 0, -1, NaN, Infinity, "soon"]) {
+    assert.strictEqual(startPosition(nothing, 60000), 0, `startPosition(${String(nothing)})`);
+  }
+});
+
+test("a position inside the recording is kept exactly", () => {
+  assert.strictEqual(startPosition(1, 60000), 1);
+  assert.strictEqual(startPosition(31500, 60000), 31500);
+  assert.strictEqual(startPosition(60000, 60000), 60000);
+});
+
+// A link naming 40:00 of a 31-minute replay is not a broken link: it names a
+// moment the capture stopped short of. The last frame is a truthful answer to
+// that, where an error page in place of a replay that downloaded and decrypted
+// perfectly is not.
+test("a position past the end lands on the end rather than failing", () => {
+  assert.strictEqual(startPosition(2400000, 1860000), 1860000);
+  assert.strictEqual(startPosition(60001, 60000), 60000);
+});
+
+test("an unusable total opens at the start, whatever was asked for", () => {
+  for (const total of [undefined, null, 0, -1, NaN, "long"]) {
+    assert.strictEqual(startPosition(5000, total), 0, `total ${String(total)}`);
   }
 });
 

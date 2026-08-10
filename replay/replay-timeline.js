@@ -113,6 +113,28 @@
   }
 
   /**
+   * Where a replay opens, given the position a surface asked for and how long
+   * the recording turned out to be.
+   *
+   * Clamped, never refused. The position most often comes from a share link's
+   * timestamp field, and a link claiming 40:00 of a 31-minute replay is not a
+   * broken link — it is a link to a moment the capture stopped short of, most
+   * likely because the recorder ran out of budget before the match ended.
+   * Landing on the last frame is a truthful answer to that; an error page in
+   * place of a replay that downloaded and decrypted perfectly is not.
+   *
+   * Anything unreadable — absent, negative, not a number — opens at the start,
+   * which is where a replay opens when nobody asks for anything.
+   */
+  function startPosition(requestedMs, totalMs) {
+    const at = Number(requestedMs);
+    if (!Number.isFinite(at) || at <= 0) return 0;
+    const total = Number(totalMs);
+    if (!Number.isFinite(total) || total <= 0) return 0;
+    return Math.min(at, total);
+  }
+
+  /**
    * Whether a surface that asked to autoplay actually gets it. A replay that
    * starts moving on its own is motion the viewer did not ask for, which is the
    * one thing `prefers-reduced-motion` is a standing answer to — so the
@@ -191,6 +213,7 @@
     quantise,
     resumesAfterSeek,
     seekOutcome,
+    startPosition,
     shouldAutoplay,
     turnOf,
     timeline,

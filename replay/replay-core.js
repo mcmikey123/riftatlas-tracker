@@ -78,7 +78,7 @@
    * to the ones the timeline finds. Returns null if the recording will not play
    * at all — the caller owns whatever it wants to say about that.
    *
-   *   create({ stage, scaleEl, events, meta, marks, autoplay, onTime, onPlayState })
+   *   create({ stage, scaleEl, events, meta, marks, autoplay, startAtMs, onTime, onPlayState })
    *
    * `onTime(ms, totalMs)` fires while playing, on seek and at the end; the
    * total is passed alongside because the first fire happens during this call,
@@ -89,9 +89,15 @@
    * `autoplay` is off unless a surface asks for it: a core that started playing
    * on its own would be a surprise to any caller that mounts a replay somewhere
    * it is not the thing the viewer just opened.
+   *
+   * `startAtMs` opens somewhere other than the beginning — a share link that
+   * names a moment is the reason it exists. It is clamped to the recording, and
+   * it does not interact with `autoplay` at all: a replay opened at a moment
+   * plays or waits by exactly the same rule as one opened at the start, so a
+   * timestamped link cannot be a way around `prefers-reduced-motion`.
    */
   function create(options) {
-    const { quantise, timeline, SEEK, seekOutcome, shouldAutoplay } = root.RAReplayTimeline;
+    const { quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay } = root.RAReplayTimeline;
 
     const stage = options.stage;
     const scaleEl = options.scaleEl;
@@ -303,12 +309,12 @@
 
     pin();
     fit();
-    at = 0;
-    // Branched rather than "seek to 0, then maybe play": pausing at 0 and then
-    // playing from 0 makes rrweb build the full snapshot twice, and each build
-    // is a visible flash of the board.
+    at = startPosition(options.startAtMs, total);
+    // Branched rather than "seek to the start, then maybe play": pausing at a
+    // position and then playing from it makes rrweb build the full snapshot
+    // twice, and each build is a visible flash of the board.
     if (shouldAutoplay(options.autoplay, reducedMotion())) start();
-    else replayer.pause(0);
+    else replayer.pause(at);
     emit();
 
     return {
