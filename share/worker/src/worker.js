@@ -15,6 +15,11 @@ import { checkUploadSize } from "./upload-size.js";
 // agree — change one without the other and every new link fails to parse.
 const OBJECT_ID_BYTES = 16;
 
+// The exact shape newObjectId() produces: 22 unpadded base64url characters. Anything else
+// never existed, so it is a 404 rather than a lookup. Kept in step with OBJECT_ID_BYTES and
+// share/hosts.js OBJECT_ID_CHARS by test/worker-headers.test.js.
+const OBJECT_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+
 // Objects are immutable and content-addressed, so this is only bounded by how stale a
 // deleted object may appear. Must stay well under the bucket's 7-day lifecycle TTL.
 const BLOB_CACHE_SECONDS = 3600;
@@ -161,7 +166,23 @@ async function upload(request, env) {
 }
 
 async function download(id, env, request) {
-  const object = await env.BUCKET.get(id);
+  // Every other layer validates object ids; this is the one that talks to storage, so it
+  // validates too rather than trusting the path. Two reasons beyond tidiness: an id R2
+  // rejects outright (empty, or over its 1024-byte key limit) throws, and an unhandled
+  // throw escapes as a bare Workers 500 carrying none of SECURITY_HEADERS and no CORS
+  // header. And if an instance ever shares its bucket with anything else, an unvalidated
+  // key turns this route into a read proxy for whatever else is in there.
+  if (!OBJECT_ID_RE.test(id)) return json({ error: "not found" }, 404, request);
+
+  let object;
+  try {
+    object = await env.BUCKET.get(id);
+  } catch (err) {
+    // Transient, so 503 rather than 500 — the client maps 503 to a retry, and 500 is
+    // reserved for "the operator's config is broken", which a read cannot diagnose.
+    console.error("r2 get failed", err);
+    return json({ error: "temporarily unavailable" }, 503, request);
+  }
   if (!object) return json({ error: "not found" }, 404, request);
 
   return new Response(object.body, {

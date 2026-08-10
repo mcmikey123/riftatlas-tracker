@@ -73,6 +73,31 @@ test("the upload cap agrees between the Worker's config and the client", () => {
   assert.strictEqual(MAX_UPLOAD_BYTES, Number(declared[1]));
 });
 
+// The Worker is the only layer that talks to storage, and an id R2 rejects throws — which
+// escapes as a bare 500 with none of this file's headers. It was doing exactly that for an
+// over-long key, so the guard is pinned rather than reviewed.
+test("the Worker validates object ids before reaching for storage", () => {
+  const re = workerSource.match(/const OBJECT_ID_RE = (\/.+?\/);/);
+  assert.ok(re, "worker.js must declare OBJECT_ID_RE");
+  const pattern = new RegExp(re[1].slice(1, -1));
+  const { OBJECT_ID_CHARS } = require("../share/hosts.js");
+
+  assert.ok(pattern.test("A".repeat(OBJECT_ID_CHARS)), "must accept a well-formed id");
+  for (const bad of ["", "abc", "A".repeat(OBJECT_ID_CHARS + 1), "A".repeat(1200), "../secret", "a/b"]) {
+    assert.ok(!pattern.test(bad), `must reject ${JSON.stringify(bad.slice(0, 20))}`);
+  }
+  assert.match(
+    workerSource,
+    /if \(!OBJECT_ID_RE\.test\(id\)\)/,
+    "download() must test the id before calling BUCKET.get"
+  );
+  assert.match(
+    workerSource.slice(workerSource.indexOf("async function download")),
+    /try \{[\s\S]*?BUCKET\.get/,
+    "download() must wrap BUCKET.get so a read failure cannot escape unhandled"
+  );
+});
+
 test("the object id length agrees between the Worker and the link parser", () => {
   const { OBJECT_ID_CHARS } = require("../share/hosts.js");
   const bytes = Number(workerSource.match(/const OBJECT_ID_BYTES = (\d+)/)[1]);
