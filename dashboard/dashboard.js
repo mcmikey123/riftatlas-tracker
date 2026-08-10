@@ -2,14 +2,14 @@
 (() => {
   "use strict";
 
-  // `all` holds LEAN match records: game logs live in log_<id> keys and
-  // replays in replay_<id> keys, so the array rewritten during live games
-  // stays ~0.5 KB per match instead of ~21 KB.
+  // `all` holds LEAN match records: game logs live in log_<id> keys and the
+  // cards you played in deckcards_<id> keys, so the array rewritten during
+  // live games stays ~0.5 KB per match instead of ~21 KB.
   let all = [];
   const logCache = new Map(); // id -> log[]
   const expanded = new Set();
   // When viewing an archive file we render from memory and never write.
-  let archive = null; // { name, matches, replays, logs }
+  let archive = null; // { name, matches, deckCards }
 
   const analyse = (m) => window.RATrackerAnalysis.analyse(m);
   const $ = (s) => document.querySelector(s);
@@ -53,6 +53,25 @@
       buildFilterOptions();
       render();
       refreshBackupUI();
+      refreshVisualSettingsUI();
+      dropLegacyReplays();
+    });
+  }
+
+  // Board snapshots (replay_<id>) fed the step-through replay, which no longer
+  // exists, and deck fingerprinting now reads deckcards_<id> instead. Nothing
+  // can read the old keys any more, so the first dashboard open after the
+  // upgrade reclaims the ~430 KB per match they were holding.
+  let legacyReplaysDropped = false;
+  function dropLegacyReplays() {
+    if (legacyReplaysDropped || readOnly()) return;
+    legacyReplaysDropped = true;
+    chrome.storage.local.get(null, (data) => {
+      const keys = Object.keys(data || {}).filter((k) => k.startsWith("replay_"));
+      if (!keys.length) return;
+      chrome.storage.local.remove(keys, () =>
+        console.info("[RA-Tracker] removed %d obsolete snapshot replays", keys.length)
+      );
     });
   }
 
@@ -75,40 +94,93 @@
     });
   }
 
-  function getReplay(id, cb) {
-    if (archive) return cb((archive.replays && archive.replays[id]) || null);
-    const key = "replay_" + id;
-    chrome.storage.local.get(key, (r) => cb((r && r[key] && r[key].snaps) || null));
+  // Which matches have a visual recording, and what each one cost. Asked once
+  // for the whole history - never per row - and null until the service worker
+  // has answered. The same reply feeds the Visual buttons and the diagnostics
+  // panel, so opening the dashboard costs one query, not two.
+  let visualIds = null;
+  let visualRecords = [];
+  let visualAssets = { count: 0, bytes: 0 };
+  // Mirrors the retention setting, so the panel can project what keeping that
+  // many matches costs. Refreshed by refreshVisualSettingsUI.
+  let keepMatches = 25;
+
+  function ensureVisualIds() {
+    // Set before the reply lands, so a re-render can't fire a second query.
+    if (visualIds !== null || archive) return;
+    visualIds = new Set();
+    chrome.runtime.sendMessage({ type: "ra:visual:list" }, (reply) => {
+      if (chrome.runtime.lastError || !reply || !reply.ok) return;
+      visualRecords = (reply.replays || []).filter((r) => r && r.matchId);
+      visualAssets = reply.assets || visualAssets;
+      renderVisualPanel();
+      const ids = visualRecords.filter((r) => r.chunkCount > 0).map((r) => r.matchId);
+      if (!ids.length) return;
+      visualIds = new Set(ids);
+      render();
+    });
   }
 
-  /** Full portable bundle: matches with logs inline, optionally replays. */
-  function buildBundle(includeReplays, cb) {
+  const hasVisual = (id) => !readOnly() && visualIds !== null && visualIds.has(id);
+
+  /* Deleting a match here has to reach the service worker's IndexedDB too: the
+   * visual recording is the match's own markup, opponent name and chat included,
+   * and once the match record is gone nothing in the dashboard can reach or show
+   * it again. The local state is dropped immediately so the panel and the Visual
+   * buttons match what was just deleted, without waiting for a re-list. */
+  function forgetVisual(matchId) {
+    chrome.runtime.sendMessage({ type: "ra:visual:delete", matchId }, () => {
+      void chrome.runtime.lastError; // the tracker carries on either way
+    });
+    if (visualIds) visualIds.delete(matchId);
+    visualRecords = visualRecords.filter((r) => r.matchId !== matchId);
+    renderVisualPanel();
+  }
+
+  /** Wipe every visual recording, for the two clear-everything paths. */
+  function forgetAllVisual() {
+    chrome.runtime.sendMessage({ type: "ra:visual:clear" }, () => {
+      void chrome.runtime.lastError;
+    });
+    visualIds = new Set();
+    visualRecords = [];
+    visualAssets = { count: 0, bytes: 0 };
+    renderVisualPanel();
+  }
+
+  // v1 bundles carried `replays` (board snapshots); v2 carries `deckCards`.
+  // v1 files still import - their replays are simply dropped, because nothing
+  // reads snapshots any more.
+  const BUNDLE_VERSION = 2;
+
+  /** Full portable bundle: matches with logs inline, optionally card codes. */
+  function buildBundle(includeCards, cb) {
     if (archive) {
       return cb({
         format: "riftatlas-tracker-archive",
-        version: 1,
+        version: BUNDLE_VERSION,
         exportedAt: new Date().toISOString(),
         matches: archive.matches,
-        replays: includeReplays ? archive.replays || {} : {},
+        deckCards: includeCards ? archive.deckCards || {} : {},
       });
     }
     chrome.storage.local.get(null, (data) => {
       const matches = all.map((m) =>
         Object.assign({}, m, { log: ((data["log_" + m.id] || {}).log) || [] })
       );
-      const replays = {};
-      if (includeReplays) {
+      const deckCards = {};
+      if (includeCards) {
         for (const m of all) {
-          const r = data["replay_" + m.id];
-          if (r && r.snaps) replays[m.id] = r.snaps;
+          const r = data["deckcards_" + m.id];
+          if (r && Array.isArray(r.codes) && r.codes.length) deckCards[m.id] = r.codes;
         }
       }
       cb({
         format: "riftatlas-tracker-archive",
-        version: 1,
+        version: BUNDLE_VERSION,
         exportedAt: new Date().toISOString(),
         matches,
-        replays,
+        deckCards,
       });
     });
   }
@@ -223,6 +295,7 @@
     renderAgg($("#deckTable tbody"), rows, deckOf);
     renderAgg($("#myTable tbody"), rows, (m) => champ(m.myChampion || m.myLegend));
     renderHistory(filtered(true));
+    renderVisualPanel();
     renderArchiveBanner();
   }
 
@@ -271,6 +344,7 @@
   const COLSPAN = 13;
 
   function renderHistory(rows) {
+    ensureVisualIds();
     const tbody = $("#historyTable tbody");
     tbody.innerHTML = "";
     if (!rows.length) {
@@ -364,7 +438,11 @@
           <h3>Notes</h3>
           <textarea class="notes" data-notes="${m.id}" rows="6" ${readOnly() ? "readonly" : ""} placeholder="What happened? What would you do differently?">${esc(m.notes || "")}</textarea>
           <span class="save-state" data-savestate="${m.id}"></span>
-          <h3 class="log-head">Replay <button class="log-toggle" data-replay="${m.id}">open full screen</button></h3>
+          ${
+            hasVisual(m.id)
+              ? `<h3 class="log-head">Replay <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">open full screen</button></h3>`
+              : ""
+          }
           <h3 class="log-head">Game log <button class="log-toggle" data-log="${m.id}">show</button></h3>
           <div class="log-box" data-logbox="${m.id}" hidden>${
             (logCache.get(m.id) || [])
@@ -380,8 +458,109 @@
     return tr;
   }
 
-  const esc = (s) =>
-    String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const esc = window.RATrackerFormat.esc;
+
+  // ---- visual replay diagnostics ---------------------------------------
+
+  const DASH = "—"; // stands in wherever a number was never recorded
+
+  function fmtBytes(n) {
+    if (!Number.isFinite(n)) return DASH;
+    if (n < 1024) return Math.round(n) + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(2) + " MB";
+  }
+
+  // In-flight matches, and any recorded before a counter existed, simply have
+  // no value here - which must read as "not recorded", never as NaN.
+  function statOf(record, key) {
+    const v = record.stats ? record.stats[key] : undefined;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+
+  const fmtCount = (v) => (v === null || !Number.isFinite(v) ? DASH : String(v));
+  const fmtMs = (v) => (v === null ? DASH : v + " ms");
+
+  // Null - not zero - when no record carried the counter at all, so an empty
+  // column can't masquerade as a measured zero.
+  function sumStat(records, key) {
+    const vals = records.map((r) => statOf(r, key)).filter((v) => v !== null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+  }
+
+  function visualLabel(record) {
+    const at = record.startedAt ? new Date(record.startedAt) : null;
+    const when = at
+      ? at.toLocaleDateString() + " " + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : DASH;
+    const m = all.find((x) => x.id === record.matchId);
+    if (!m) return when;
+    return `${when} · ${champ(m.myChampion || m.myLegend)} vs ${champ(m.opponentChampion || m.opponentLegend)}`;
+  }
+
+  function visualStateCell(record) {
+    const state = record.state || "unknown";
+    const why =
+      state === "truncated" && record.truncatedAtTurn != null
+        ? `capture stopped at turn ${record.truncatedAtTurn} - the replay covers everything up to there`
+        : state === "error"
+        ? record.error || "capture failed"
+        : state;
+    return `<td><span class="vd-state vd-${esc(state)}" title="${esc(why)}">${esc(state)}</span></td>`;
+  }
+
+  function visualRow(record) {
+    return `<tr>
+        <td>${esc(visualLabel(record))}</td>
+        <td>${fmtBytes(record.compressedBytes)}</td>
+        <td>${fmtCount(record.chunkCount)}</td>
+        <td>${fmtCount(statOf(record, "keyframes"))}</td>
+        <td>${fmtBytes(statOf(record, "meanDeltaBytes"))}</td>
+        <td>${fmtMs(statOf(record, "captureP50Ms"))}</td>
+        <td>${fmtMs(statOf(record, "captureMaxMs"))}</td>
+        ${visualStateCell(record)}
+      </tr>`;
+  }
+
+  function renderVisualPanel() {
+    const panel = $("#visualPanel");
+    if (!panel) return;
+    const records = visualRecords.slice().sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+    // An archive file holds no visual replays, so the panel would be lying.
+    panel.hidden = readOnly() || !records.length;
+    if (panel.hidden) return;
+
+    // Every record gets a row: retention is the store's job, and it never hands
+    // back more than the retention setting allows.
+    $("#visualTable tbody").innerHTML = records.map(visualRow).join("");
+
+    const bytes = records.reduce((n, r) => n + (Number(r.compressedBytes) || 0), 0);
+    const chunks = records.reduce((n, r) => n + (Number(r.chunkCount) || 0), 0);
+    // What retention actually costs: every replay is captured at full fidelity,
+    // so the mean is the only figure needed to price a different keep count.
+    const mean = records.length ? bytes / records.length : 0;
+    $("#visualTable tfoot").innerHTML = `
+      <tr class="vd-total">
+        <td>Total · ${records.length} match${records.length === 1 ? "" : "es"}</td>
+        <td>${fmtBytes(bytes)}</td>
+        <td>${chunks}</td>
+        <td>${fmtCount(sumStat(records, "keyframes"))}</td>
+        <td colspan="4"></td>
+      </tr>
+      <tr class="vd-total">
+        <td>+ shared stylesheets · ${fmtCount(visualAssets.count)}</td>
+        <td>${fmtBytes(visualAssets.bytes)}</td>
+        <td colspan="6" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
+      </tr>
+      <tr class="vd-total">
+        <td>On disk now · retained replays + shared stylesheets</td>
+        <td>${fmtBytes(bytes + (Number(visualAssets.bytes) || 0))}</td>
+        <td colspan="6" class="vd-note">
+          ${fmtBytes(mean)} per match on average &mdash; keeping the newest ${keepMatches}
+          works out at roughly ${fmtBytes(mean * keepMatches)} once that many have been played
+        </td>
+      </tr>`;
+  }
 
   // ---- events ----------------------------------------------------------
 
@@ -464,15 +643,16 @@
       render();
       return;
     }
-    const replayId = e.target?.dataset?.replay;
-    if (replayId) {
-      const m = all.find((x) => x.id === replayId) || {};
-      getReplay(replayId, (snaps) => {
-        if (!snaps || !snaps.length) {
-          alert("No replay was captured for this match.\n\nReplays are recorded for games played with v0.3.0 or later.");
+    const visualId = e.target?.dataset?.visual;
+    if (visualId) {
+      const m = all.find((x) => x.id === visualId) || { id: visualId };
+      chrome.runtime.sendMessage({ type: "ra:visual:get", matchId: visualId }, (reply) => {
+        const payload = chrome.runtime.lastError || !reply || !reply.ok ? null : reply.replay;
+        if (!payload || !payload.events || !payload.events.length) {
+          alert("The replay for this match could not be read.");
           return;
         }
-        window.RATrackerReplay.openModal(m, snaps);
+        window.RATrackerVisualReplay.openModal(m, payload);
       });
       return;
     }
@@ -506,7 +686,8 @@
       all = all.filter((x) => x.id !== del);
       expanded.delete(del);
       logCache.delete(del);
-      chrome.storage.local.remove(["replay_" + del, "log_" + del]);
+      chrome.storage.local.remove(["deckcards_" + del, "log_" + del]);
+      forgetVisual(del);
       persist(all, () => { buildFilterOptions(); render(); });
     }
   });
@@ -551,21 +732,21 @@
     });
   });
 
-  // Recognise decks from the cards actually played, using the replays.
+  // Recognise decks from the cards actually played.
   $("#autoDeck").addEventListener("click", () => {
     if (readOnly()) return;
     const FP = window.RATrackerFingerprint;
     chrome.storage.local.get(null, (data) => {
       const prints = new Map();
       for (const m of all) {
-        const r = data["replay_" + m.id];
-        prints.set(m.id, FP.fingerprint(r && r.snaps));
+        const r = data["deckcards_" + m.id];
+        prints.set(m.id, FP.fingerprint(r && r.codes));
       }
-      const withReplay = [...prints.values()].filter((s) => s.size >= FP.MIN_CARDS).length;
-      if (!withReplay) {
+      const withCards = [...prints.values()].filter((s) => s.size >= FP.MIN_CARDS).length;
+      if (!withCards) {
         return alert(
-          "No usable replays yet.\n\nDeck recognition compares the cards you actually played, " +
-            "so it needs matches recorded with replays (v0.3.0 or later)."
+          "No usable card data yet.\n\nDeck recognition compares the cards you actually played, " +
+            `so it needs matches where at least ${FP.MIN_CARDS} of your own cards were seen on the board.`
         );
       }
       const { proposals, undecided, labelledCount } = FP.suggestLabels(all, prints);
@@ -671,9 +852,11 @@
     } catch (err) {
       throw new Error("That file isn't valid JSON (" + err.message + ").");
     }
-    if (Array.isArray(data)) return { matches: data, replays: {} };
+    if (Array.isArray(data)) return { matches: data, deckCards: {} };
     if (data && Array.isArray(data.matches)) {
-      return { matches: data.matches, replays: data.replays || {} };
+      // A v1 bundle's `replays` key is ignored rather than rejected: its board
+      // snapshots have no reader left, but its matches and logs are still good.
+      return { matches: data.matches, deckCards: data.deckCards || {} };
     }
     // Be specific about what went wrong - "not an array" helps nobody.
     const looksLikeSummary =
@@ -711,8 +894,8 @@
           logCache.set(m.id, m.log);
         }
       }
-      for (const [id, snaps] of Object.entries(bundle.replays || {})) {
-        if (snaps && snaps.length) writes["replay_" + id] = { id, snaps };
+      for (const [id, codes] of Object.entries(bundle.deckCards || {})) {
+        if (Array.isArray(codes) && codes.length) writes["deckcards_" + id] = { id, codes };
       }
       writes.matches = [...byId.values()];
       chrome.storage.local.set(writes, cb);
@@ -750,19 +933,20 @@
       setTimeout(() => {
         const ok = confirm(
           `Archive downloaded (${bundle.matches.length} matches, ${sizeMb} MB).\n\n` +
-            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs and replays from the extension.\n\n` +
+            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs and card data from the extension.\n\n` +
             `You can view it again any time with "View archive", or restore it with Import JSON.\n\n` +
             `Press Cancel to keep everything.`
         );
         if (!ok) return;
         chrome.storage.local.get(null, (data) => {
           const keys = Object.keys(data || {}).filter(
-            (k) => k.startsWith("replay_") || k.startsWith("log_")
+            (k) => k.startsWith("deckcards_") || k.startsWith("log_")
           );
           chrome.storage.local.remove(keys, () => {
             all = [];
             expanded.clear();
             logCache.clear();
+            forgetAllVisual();
             chrome.storage.local.set({ matches: [] }, () => {
               buildFilterOptions();
               render();
@@ -791,7 +975,7 @@
     file.text().then((text) => {
       try {
         const bundle = parseBundle(text);
-        archive = { name: file.name, matches: bundle.matches, replays: bundle.replays };
+        archive = { name: file.name, matches: bundle.matches, deckCards: bundle.deckCards };
         logCache.clear();
         expanded.clear();
         $("#viewArchive").textContent = "Exit archive";
@@ -815,9 +999,10 @@
       all = [];
       expanded.clear();
       logCache.clear();
+      forgetAllVisual();
       chrome.storage.local.get(null, (data) => {
         const keys = Object.keys(data || {}).filter(
-          (k) => k.startsWith("replay_") || k.startsWith("log_")
+          (k) => k.startsWith("deckcards_") || k.startsWith("log_")
         );
         if (keys.length) chrome.storage.local.remove(keys);
       });
@@ -828,7 +1013,12 @@
   // ---- backups ---------------------------------------------------------
 
   const DAY_MS = 86400000;
-  const defaultSettings = { autoBackup: false, lastBackup: 0, bannerDismissed: 0 };
+  // The recorder reads visualReplay* out of this same object at match start,
+  // and the service worker reads the retention count out of it at every gc.
+  const defaultSettings = {
+    autoBackup: false, lastBackup: 0, bannerDismissed: 0,
+    visualReplayEnabled: true, visualReplayKeepMatches: 25, visualReplayMaxMatchMb: 512,
+  };
 
   const getSettings = (cb) =>
     chrome.storage.local.get({ settings: defaultSettings }, (d) =>
@@ -838,8 +1028,8 @@
 
   function writeBackup(cb) {
     if (!all.length) return cb && cb(new Error("nothing to back up"));
-    // Backups carry matches + logs (small); replays are excluded to keep the
-    // daily file sane - use Archive & clear if you want replays too.
+    // Backups carry matches + logs (small); the per-match card codes are
+    // excluded to keep the daily file sane - Archive & clear includes them.
     buildBundle(false, (bundle) => {
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" })
@@ -939,6 +1129,80 @@
         );
         $("#backupBanner").hidden = true;
       });
+    });
+  });
+
+  // ---- visual replay settings ------------------------------------------
+
+  /* Retention is the storage control. Recordings are never degraded, so what a
+   * replay costs is fixed by the match; the only lever over total disk use is
+   * how many matches keep one. The MB ceiling below is a runaway guard. */
+  const KEEP_MIN = 1;
+  const KEEP_MAX = 500;
+  // Out-of-range values are clamped rather than rejected: the number input's
+  // own min/max only constrain its spinner, not what can be typed or pasted.
+  const clampKeep = (v) => {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return defaultSettings.visualReplayKeepMatches;
+    return Math.min(KEEP_MAX, Math.max(KEEP_MIN, n));
+  };
+
+  const CEILING_MIN_MB = 16;
+  const CEILING_MAX_MB = 4096;
+  // A blank field is the explicit "no limit" affordance and is stored as 0,
+  // which the capture policy reads as uncapped. Anything else is clamped into
+  // range, so the guard can never be set so low that it shapes normal capture.
+  const clampCeiling = (v) => {
+    if (v === "" || v === null || v === undefined) return 0;
+    const mb = Math.round(Number(v));
+    if (!Number.isFinite(mb)) return defaultSettings.visualReplayMaxMatchMb;
+    if (mb <= 0) return 0;
+    return Math.min(CEILING_MAX_MB, Math.max(CEILING_MIN_MB, mb));
+  };
+
+  function refreshVisualSettingsUI() {
+    // The spinners' bounds come from the constants above so the two can't drift.
+    const keep = $("#visualKeep");
+    const ceiling = $("#visualCeiling");
+    keep.min = String(KEEP_MIN);
+    keep.max = String(KEEP_MAX);
+    ceiling.min = String(CEILING_MIN_MB);
+    ceiling.max = String(CEILING_MAX_MB);
+    getSettings((s) => {
+      $("#visualEnabled").checked = s.visualReplayEnabled !== false;
+      keepMatches = clampKeep(s.visualReplayKeepMatches);
+      keep.value = keepMatches;
+      const mb = clampCeiling(s.visualReplayMaxMatchMb);
+      ceiling.value = mb > 0 ? mb : ""; // blank, not 0, is what "no limit" looks like
+      // The panel projects disk use from the retention count, so it has to be
+      // redrawn whenever that number changes.
+      renderVisualPanel();
+    });
+  }
+
+  $("#visualEnabled").addEventListener("change", (e) => {
+    const on = e.target.checked;
+    getSettings((s) => {
+      s.visualReplayEnabled = on;
+      setSettings(s);
+    });
+  });
+
+  $("#visualKeep").addEventListener("change", (e) => {
+    const n = clampKeep(e.target.value);
+    e.target.value = n; // show what was actually stored, clamp included
+    getSettings((s) => {
+      s.visualReplayKeepMatches = n;
+      setSettings(s, refreshVisualSettingsUI);
+    });
+  });
+
+  $("#visualCeiling").addEventListener("change", (e) => {
+    const mb = clampCeiling(e.target.value);
+    e.target.value = mb > 0 ? mb : "";
+    getSettings((s) => {
+      s.visualReplayMaxMatchMb = mb;
+      setSettings(s);
     });
   });
 

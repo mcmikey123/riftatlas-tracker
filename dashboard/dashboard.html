@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Rift Atlas Stats Tracker</title>
+<link rel="stylesheet" href="../vendor/rrweb.min.css" />
 <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
@@ -53,6 +54,15 @@
     <input type="checkbox" id="autoBackup" />
   </label>
   <span id="backupState" class="backup-state"></span>
+  <label title="Records each match as the site's own markup and stylesheets, replayable exactly as it looked. Recording is always at full fidelity — it is never thinned out to save space.">Visual replay
+    <input type="checkbox" id="visualEnabled" />
+  </label>
+  <label title="The setting that decides how much disk visual replays use. Once you have this many, the oldest replay is deleted at the end of each match — the match record, its game log, its result and its card list are kept either way. The capture panel below shows what a replay actually costs.">Keep visual replays for the newest (matches)
+    <input type="number" id="visualKeep" step="1" />
+  </label>
+  <label title="A safeguard, not a target — you should not normally need to touch it. If one match's recording somehow runs past this, capture stops there and the replay is marked truncated rather than being recorded at lower fidelity. Leave blank for no ceiling at all.">Stop a runaway recording at (MB, blank = no limit)
+    <input type="number" id="visualCeiling" step="1" placeholder="no limit" />
+  </label>
 </section>
 
 <section class="tiles">
@@ -77,7 +87,7 @@
     Deck names are worked out from the deck you had open in the picker before the game, falling back to the board, the room URL,
     then the deck you played last. Hover a name to see which it was, and change it from the <b>Deck</b> column of Match history
     to correct it — decks on the same champion can't be told apart automatically.
-    <button id="autoDeck" class="inline-btn" title="Group matches by the cards you actually played, using replay data">Detect decks from replays</button>
+    <button id="autoDeck" class="inline-btn" title="Group matches by the cards you actually played">Detect decks from cards played</button>
     <button id="bulkLabel" class="inline-btn">Label all unlabelled matches…</button>
   </p>
   <table id="deckTable">
@@ -106,10 +116,33 @@
   </table>
 </section>
 
+<section id="visualPanel" hidden>
+  <h2>Visual replay capture</h2>
+  <p class="hint">
+    What each visual recording actually cost, newest first. These are the numbers to pick a retention count by:
+    every replay is captured at full fidelity, so disk use is simply the mean per-match size times how many
+    matches you keep &mdash; both are in the totals at the bottom. A match marked <b>truncated</b> hit the runaway
+    ceiling or the perf kill switch and stopped recording before the game ended, and a <b>capture max</b> near
+    150&nbsp;ms means a frame came close to the point where capture disables itself.
+    Blank figures (&mdash;) were never recorded &mdash; a match still in progress, or one captured before these
+    counters existed.
+  </p>
+  <table id="visualTable">
+    <thead><tr>
+      <th>Match</th><th>Compressed</th><th>Chunks</th><th>Keyframes</th><th>Mean delta</th>
+      <th>Capture p50</th><th>Capture max</th><th>State</th>
+    </tr></thead>
+    <tbody></tbody>
+    <tfoot></tfoot>
+  </table>
+</section>
+
 <footer>All data is stored locally in your browser. Nothing is uploaded anywhere.</footer>
+<script src="format.js"></script>
 <script src="analysis.js"></script>
 <script src="fingerprint.js"></script>
-<script src="replay.js"></script>
+<script src="../vendor/rrweb-replay.min.js"></script>
+<script src="replay-html.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>
