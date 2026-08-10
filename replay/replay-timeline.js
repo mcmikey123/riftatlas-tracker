@@ -145,6 +145,39 @@
     return !!requested && !reducedMotion;
   }
 
+  /**
+   * Whether the element a keypress landed on owns that key itself, so the
+   * transport must keep its hands off it.
+   *
+   * Both surfaces hang their shortcuts off a document-level keydown, and both
+   * now have things inside the replay that swallow keys of their own: a
+   * read-only field holding a share link, which is focused and selected the
+   * moment the link appears, and the two buttons of the share disclosure. Left
+   * unguarded, Home and End jump the replay instead of moving the caret, and
+   * Space toggles playback instead of pressing the button under the finger -
+   * on the only path to a consented upload.
+   *
+   * `target` is the event target; anything with `tagName`, `type` and
+   * `isContentEditable` will do, which is what makes this testable without a DOM.
+   *
+   * The seek slider is the one input that does NOT own the arrows. Its native
+   * nudge is one millisecond of a replay minutes long, where the transport's
+   * arrows land on the next board state, and letting the range move itself
+   * would start a drag that no pointer release ever ends.
+   *
+   * Lives here rather than in either surface because the two have drifted on
+   * exactly this four times already, and a guard that is right in one viewer and
+   * absent in the other is the same bug shipped twice.
+   */
+  function targetOwnsKey(target, key) {
+    const tag = (target && target.tagName) || "";
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT" && target.type !== "range") return true;
+    if (target && target.isContentEditable) return true;
+    // A focused button owns space, and nothing else: space is how it is pressed.
+    return tag === "BUTTON" && (key === " " || key === "Spacebar");
+  }
+
   /** Turn number carried by an rrweb custom event, or null if it isn't one. */
   function turnOf(event) {
     if (!event || event.type !== CUSTOM || !event.data) return null;
@@ -215,6 +248,7 @@
     seekOutcome,
     startPosition,
     shouldAutoplay,
+    targetOwnsKey,
     turnOf,
     timeline,
     evenly,

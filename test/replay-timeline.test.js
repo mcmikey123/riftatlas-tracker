@@ -17,6 +17,7 @@ const {
   seekOutcome,
   startPosition,
   shouldAutoplay,
+  targetOwnsKey,
   turnOf,
   timeline,
   evenly,
@@ -334,4 +335,54 @@ test("autoplay happens only when a surface asked for it", () => {
 
 test("prefers-reduced-motion overrides a surface that asked to autoplay", () => {
   assert.strictEqual(shouldAutoplay(true, true), false);
+});
+
+/* ---- who owns a keypress ------------------------------------------------
+ *
+ * Both viewers hang their shortcuts off a document-level keydown, and both now
+ * hold a share link in a focused, selected read-only field and a consent
+ * dialogue made of buttons. The rule for which of those keys the transport may
+ * take was written twice and drifted four times, so it lives here now and is
+ * tested as the decision it is.
+ */
+
+const on = (tagName, extra) => Object.assign({ tagName }, extra);
+
+test("text entry owns every key it is given", () => {
+  for (const target of [on("TEXTAREA"), on("SELECT"), on("INPUT", { type: "text" }),
+    on("INPUT", { type: "search" }), on("DIV", { isContentEditable: true })]) {
+    for (const key of [" ", "Spacebar", "ArrowLeft", "ArrowRight", "Home", "End", "f"]) {
+      assert.strictEqual(targetOwnsKey(target, key), true, `${target.tagName} must keep ${key}`);
+    }
+  }
+});
+
+/* The one input that does not own the arrows. Its native nudge is a millisecond
+ * of a replay minutes long, and moving the range itself would start a drag that
+ * no pointer release ever ends. */
+test("the seek slider leaves the arrows to the transport", () => {
+  const slider = on("INPUT", { type: "range" });
+  for (const key of [" ", "ArrowLeft", "ArrowRight", "Home", "End"]) {
+    assert.strictEqual(targetOwnsKey(slider, key), false, `the slider must not swallow ${key}`);
+  }
+});
+
+/* Space is how a focused button is pressed, and this branch put "Create share
+ * link" and "Cancel" on the only path to a consented upload. Nothing else about
+ * a button is its own: the transport keeps the arrows so a viewer who has just
+ * clicked Next can carry on with the keyboard. */
+test("a focused button owns space, and only space", () => {
+  const button = on("BUTTON");
+  assert.strictEqual(targetOwnsKey(button, " "), true);
+  assert.strictEqual(targetOwnsKey(button, "Spacebar"), true, "the legacy key name counts too");
+  for (const key of ["ArrowLeft", "ArrowRight", "Home", "End", "f", "Escape"]) {
+    assert.strictEqual(targetOwnsKey(button, key), false, `a button does not own ${key}`);
+  }
+});
+
+test("the replay itself, and a missing target, own nothing", () => {
+  for (const target of [on("DIV"), on("IFRAME"), on("BODY"), null, undefined, {}]) {
+    assert.strictEqual(targetOwnsKey(target, " "), false, JSON.stringify(target));
+    assert.strictEqual(targetOwnsKey(target, "ArrowRight"), false, JSON.stringify(target));
+  }
 });

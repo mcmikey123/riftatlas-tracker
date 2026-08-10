@@ -319,19 +319,14 @@
 
   function onKey(e) {
     if (!playback) return;
-    const target = e.target;
-    const tag = (target && target.tagName) || "";
-    // Text entry owns its keys, and a focused button owns space. The seek slider
-    // does not own the arrows, here or in the extension's modal: its native
-    // nudge is one millisecond of a replay minutes long, where the transport's
-    // arrows land on the next board state, and letting the range move itself
-    // would start a drag that no pointer release ever ends.
-    if (tag === "TEXTAREA" || tag === "SELECT") return;
-    if (tag === "INPUT" && target.type !== "range") return;
-    if (target && target.isContentEditable) return;
+    // Text entry owns its keys and a focused button owns space. The rule itself
+    // is `targetOwnsKey` in replay-timeline.js, shared with the extension's
+    // modal: this page and that one had drifted on it four times, and a guard
+    // that is right in one viewer and absent in the other is one bug shipped
+    // twice.
+    if (root.RAReplayTimeline.targetOwnsKey(e.target, e.key)) return;
 
     if (e.key === " " || e.key === "Spacebar") {
-      if (tag === "BUTTON") return;
       e.preventDefault();
       playback.togglePlay();
     } else if (e.key === "ArrowLeft") {

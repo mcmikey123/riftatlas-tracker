@@ -14,7 +14,7 @@
   "use strict";
 
   const { esc, fmtClock } = root.RATrackerFormat;
-  const { MAX_CHIPS, SEEK, timeline, evenly, truncationText } = root.RAReplayTimeline;
+  const { MAX_CHIPS, SEEK, timeline, evenly, truncationText, targetOwnsKey } = root.RAReplayTimeline;
 
   /**
    * Escape is consumed by the browser to leave fullscreen, but not every engine
@@ -354,6 +354,11 @@
         return close();
       }
       if (!ctl) return;
+      // Escape is above this on purpose: it closes the modal from anywhere,
+      // including from the share link's field, where it has nothing else to do.
+      // Everything below moves the replay, and the moment panel puts a text
+      // field and two buttons inside the modal that own those keys themselves.
+      if (targetOwnsKey(e.target, e.key)) return;
       if (e.key === "ArrowRight") { e.preventDefault(); ctl.next(); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); ctl.prev(); }
       else if (e.key === " ") { e.preventDefault(); ctl.togglePlay(); }
