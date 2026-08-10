@@ -54,6 +54,7 @@
       render();
       refreshBackupUI();
       refreshVisualSettingsUI();
+      refreshShareSettingsUI();
       dropLegacyReplays();
     });
   }
@@ -440,7 +441,9 @@
           <span class="save-state" data-savestate="${m.id}"></span>
           ${
             hasVisual(m.id)
-              ? `<h3 class="log-head">Replay <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">open full screen</button></h3>`
+              ? `<h3 class="log-head">Replay <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">open full screen</button>
+                   <button class="log-toggle" data-share="${m.id}" title="Turn this replay into an encrypted link anyone can open">${shareOpen.has(m.id) ? "hide" : "share a link"}</button></h3>
+                 <div class="share-box" data-sharebox="${m.id}" ${shareOpen.has(m.id) ? "" : "hidden"}>${shareBoxInner(m.id)}</div>`
               : ""
           }
           <h3 class="log-head">Game log <button class="log-toggle" data-log="${m.id}">show</button></h3>
@@ -562,6 +565,350 @@
       </tr>`;
   }
 
+  // ---- replay sharing --------------------------------------------------
+
+  /* Turning a replay into a link is a one-way door. The link is a bearer token,
+   * there is no revocation, and the object only goes away when the endpoint's
+   * 7-day lifecycle rule removes it. So the Share button opens a panel that says
+   * all of that first, and the upload is a second, deliberate click.
+   *
+   * Building a share blocks the main thread for ~600 ms on the worst replay
+   * measured - JSON.stringify 224 ms plus deflate 273 ms, with crypto at 3 ms -
+   * and peaks near 380 MB. Every phase therefore paints before it begins, and
+   * only one share may be in flight at a time.
+   *
+   * The pure parts - the size check, the failure taxonomy, the magic-byte check
+   * and the record shape - live in share/share-ui-support.js and are tested.
+   * What is left here is DOM, crypto and network, which by project convention
+   * gets no unit tests and must instead stay small and obviously correct. */
+
+  const SHARE = window.RAShareUI;
+
+  // matchId -> {phase, link, error, retry, createdAt}. Held outside the DOM so a
+  // re-render, which rebuilds the whole history table, cannot lose a share that
+  // is mid-flight or a link that has just been produced. Openness is tracked
+  // separately, so collapsing the panel hides a link rather than discarding it.
+  const shareState = new Map();
+  const shareOpen = new Set();
+  let shareBusy = null; // matchId of the share currently running, or null
+
+  const SHARE_PHASES = {
+    preparing: "Reading the replay…",
+    stripping: "Deduplicating stylesheets…",
+    encrypting: "Compressing and encrypting…",
+    uploading: "Uploading…",
+    verifying: "Verifying…",
+  };
+
+  /* Reassurance first, because the encryption property is real and is the whole
+   * point; the caveats stay present but secondary. Self-hosting is deliberately
+   * not mentioned - that is documentation, and it only confuses someone who is
+   * standing at the point of sharing. */
+  const SHARE_DISCLOSURE = `
+    <p class="share-lead">End-to-end encrypted — only people with the link can view this replay.</p>
+    <p class="share-caveats">
+      The replay includes your opponent's display name and the match chat, and anyone the link
+      reaches can open it. It expires after ${SHARE.SHARE_TTL_DAYS} days, and it can't be
+      unshared before then.
+    </p>`;
+
+  /** A failure the share flow raised itself, carrying what to show for it. */
+  class ShareUiError extends Error {
+    constructor(message, retry) {
+      super(message);
+      this.name = "ShareUiError";
+      this.shareMessage = message;
+      this.shareRetry = !!retry;
+    }
+  }
+
+  // A frame, then a task: the frame paints what was just set, the task lets the
+  // next phase start after that paint rather than in the same block.
+  const paintYield = () =>
+    new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+
+  const sha256Hex = async (text) => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  };
+
+  function shareBoxInner(matchId) {
+    const s = shareState.get(matchId) || {};
+    let body;
+    if (s.link) {
+      const expires = new Date(s.createdAt + SHARE.SHARE_TTL_MS);
+      body = `
+        <div class="share-link-row">
+          <input class="share-link" type="text" readonly spellcheck="false"
+                 data-sharelink="${esc(matchId)}" value="${esc(s.link)}" />
+          <button class="rp-btn" data-sharecopy="${esc(matchId)}">Copy link</button>
+        </div>
+        <p class="share-note">Uploaded and verified. Expires ${esc(expires.toLocaleDateString())}.</p>`;
+    } else if (s.phase && s.phase !== "idle") {
+      body = `<p class="share-progress">${esc(SHARE_PHASES[s.phase] || "Working…")}</p>`;
+    } else {
+      body = `${s.error ? `<p class="share-error">${esc(s.error)}</p>` : ""}
+        ${
+          s.error && !s.retry
+            ? ""
+            : `<button class="rp-btn" data-sharego="${esc(matchId)}">${
+                s.error ? "Try again" : "Create share link"
+              }</button>`
+        }`;
+    }
+    return SHARE_DISCLOSURE + body;
+  }
+
+  /** Repaint one match's panel in place. A collapsed row simply has none. */
+  function paintShare(matchId) {
+    shareOpen.add(matchId);
+    const box = document.querySelector(`[data-sharebox="${CSS.escape(matchId)}"]`);
+    if (!box) return;
+    box.hidden = false;
+    box.innerHTML = shareBoxInner(matchId);
+  }
+
+  function setShare(matchId, patch) {
+    shareState.set(matchId, Object.assign({}, shareState.get(matchId), patch));
+    paintShare(matchId);
+  }
+
+  /* An extension page's fetch obeys CORS like any other page, and the share
+   * endpoint sends no CORS headers by design - the viewer is same-origin with
+   * it, so it never needs any. Host access is what exempts us. The default
+   * endpoint is in the manifest and grants silently; a self-hoster's is not and
+   * cannot be, so it is asked for here. This must stay inside the click: the
+   * user gesture is what lets Chrome show the prompt. */
+  function ensureEndpointAccess(endpoint, cb) {
+    let pattern;
+    try {
+      pattern = new URL(endpoint).origin + "/*";
+    } catch (_) {
+      return cb(false, "The share endpoint in Settings isn't a valid URL.");
+    }
+    try {
+      chrome.permissions.request({ origins: [pattern] }, (granted) => {
+        void chrome.runtime.lastError;
+        cb(!!granted, granted ? null : "Access to the share endpoint was declined.");
+      });
+    } catch (_) {
+      cb(false, "This browser would not allow access to the share endpoint.");
+    }
+  }
+
+  function readReplay(matchId) {
+    return new Promise((resolve) =>
+      chrome.runtime.sendMessage({ type: "ra:visual:get", matchId }, (reply) =>
+        resolve(chrome.runtime.lastError ? null : reply)
+      )
+    );
+  }
+
+  /* Never show a link that has not been read back. This is the check that would
+   * have caught the host found during research which answered a curl probe with
+   * the bytes and a browser with an HTML interstitial. Only the first chunk is
+   * read - enough for the magic - and the rest of the body is cancelled, so
+   * confirming a 3.5 MB share costs a few hundred bytes. */
+  async function verifyObject(endpoint, objectId) {
+    const url = `${window.RAShareHosts.normaliseEndpoint(endpoint)}/b/${objectId}`;
+    const fail = () => new ShareUiError(SHARE.MESSAGES.unverified, true);
+    let res;
+    try {
+      res = await fetch(url, { cache: "no-store" });
+    } catch (_) {
+      throw fail();
+    }
+    if (!res.ok || !res.body) throw fail();
+
+    const reader = res.body.getReader();
+    let head = new Uint8Array(0);
+    try {
+      while (head.length < 4) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || !value.length) continue;
+        const merged = new Uint8Array(head.length + value.length);
+        merged.set(head);
+        merged.set(value, head.length);
+        head = merged;
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+    if (!SHARE.hasShareMagic(head)) throw fail();
+  }
+
+  async function runShare(matchId, endpoint) {
+    setShare(matchId, { phase: "preparing", link: null, error: null });
+    await paintYield();
+
+    const reply = await readReplay(matchId);
+    const replay = reply && reply.ok ? reply.replay : null;
+    if (!replay || !replay.events || !replay.events.length) {
+      throw new ShareUiError(SHARE.MESSAGES.unreadable, false);
+    }
+
+    /* get() hands back the stylesheets rehydrated inline into every one of the
+     * ~34 keyframes. Re-stripping them with the same pure function storage uses
+     * costs one pass and takes the deflated frame from 5.95 MB to 3.48 MB on the
+     * worst replay measured. The viewer runs rehydrateCssAssets after decrypting,
+     * which is the exact inverse. */
+    setShare(matchId, { phase: "stripping" });
+    await paintYield();
+    const { events, assets } = await window.extractCssAssets(replay.events, { hash: sha256Hex });
+
+    setShare(matchId, { phase: "encrypting" });
+    await paintYield();
+    const key = await window.RAShare.generateKey({});
+    const frame = await window.RAShare.buildSharePayload(
+      // assets arrives as a Map; JSON needs a plain object.
+      { meta: replay.meta, events, assets: Object.fromEntries(assets) },
+      key,
+      {}
+    );
+
+    /* Measured on the frame that will actually be sent, never predicted from
+     * meta.compressedBytes - that is the store's per-chunk total and differs
+     * (3,760,696 against 3,644,834 on the measured replay). */
+    const size = SHARE.checkPayloadSize(frame.byteLength, SHARE.MAX_UPLOAD_BYTES);
+    if (!size.ok) throw new ShareUiError(size.message, false);
+
+    setShare(matchId, { phase: "uploading" });
+    await paintYield();
+    const objectId = await window.RAShareHosts.hostFor("w").upload(frame, {
+      endpoint,
+      token: window.RAShareConfig.SHARE_TOKEN,
+      fetch: (url, init) => fetch(url, init),
+    });
+
+    setShare(matchId, { phase: "verifying" });
+    await paintYield();
+    await verifyObject(endpoint, objectId);
+
+    const keyBytes = await window.RAShare.exportKey(key, {});
+    const record = SHARE.shareRecord({
+      matchId,
+      objectId,
+      key: window.RAShareHosts.toBase64Url(keyBytes),
+      endpoint: window.RAShareHosts.normaliseEndpoint(endpoint),
+      createdAt: Date.now(),
+    });
+    await rememberShare(record);
+    return {
+      link: window.RAShareHosts.buildLink({ endpoint, objectId, keyBytes }),
+      createdAt: record.createdAt,
+    };
+  }
+
+  /* chrome.storage.local key "shares": an array of share records in creation
+   * order, whose shape share/share-ui-support.js documents and validates. The
+   * key is stored because it exists nowhere else - the endpoint never sees it,
+   * and without it a link cannot be rebuilt, only lost. Task 8's shares list
+   * reads this. A write that fails must not lose the link the user is looking
+   * at, so the flow carries on either way. */
+  function rememberShare(record) {
+    return new Promise((resolve) =>
+      chrome.storage.local.get({ shares: [] }, (data) => {
+        const shares = Array.isArray(data.shares) ? data.shares : [];
+        shares.push(record);
+        chrome.storage.local.set({ shares }, () => {
+          void chrome.runtime.lastError;
+          resolve();
+        });
+      })
+    );
+  }
+
+  function beginShare(matchId) {
+    if (shareBusy) {
+      if (shareBusy !== matchId) {
+        setShare(matchId, {
+          phase: "idle",
+          error: "Another replay is being shared right now. Wait for that one to finish.",
+          retry: true,
+        });
+      }
+      return;
+    }
+    const endpoint = shareEndpoint;
+    ensureEndpointAccess(endpoint, (granted, why) => {
+      if (!granted) {
+        setShare(matchId, { phase: "idle", error: why, retry: true });
+        return;
+      }
+      shareBusy = matchId;
+      setShare(matchId, { phase: "preparing", error: null, retry: false });
+      runShare(matchId, endpoint)
+        .then(
+          ({ link, createdAt }) => setShare(matchId, { phase: "done", link, createdAt, error: null }),
+          (err) => {
+            // A ShareUiError already knows what it wants said; anything else came
+            // out of the upload and gets the status-to-message mapping.
+            const shown = err && err.shareMessage
+              ? { message: err.shareMessage, retry: err.shareRetry }
+              : SHARE.describeUploadFailure(err);
+            console.warn("[RA-Tracker] sharing failed:", err);
+            setShare(matchId, { phase: "idle", link: null, error: shown.message, retry: shown.retry });
+          }
+        )
+        .then(() => {
+          shareBusy = null;
+        });
+    });
+  }
+
+  function copyShareLink(matchId, button) {
+    const s = shareState.get(matchId);
+    if (!s || !s.link) return;
+    // Selected either way, so a blocked clipboard still leaves the link ready
+    // for a manual copy rather than leaving the user with nothing.
+    const field = document.querySelector(`[data-sharelink="${CSS.escape(matchId)}"]`);
+    if (field) {
+      field.focus();
+      field.select();
+    }
+    const settle = (text) => {
+      button.textContent = text;
+      setTimeout(() => {
+        if (button.isConnected) button.textContent = "Copy link";
+      }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(s.link).then(() => settle("Copied"), () => settle("Press Ctrl+C"));
+      return;
+    }
+    settle("Press Ctrl+C");
+  }
+
+  // ---- share settings ---------------------------------------------------
+
+  let shareEndpoint = window.RAShareConfig.DEFAULT_SHARE_ENDPOINT;
+
+  // Blank is the "put it back to the default" affordance, so an endpoint can
+  // never be cleared into a state where sharing silently has nowhere to go.
+  const cleanEndpoint = (value) => {
+    const text = String(value == null ? "" : value).trim();
+    return text
+      ? window.RAShareHosts.normaliseEndpoint(text)
+      : window.RAShareConfig.DEFAULT_SHARE_ENDPOINT;
+  };
+
+  function refreshShareSettingsUI() {
+    getSettings((s) => {
+      shareEndpoint = cleanEndpoint(s.shareEndpoint);
+      $("#shareEndpoint").value = shareEndpoint;
+    });
+  }
+
+  $("#shareEndpoint").addEventListener("change", (e) => {
+    const next = cleanEndpoint(e.target.value);
+    e.target.value = next; // show what was actually stored
+    getSettings((s) => {
+      s.shareEndpoint = next;
+      setSettings(s, refreshShareSettingsUI);
+    });
+  });
+
   // ---- events ----------------------------------------------------------
 
   document.addEventListener("change", (e) => {
@@ -654,6 +1001,32 @@
         }
         window.RATrackerVisualReplay.openModal(m, payload);
       });
+      return;
+    }
+    // Sharing. The panel is toggled in place rather than through render(), so
+    // opening it disturbs nothing else in the row - and a share already running
+    // cannot be closed out from under itself.
+    const shareId = e.target?.dataset?.share;
+    if (shareId) {
+      if (shareBusy === shareId) return;
+      const box = document.querySelector(`[data-sharebox="${CSS.escape(shareId)}"]`);
+      if (!box) return;
+      if (shareOpen.has(shareId)) shareOpen.delete(shareId);
+      else shareOpen.add(shareId);
+      const open = shareOpen.has(shareId);
+      box.hidden = !open;
+      box.innerHTML = shareBoxInner(shareId);
+      e.target.textContent = open ? "hide" : "share a link";
+      return;
+    }
+    const shareGoId = e.target?.dataset?.sharego;
+    if (shareGoId) {
+      beginShare(shareGoId);
+      return;
+    }
+    const shareCopyId = e.target?.dataset?.sharecopy;
+    if (shareCopyId) {
+      copyShareLink(shareCopyId, e.target);
       return;
     }
     const logId = e.target?.dataset?.log;
@@ -1015,9 +1388,14 @@
   const DAY_MS = 86400000;
   // The recorder reads visualReplay* out of this same object at match start,
   // and the service worker reads the retention count out of it at every gc.
+  // shareEndpoint is a public URL, not a secret - see share/config.js. It is a
+  // setting so a self-hoster can point the extension at their own instance
+  // without editing code. There is deliberately no TTL setting: expiry is a
+  // bucket-wide lifecycle rule, not a property of a share.
   const defaultSettings = {
     autoBackup: false, lastBackup: 0, bannerDismissed: 0,
     visualReplayEnabled: true, visualReplayKeepMatches: 25, visualReplayMaxMatchMb: 512,
+    shareEndpoint: window.RAShareConfig.DEFAULT_SHARE_ENDPOINT,
   };
 
   const getSettings = (cb) =>
