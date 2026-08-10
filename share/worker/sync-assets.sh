@@ -7,11 +7,11 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo=$(CDPATH= cd -- "$here/../.." && pwd)
 
-mkdir -p "$here/public/vendor" "$here/public/replay" "$here/public/share"
+mkdir -p "$here/public/vendor" "$here/public/replay" "$here/public/share" "$here/public/store"
 
-# replay/ is created by Task 5 of docs/plans/2026-08-10-replay-sharing-implementation.md.
-# Until it lands, these two are absent and `set -e` would abort the whole script before
-# copying anything below. Drop the guard once Task 5 is done — the viewer needs them.
+# Every file below is one the viewer page loads by name, so a missing one is a broken
+# deploy. It is reported and counted rather than left to `set -e`, which would abort
+# before copying the rest and hide how much is actually absent.
 missing=0
 for rel in \
   vendor/rrweb-replay.min.js \
@@ -19,16 +19,18 @@ for rel in \
   replay/replay-timeline.js \
   replay/replay-core.js \
   share/payload.js \
-  share/hosts.js
+  share/hosts.js \
+  share/viewer-support.js \
+  store/css-assets.js
 do
   dest="$here/public/$(dirname "$rel")/"
   if [ -f "$repo/$rel" ]; then
     cp "$repo/$rel" "$dest"
   else
-    echo "  skipped $rel (not created yet)"
+    echo "  MISSING $rel"
     missing=$((missing + 1))
   fi
 done
 
 echo "synced into $here/public"
-[ "$missing" -eq 0 ] || echo "  $missing file(s) missing — the viewer will not work until Task 5 lands"
+[ "$missing" -eq 0 ] || echo "  $missing file(s) missing — do not deploy, the viewer needs all of them"

@@ -1,2 +1,58 @@
-<!doctype html><meta charset="utf-8"><title>Rift Atlas replay share</title>
-<p>Deploy smoke test. The viewer page lands in Task 6.</p>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rift Atlas replay</title>
+<link rel="stylesheet" href="/vendor/rrweb.min.css">
+<link rel="stylesheet" href="/viewer.css">
+<!--
+  Every script is an external same-origin file because the CSP is
+  `script-src 'self'` with no 'unsafe-inline': no inline <script>, no onclick=,
+  no javascript: URLs. share/worker/sync-assets.sh copies the first six in from
+  the repo before every deploy; git holds one copy of each at the repo root.
+
+  Order is load-bearing. replay-core.js reads rrwebReplay and RAReplayTimeline
+  as it initialises, and viewer.js reads all of the globals below it.
+-->
+<script defer src="/vendor/rrweb-replay.min.js"></script>
+<script defer src="/replay/replay-timeline.js"></script>
+<script defer src="/replay/replay-core.js"></script>
+<script defer src="/share/payload.js"></script>
+<script defer src="/share/hosts.js"></script>
+<script defer src="/store/css-assets.js"></script>
+<script defer src="/share/viewer-support.js"></script>
+<script defer src="/viewer.js"></script>
+</head>
+<body>
+<main class="viewer">
+  <header class="head">
+    <h1>Rift Atlas replay</h1>
+    <p class="sub" id="sub">A shared match replay. Anyone with this link can watch it.</p>
+  </header>
+
+  <div class="notices" id="notices"></div>
+
+  <section class="status" id="status" role="status" aria-live="polite">
+    <div class="bar" id="bar"><span></span></div>
+    <p class="status-msg" id="statusMsg">Opening the replay…</p>
+    <p class="status-detail" id="statusDetail"></p>
+    <button class="btn" id="retry" type="button" hidden>Try again</button>
+  </section>
+
+  <section class="player" id="player" hidden>
+    <div class="controls">
+      <button class="btn" id="play" type="button" title="Play / pause (space)" aria-label="Play">▶</button>
+      <button class="btn" id="prev" type="button" title="Previous board state (←)" aria-label="Previous board state">◀</button>
+      <button class="btn" id="next" type="button" title="Next board state (→)" aria-label="Next board state">▶|</button>
+      <label class="seek-label" for="seek">Position</label>
+      <input class="seek" id="seek" type="range" min="0" max="1000" value="0" step="1">
+      <span class="clock" id="clock">0:00 / 0:00</span>
+    </div>
+    <div class="chapters" id="chapters" hidden></div>
+    <div class="stage" id="stage"><div class="scale" id="scale"></div></div>
+    <p class="hint">← → step between board states · space plays and pauses · the board is the site's own, replayed at the size it was recorded at</p>
+  </section>
+</main>
+</body>
+</html>
