@@ -1,0 +1,24 @@
+# Cloudflare — never commit anything that identifies or authenticates an account
+share/worker/wrangler.toml
+share/worker/.env
+share/worker/.dev.vars
+.wrangler/
+.dev.vars
+.env
+
+# Generated: synced into the Worker's static assets directory before deploy
+share/worker/public/vendor/
+share/worker/public/replay/
+share/worker/public/share/
+
+# Spike scratch
+share/spike/
+
+# Tooling
+node_modules/
+*.local
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
