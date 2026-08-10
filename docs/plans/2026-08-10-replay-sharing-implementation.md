@@ -19,8 +19,8 @@ during a grilling pass and are folded in below; the sections the first draft mar
 research (host testing, payload measurements, crypto timings, rejected designs) survive unchanged
 and are restated in the design doc rather than repeated here.
 
-Tasks 0-3 and Task 5 are implemented and committed. Task 4 (the spike) is blocked on a
-browser; Tasks 6-8 follow it.
+Tasks 0-6 are done, including the spike, which passed against a real match. Only Task 7 (the
+share button) and Task 8 (the shares list) remain.
 
 ---
 
@@ -1014,15 +1014,20 @@ exported replay. They are recorded here so the spike does not re-do them.
 Only these remain, and none can be checked from inside the container: `assets.riftatlas-workers.com`
 is not in the local proxy allowlist, and there is no browser here.
 
-- [ ] the rrweb Replayer mounts on a plain `https://` page outside the extension
-- [ ] it plays through at least one keyframe boundary without tearing
-- [ ] rehydrated CSS produces a **styled** board — the silent-failure path in Task 6 makes this
-      the single most important visual check, because getting it wrong looks merely ugly rather
-      than broken
-- [ ] card art actually loads and renders (the CSP permits it; whether the CDN serves it
-      cross-origin to a `workers.dev` page is untested)
-- [ ] the Task 3 CSP does not break rrweb at runtime
-- [ ] ~600 ms of build time and ~380 MB peak RSS are tolerable in a real tab
+- [x] the rrweb Replayer mounts on a plain `https://` page outside the extension
+- [x] it plays through at least one keyframe boundary without tearing
+- [x] rehydrated CSS produces a **styled** board
+- [x] card art loads and renders
+- [x] the Task 3 CSP does not break rrweb at runtime
+- [x] ~600 ms of build time and ~380 MB peak RSS are tolerable in a real tab
+
+**Spike passed 2026-08-10** against a real 31-minute match: 39,659 events, a 3,644,834-byte
+encrypted frame in R2, opened from a link on a machine with no extension installed. The design
+is proven end to end; nothing in sections 2-3 remains unverified.
+
+Two things confirmed as expected rather than defects: rrweb renders a fake mouse cursor at the
+top-left even though the capture carries no pointer events (inherited from the dashboard), and
+peak memory during rebuild is ~380 MB, which is fine on desktop and untested on mobile.
 
 Free diagnostic while a replay is open — this settles suspect T2 in the known-issues section at
 no extra cost:
@@ -1130,7 +1135,7 @@ const assets = new Map(Object.entries(payload.assets || {}));
 const events = rehydrateCssAssets(payload.events, assets);
 
 // Fail loudly rather than rendering an unstyled board that looks merely ugly.
-const unresolved = events.filter((e) => JSON.stringify(e).includes('"_cssText":""')).length;
+const unresolved = countEmptyCssText(events); // tree walk — see share/viewer-support.js
 if (unresolved > 0) throw new Error(`${unresolved} stylesheet refs failed to resolve`);
 ```
 
