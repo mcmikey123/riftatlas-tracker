@@ -11,8 +11,10 @@ share/worker/public/vendor/
 share/worker/public/replay/
 share/worker/public/share/
 
-# Spike scratch
+# Spike scratch. Exported replays carry the opponent's display name and the match
+# chat, so these directories must never be committable.
 share/spike/
+scratch/
 
 # Tooling
 node_modules/
