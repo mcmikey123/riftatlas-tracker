@@ -2,7 +2,8 @@
  *
  * The arithmetic behind a replay's transport: which moments are settled board
  * states, how many of them a chip row can show, how far a truncated capture
- * actually got, and what scale the board is drawn at.
+ * actually got, what scale the board is drawn at, and whether a given seek
+ * leaves the replay running.
  *
  * Pure by construction: no DOM, no escaping, no chrome APIs, no rrweb. Callers
  * escape whatever they interpolate into markup, so the same functions serve the
@@ -39,6 +40,51 @@
     if (Math.abs(capped - 1) < SCALE_STEP) return 1;
     // Floored, never rounded: a scale above the raw fit would overflow the stage.
     return Math.max(SCALE_STEP, Math.floor(capped / SCALE_STEP) * SCALE_STEP);
+  }
+
+  /**
+   * Why the transport was moved. The reason is the whole input to the resume
+   * policy below, so every caller that seeks names one.
+   */
+  const SEEK = Object.freeze({
+    SCRUB: "scrub", // the slider was released, or clicked straight to a spot
+    DRAG: "drag", // mid-drag, with more input events still coming
+    CHAPTER: "chapter", // a chapter chip
+    JUMP: "jump", // Home / End
+    STEP: "step", // the step buttons and the arrow keys
+  });
+
+  /**
+   * Whether a seek leaves the transport running.
+   *
+   * The rule is that seeking changes position, not play state: scrubbing to a
+   * spot or jumping to a turn while the replay is playing carries on playing
+   * from where it landed. Two reasons are exempt, both about intent rather than
+   * mechanism:
+   *   - STEP is a request to hold still and look at one board state;
+   *   - DRAG is one of the dozens of `input` events a single drag fires, so it
+   *     holds playback instead of restarting the engine on every pixel of
+   *     travel; the SCRUB at the end of the drag is what resumes.
+   * Landing on the very end resumes nothing — there is nothing left to play, and
+   * restarting from zero is togglePlay's job, only ever asked for explicitly.
+   */
+  function resumesAfterSeek(seek) {
+    if (!seek || !seek.playing) return false;
+    const reason = seek.reason || SEEK.SCRUB;
+    if (reason === SEEK.STEP || reason === SEEK.DRAG) return false;
+    const total = Number(seek.total);
+    return !(Number.isFinite(total) && Number(seek.ms) >= total);
+  }
+
+  /**
+   * Whether a surface that asked to autoplay actually gets it. A replay that
+   * starts moving on its own is motion the viewer did not ask for, which is the
+   * one thing `prefers-reduced-motion` is a standing answer to — so the
+   * preference wins, in the dashboard modal and in the share viewer alike, and
+   * the play button is right there either way.
+   */
+  function shouldAutoplay(requested, reducedMotion) {
+    return !!requested && !reducedMotion;
   }
 
   /** Turn number carried by an rrweb custom event, or null if it isn't one. */
@@ -105,7 +151,10 @@
     MAX_CHIPS,
     MAX_SCALE,
     SCALE_STEP,
+    SEEK,
     quantise,
+    resumesAfterSeek,
+    shouldAutoplay,
     turnOf,
     timeline,
     evenly,

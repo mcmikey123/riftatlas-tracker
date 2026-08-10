@@ -14,7 +14,7 @@
   "use strict";
 
   const { esc, fmtClock } = root.RATrackerFormat;
-  const { MAX_CHIPS, timeline, evenly, truncationText } = root.RAReplayTimeline;
+  const { MAX_CHIPS, SEEK, timeline, evenly, truncationText } = root.RAReplayTimeline;
 
   /**
    * Escape is consumed by the browser to leave fullscreen, but not every engine
@@ -103,6 +103,7 @@
       events,
       meta,
       marks,
+      autoplay: true,
       onTime: paint,
       onPlayState: (playing) => {
         playBtn.textContent = playing ? "❚❚" : "▶";
@@ -204,10 +205,13 @@
     playBtn.addEventListener("click", playback.togglePlay);
     prevBtn.addEventListener("click", () => playback.stepTo(-1));
     nextBtn.addEventListener("click", () => playback.stepTo(1));
-    slider.addEventListener("input", () => playback.seek(parseInt(slider.value, 10) || 0));
+    // `input` fires all the way through a drag and `change` once on release, so
+    // the drag holds playback and the release is what puts it back.
+    slider.addEventListener("input", () => playback.seek(parseInt(slider.value, 10) || 0, SEEK.DRAG));
+    slider.addEventListener("change", () => playback.seek(parseInt(slider.value, 10) || 0, SEEK.SCRUB));
     container.addEventListener("click", (e) => {
       const ms = e.target?.dataset?.ms;
-      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0);
+      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
     });
     if (canFullscreen) {
       fullBtn.addEventListener("click", toggleFullscreen);
@@ -221,8 +225,8 @@
     return {
       next: () => playback.stepTo(1),
       prev: () => playback.stepTo(-1),
-      first: () => playback.seek(0),
-      last: () => playback.seek(total),
+      first: () => playback.seek(0, SEEK.JUMP),
+      last: () => playback.seek(total, SEEK.JUMP),
       togglePlay: playback.togglePlay,
       toggleFullscreen,
       escapeHandled,

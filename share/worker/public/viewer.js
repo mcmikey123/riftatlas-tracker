@@ -216,7 +216,7 @@
 
   function mount(meta, events) {
     const { ViewerError, fmtClock } = root.RAShareViewer;
-    const { MAX_CHIPS, timeline, evenly, truncationText } = root.RAReplayTimeline;
+    const { MAX_CHIPS, SEEK, timeline, evenly, truncationText } = root.RAReplayTimeline;
 
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
@@ -255,6 +255,7 @@
       events,
       meta,
       marks,
+      autoplay: true,
       onTime: paintTime,
       onPlayState: paintPlayState
     });
@@ -267,10 +268,13 @@
     ui.play.addEventListener("click", () => playback.togglePlay());
     ui.prev.addEventListener("click", () => playback.stepTo(-1));
     ui.next.addEventListener("click", () => playback.stepTo(1));
-    ui.seek.addEventListener("input", () => playback.seek(parseInt(ui.seek.value, 10) || 0));
+    // `input` fires all the way through a drag and `change` once on release, so
+    // the drag holds playback and the release is what puts it back.
+    ui.seek.addEventListener("input", () => playback.seek(parseInt(ui.seek.value, 10) || 0, SEEK.DRAG));
+    ui.seek.addEventListener("change", () => playback.seek(parseInt(ui.seek.value, 10) || 0, SEEK.SCRUB));
     ui.chapters.addEventListener("click", (e) => {
       const ms = e.target && e.target.dataset ? e.target.dataset.ms : undefined;
-      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0);
+      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
     });
     // Fit once more after layout settles; the first fit runs inside create(),
     // before the chapter row has necessarily taken its final height.
@@ -298,10 +302,10 @@
       playback.stepTo(1);
     } else if (e.key === "Home") {
       e.preventDefault();
-      playback.seek(0);
+      playback.seek(0, root.RAReplayTimeline.SEEK.JUMP);
     } else if (e.key === "End") {
       e.preventDefault();
-      playback.seek(playback.totalTime);
+      playback.seek(playback.totalTime, root.RAReplayTimeline.SEEK.JUMP);
     }
   }
 

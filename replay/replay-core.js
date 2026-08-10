@@ -16,6 +16,12 @@
  * Position updates are pushed to the caller rather than polled: `onTime` fires
  * on every frame while playing and on every seek, `onPlayState` whenever the
  * transport starts or stops.
+ *
+ * Seeking moves the position and leaves the play state alone: scrubbing or
+ * jumping to a turn mid-playback keeps playing. Which seeks are exempt from
+ * that, and whether autoplay survives `prefers-reduced-motion`, are decided by
+ * `resumesAfterSeek` and `shouldAutoplay` in replay-timeline.js, where they are
+ * pure and unit tested rather than tangled up in rrweb.
  */
 (function (root) {
   "use strict";
@@ -25,6 +31,19 @@
   /** True when the vendored replay engine loaded and can be constructed. */
   function available() {
     return !!(root.rrwebReplay && typeof root.rrwebReplay.Replayer === "function");
+  }
+
+  /**
+   * True when the viewer has asked the platform for less motion. Guarded: an
+   * embedder without matchMedia, or one that throws on an unsupported query,
+   * should get a working replay rather than none.
+   */
+  function reducedMotion() {
+    try {
+      return !!(root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    } catch (_) {
+      return false;
+    }
   }
 
   /** The viewport a recording must be pinned to, from its stored meta. */
@@ -43,14 +62,18 @@
    * to the ones the timeline finds. Returns null if the recording will not play
    * at all — the caller owns whatever it wants to say about that.
    *
-   *   create({ stage, scaleEl, events, meta, marks, onTime, onPlayState })
+   *   create({ stage, scaleEl, events, meta, marks, autoplay, onTime, onPlayState })
    *
    * `onTime(ms, totalMs)` fires while playing, on seek and at the end; the
    * total is passed alongside because the first fire happens during this call,
    * before the caller holds a controller to read it from.
+   *
+   * `autoplay` is off unless a surface asks for it: a core that started playing
+   * on its own would be a surprise to any caller that mounts a replay somewhere
+   * it is not the thing the viewer just opened.
    */
   function create(options) {
-    const { quantise, timeline } = root.RAReplayTimeline;
+    const { quantise, timeline, SEEK, resumesAfterSeek, shouldAutoplay } = root.RAReplayTimeline;
 
     const stage = options.stage;
     const scaleEl = options.scaleEl;
@@ -117,6 +140,13 @@
     let raf = null;
     let at = 0;
     let dead = false;
+    // The play state the caller has been told about, so a seek that pauses the
+    // engine for a few milliseconds and resumes it does not flicker the glyph.
+    let announced = false;
+    // A drag fires `input` continuously and `change` once, on release. Each
+    // `input` holds playback; this remembers that it was running so the release
+    // can put it back, since by then `playing` is long since false.
+    let heldForDrag = false;
 
     /** Refit, but never after teardown — deferred fits outlive the modal. */
     function refit() {
@@ -128,6 +158,12 @@
       onTime(at, total);
     }
 
+    function announce(next) {
+      if (next === announced) return;
+      announced = next;
+      onPlayState(next);
+    }
+
     function track() {
       if (!playing) return;
       at = Math.min(total, replayer.getCurrentTime());
@@ -135,34 +171,68 @@
       raf = root.requestAnimationFrame(track);
     }
 
-    function stop() {
+    /**
+     * Stop the engine. `quiet` withholds the play-state notification, for the
+     * one case where the transport is about to be started again in the same
+     * turn and the caller would otherwise flicker its play glyph.
+     */
+    function halt(quiet) {
+      // Any stop settles the drag: a viewer who hits pause mid-drag meant it,
+      // and releasing the slider must not undo that.
+      heldForDrag = false;
       if (!playing) return;
       playing = false;
       if (raf) root.cancelAnimationFrame(raf);
       raf = null;
       replayer.pause();
-      onPlayState(false);
+      if (!quiet) announce(false);
     }
 
-    function seek(ms) {
-      stop();
-      at = Math.max(0, Math.min(total, ms));
-      replayer.pause(at);
+    function stop() {
+      halt(false);
+    }
+
+    /** Run from wherever `at` is. Never restarts; togglePlay owns that. */
+    function start() {
+      if (playing) return;
+      playing = true;
+      announce(true);
+      replayer.play(at);
+      raf = root.requestAnimationFrame(track);
+    }
+
+    /**
+     * Move to `ms`, for the stated reason. The engine is always stopped first —
+     * rrweb is told a position by being (re)started at it, never mid-run — and
+     * then either left paused there or started again from it, which is the
+     * resume policy's call rather than the caller's.
+     */
+    function seek(ms, reason) {
+      const wasPlaying = playing || heldForDrag;
+      const target = Math.max(0, Math.min(total, ms));
+      const resume = resumesAfterSeek({ playing: wasPlaying, reason, ms: target, total });
+      halt(resume);
+      at = target;
+      if (resume) {
+        start();
+      } else {
+        replayer.pause(at);
+        heldForDrag = reason === SEEK.DRAG && wasPlaying;
+      }
       emit();
     }
 
     function togglePlay() {
       if (playing) return stop();
+      heldForDrag = false;
       if (at >= total) at = 0;
-      playing = true;
-      onPlayState(true);
-      replayer.play(at);
-      raf = root.requestAnimationFrame(track);
+      start();
     }
 
+    /** Stepping is "hold still and look at this one", so it always pauses. */
     function stepTo(dir) {
       const next = dir > 0 ? stops.find((ms) => ms > at + 1) : [...stops].reverse().find((ms) => ms < at - 1);
-      seek(next == null ? (dir > 0 ? total : 0) : next);
+      seek(next == null ? (dir > 0 ? total : 0) : next, SEEK.STEP);
     }
 
     replayer.on("resize", () => {
@@ -181,6 +251,7 @@
     pin();
     fit();
     seek(0);
+    if (shouldAutoplay(options.autoplay, reducedMotion())) start();
 
     return {
       totalTime: total,
@@ -208,7 +279,8 @@
 
   // Same dual export as store/css-assets.js: a global for the browser, CommonJS
   // so tooling can load the file. There is nothing here to unit test — it is
-  // rrweb and the DOM all the way down.
+  // rrweb and the DOM all the way down; the transport's one real decision lives
+  // in replay-timeline.js, where it is pure and covered.
   // viewportOf and DEFAULT_VIEWPORT stay internal: pinning is create()'s own
   // business, and nothing outside this file has ever needed to ask.
   const api = { available, create };

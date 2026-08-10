@@ -11,7 +11,10 @@ const assert = require("node:assert/strict");
 
 const {
   MAX_SCALE,
+  SEEK,
   quantise,
+  resumesAfterSeek,
+  shouldAutoplay,
   turnOf,
   timeline,
   evenly,
@@ -160,4 +163,60 @@ test("the scale snaps to exactly 1:1 when it lands within a step of it", () => {
 test("upscaling is allowed but capped", () => {
   assert.ok(quantise(1.5) > 1);
   assert.ok(Math.abs(quantise(9) - MAX_SCALE) < 1e-9);
+});
+
+/* The resume policy. Seeking moves the position; the play state is supposed to
+ * survive it, which is the whole point of pulling this decision out of the
+ * rrweb-shaped code that cannot be tested. */
+
+const seeking = (extra) => Object.assign({ playing: true, ms: 1000, total: 10000 }, extra);
+
+test("a scrub, a chapter chip and a Home/End jump all keep playing", () => {
+  for (const reason of [SEEK.SCRUB, SEEK.CHAPTER, SEEK.JUMP]) {
+    assert.strictEqual(resumesAfterSeek(seeking({ reason })), true, `${reason} stopped playback`);
+  }
+});
+
+test("a seek made while paused never starts playback", () => {
+  for (const reason of Object.values(SEEK)) {
+    assert.strictEqual(resumesAfterSeek(seeking({ reason, playing: false })), false);
+  }
+});
+
+test("stepping pauses, because a step is a request to look at one board state", () => {
+  assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.STEP })), false);
+});
+
+test("a mid-drag seek holds playback rather than restarting it per input event", () => {
+  assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.DRAG })), false);
+});
+
+test("releasing the slider after a drag is the seek that resumes", () => {
+  // The drag has already paused the engine, so the caller passes the play state
+  // it latched, not the engine's current one.
+  assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.SCRUB, playing: true })), true);
+});
+
+test("seeking to the very end resumes nothing, and does not restart from zero", () => {
+  assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.JUMP, ms: 10000 })), false);
+  assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.SCRUB, ms: 99999 })), false);
+});
+
+test("seeking backwards out of a finished replay carries on playing from there", () => {
+  assert.strictEqual(resumesAfterSeek(seeking({ reason: SEEK.CHAPTER, ms: 9999 })), true);
+});
+
+test("an unnamed seek is treated as a scrub, not as a pause", () => {
+  assert.strictEqual(resumesAfterSeek(seeking({})), true);
+  assert.strictEqual(resumesAfterSeek(null), false, "no seek at all must not resume anything");
+});
+
+test("autoplay happens only when a surface asked for it", () => {
+  assert.strictEqual(shouldAutoplay(true, false), true);
+  assert.strictEqual(shouldAutoplay(false, false), false);
+  assert.strictEqual(shouldAutoplay(undefined, false), false);
+});
+
+test("prefers-reduced-motion overrides a surface that asked to autoplay", () => {
+  assert.strictEqual(shouldAutoplay(true, true), false);
 });
