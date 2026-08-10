@@ -209,7 +209,9 @@
   // Same dual export as store/css-assets.js: a global for the browser, CommonJS
   // so tooling can load the file. There is nothing here to unit test — it is
   // rrweb and the DOM all the way down.
-  const api = { available, viewportOf, create, DEFAULT_VIEWPORT };
+  // viewportOf and DEFAULT_VIEWPORT stay internal: pinning is create()'s own
+  // business, and nothing outside this file has ever needed to ask.
+  const api = { available, create };
 
   root.RAReplayCore = api;
 

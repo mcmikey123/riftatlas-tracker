@@ -66,6 +66,11 @@ test("a stream with neither markers nor snapshots has no board states", () => {
   assert.deepStrictEqual(timeline([mutation(10), mutation(20)]), []);
 });
 
+test("an empty stream has no board states rather than throwing", () => {
+  assert.deepStrictEqual(timeline([]), []);
+  assert.deepStrictEqual(timeline(undefined), []);
+});
+
 test("a turn marker is recognised by tag and by either payload spelling", () => {
   assert.strictEqual(turnOf(turnEvent(0, 3)), 3);
   assert.strictEqual(turnOf({ type: CUSTOM, data: { tag: "ra:turn", payload: { turn: 9 } } }), 9);

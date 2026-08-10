@@ -11,7 +11,11 @@
 (function (root) {
   "use strict";
 
-  const MAGIC = [0x52, 0x41, 0x52, 0x31]; // "RAR1"
+  // "RAR1". Exported and frozen because it is not only this file's: anything
+  // that recognises a share frame - the dashboard's post-upload verification,
+  // the shares list's re-check - must read the bytes from here rather than
+  // restate them, or the two copies drift and the check stops checking.
+  const MAGIC = Object.freeze([0x52, 0x41, 0x52, 0x31]);
   const FLAG_DEFLATE = 0x01;
   const KNOWN_FLAGS = FLAG_DEFLATE;
   const IV_BYTES = 12;
@@ -133,6 +137,7 @@
   const api = {
     ShareFormatError,
     ShareTruncatedError,
+    MAGIC,
     HEADER_BYTES,
     TAG_BYTES,
     generateKey,

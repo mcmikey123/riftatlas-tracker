@@ -6,6 +6,10 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const workerSource = fs.readFileSync(path.join(root, "share/worker/src/worker.js"), "utf8");
 const headersFile = fs.readFileSync(path.join(root, "share/worker/public/_headers"), "utf8");
+const wranglerExample = fs.readFileSync(
+  path.join(root, "share/worker/wrangler.toml.example"),
+  "utf8"
+);
 
 // The policy exists twice by necessity, in two different syntaxes: Cloudflare's asset
 // layer serves the viewer page without ever invoking the Worker, so a header set in
@@ -56,6 +60,17 @@ test("every json() response in the Worker carries the request, so CORS headers a
       `json(${args.replace(/\s+/g, " ").slice(0, 60)}…) must pass request as its third argument`
     );
   }
+});
+
+// The cap is declared twice by necessity: the Worker refuses an oversized PUT, and the
+// dashboard refuses before spending ~600 ms building a frame nobody will accept. If the
+// client's copy is the larger of the two, that early refusal stops firing and the user
+// gets an unexplained 413 after the whole build instead of a message naming the size.
+test("the upload cap agrees between the Worker's config and the client", () => {
+  const { MAX_UPLOAD_BYTES } = require("../share/share-ui-support.js");
+  const declared = wranglerExample.match(/^\s*MAX_UPLOAD_BYTES\s*=\s*"(\d+)"/m);
+  assert.ok(declared, "wrangler.toml.example must declare MAX_UPLOAD_BYTES");
+  assert.strictEqual(MAX_UPLOAD_BYTES, Number(declared[1]));
 });
 
 test("the object id length agrees between the Worker and the link parser", () => {

@@ -20,7 +20,10 @@ const {
 
 const { buildSharePayload, generateKey } = require("../share/payload.js");
 
-test("the cap matches the one the worker config declares", () => {
+// That this is the same number the Worker is configured with is asserted against
+// wrangler.toml.example in test/worker-headers.test.js; here it only anchors the
+// figure the design settled on, 3.4x the largest replay measured.
+test("the cap is the 12 MB the design settled on", () => {
   assert.strictEqual(MAX_UPLOAD_BYTES, 12582912);
 });
 

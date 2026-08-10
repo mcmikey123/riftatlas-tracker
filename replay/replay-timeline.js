@@ -56,6 +56,10 @@
    * recorder takes on each turn change.
    */
   function timeline(events) {
+    // No events, no board states. Both callers happen to guard on a minimum
+    // length before they get here, but this is an exported pure helper and
+    // reading events[0] out of an empty list is not its caller's problem.
+    if (!events || !events.length) return [];
     const t0 = events[0].timestamp || 0;
     const marked = [];
     for (const e of events) {

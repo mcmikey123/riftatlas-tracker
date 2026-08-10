@@ -24,11 +24,15 @@
   const SHARE_TTL_DAYS = 7;
   const SHARE_TTL_MS = SHARE_TTL_DAYS * 86400000;
 
-  // "RAR1" - the first four bytes of a share frame, per share/payload.js. The
-  // post-upload check re-reads them from the endpoint under normal browser rules
-  // before any link is shown, which is what catches a host that answers a curl
-  // probe correctly and serves a browser an HTML interstitial instead.
-  const MAGIC = [0x52, 0x41, 0x52, 0x31];
+  // The first four bytes of a share frame, taken from share/payload.js rather
+  // than restated - a second copy of a magic number is how a format check
+  // silently stops checking the format. dashboard.html loads payload.js first,
+  // which is what puts RAShare on the global; under node the require is used.
+  //
+  // The post-upload check re-reads these from the endpoint under normal browser
+  // rules before any link is shown, which is what catches a host that answers a
+  // curl probe correctly and serves a browser an HTML interstitial instead.
+  const MAGIC = (root.RAShare || require("./payload.js")).MAGIC;
 
   // One message per remedy. A single "sharing failed" would be useless: a
   // rejected token, an oversized replay and a rate limit need three different
