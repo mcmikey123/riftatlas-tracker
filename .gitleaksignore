@@ -1,0 +1,18 @@
+# Findings gitleaks is right to flag on entropy, but which are intentionally public.
+# Every entry needs a reason. If you cannot write one, it is not a false positive.
+
+# share/config.js SHARE_TOKEN — deliberately public, not a credential.
+#
+# This is an 18-byte random value generated for this project. It is not a Cloudflare
+# credential and Cloudflare has never seen it. It is compared against the share Worker's
+# UPLOAD_TOKEN to gate PUT /u, and gates nothing else: reads need no token, there is no
+# delete route, and no code path reaches any other resource.
+#
+# It ships inside a distributed browser extension, so it is readable by anyone who installs
+# it. That is by design and is stated in the source. Treating it as a secret would be
+# cargo-culting -- the real controls are the 12 MB size cap, the per-IP rate limit, the
+# 7-day object TTL and the Workers Free daily request ceiling. See
+# docs/adr/0001-remain-on-the-workers-free-plan.md.
+#
+# Blast radius if abused: 12 MB uploads to one R2 bucket, 20/min per IP, deleted after 7 days.
+share/config.js:generic-api-key:16
