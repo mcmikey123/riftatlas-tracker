@@ -280,23 +280,27 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
    shorter than the label, and a control that resizes as it answers you drags
    the whole row around with it. */
 .vr-moment { margin-left: auto; white-space: nowrap; }
-/* Where the disclosure and the progress for a first share are shown, inside the
-   modal rather than in the row it covers. Same box as .share-box, because it is
-   the same thing being said in a different place. */
-.vr-share {
-  flex: 0 0 auto; margin: 0 0 8px; padding: 10px 12px; border-radius: 8px;
-  background: #0b1424; border: 1px solid var(--border);
-}
+/* Where the disclosure, the progress and the link for a share are shown inside
+   the modal rather than in the row it covers. It IS .share-box - the box itself
+   is drawn by the shared rule under "replay sharing" below, and all that is left
+   here is where it sits in the modal's column. Showing or hiding it changes the
+   stage's height, which is why replay-html.js watches the stage for resizes. */
+.vr-share { flex: 0 0 auto; margin: 0 0 8px; }
 .vr-share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* --- replay sharing --- */
 /* The disclosure leads and stays visible in every state, including once the
    link exists: what a share exposes and the fact that it cannot be unshared
-   matter most at the moment someone is about to paste the link somewhere. */
-.share-box {
-  margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+   matter most at the moment someone is about to paste the link somewhere.
+
+   One box, two places: the panel under a match row and the modal's .vr-share,
+   which says the same things over the replay. Only the margins differ, so only
+   the margins are set apart. */
+.share-box, .vr-share {
+  padding: 10px 12px; border-radius: 8px;
   background: #0b1424; border: 1px solid var(--border);
 }
+.share-box { margin-top: 8px; }
 .share-lead { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .share-caveats { margin: 0 0 10px; font-size: 11.5px; color: var(--ink-3); max-width: 62ch; }
 .share-progress { margin: 0; font-size: 12px; color: var(--accent); }

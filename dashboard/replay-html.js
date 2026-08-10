@@ -103,6 +103,11 @@
     const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, chapterEls } = handles;
 
     function paint(at, total) {
+      // The range is set on every paint, not once after create(): create() fires
+      // onTime during the call, before anything here has been told how long the
+      // recording is, and a slider still carrying the markup's default would put
+      // that first position at the wrong place on the track.
+      slider.max = String(Math.round(total));
       slider.value = String(Math.round(at));
       timeEl.textContent = `${fmtClock(at)} / ${fmtClock(total)}`;
       let active = -1;
@@ -127,7 +132,26 @@
     if (!playback) return null;
 
     const total = playback.totalTime;
-    slider.max = String(total);
+
+    /**
+     * The moment panel is a band in the same column as the stage, so opening it
+     * takes 110-130px off the board's box without the window ever resizing -
+     * and the fit is height-bound in the modal, so the board is left clipped and
+     * off-centre for the whole consent → progress → link sequence, then
+     * letterboxed the other way once the panel closes again.
+     *
+     * Observed rather than refitted at each of the panel's states: the panel
+     * changes content in six places, the two easiest to forget are the failure
+     * paths, and anything else that ever changes the stage's box - a banner that
+     * wraps, a chip row that reflows - is covered by the same listener. It costs
+     * one observer, torn down below. The callback only writes a transform on a
+     * child, which changes no layout, so it cannot feed itself.
+     */
+    let stageResize = null;
+    if (typeof root.ResizeObserver === "function") {
+      stageResize = new root.ResizeObserver(() => playback.refit());
+      stageResize.observe(handles.stage);
+    }
 
     // Fullscreen goes on the modal shell, not the stage, so the transport, the
     // chapter chips and the truncation banner come along with the board. When
@@ -268,6 +292,7 @@
       stop: playback.pause,
       destroy() {
         playback.pause();
+        if (stageResize) stageResize.disconnect();
         if (canFullscreen) {
           fullBtn.removeEventListener("click", toggleFullscreen);
           document.removeEventListener("fullscreenchange", onFullscreenChange);
