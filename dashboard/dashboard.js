@@ -593,6 +593,9 @@
   const shareState = new Map();
   const shareOpen = new Set();
   let shareBusy = null; // matchId of the share currently running, or null
+  // The promise that share settles with, so a second caller asking for the same
+  // match waits on the share already running instead of being told nothing.
+  let shareRunning = null;
 
   const SHARE_PHASES = {
     preparing: "Reading the replay…",
@@ -932,23 +935,31 @@
   }
 
   /* Resolves with what runShare produced, or null if nothing was uploaded -
-   * refused, already busy, or failed. Never rejects: every failure has already
-   * been turned into a message in the panel by the time this settles, and a
-   * second caller re-reporting it would say the same thing twice. The replay
-   * modal awaits it; the row's own button ignores it. */
+   * refused or failed. Never rejects: every failure has already been turned into
+   * a message in the panel by the time this settles, and a second caller
+   * re-reporting it would say the same thing twice. The replay modal awaits it;
+   * the row's own button ignores it.
+   *
+   * Asking for a share of THIS match while that same share is in flight hands
+   * back the promise it is already running on, rather than a null the caller
+   * would read as a failure: the modal's panel would paint "could not be
+   * prepared" over an upload that was seconds from succeeding. That is reachable
+   * by starting a share from the row's panel and then opening the modal. */
   function beginShare(matchId) {
     // Every message this raises is shown inside the panel, so the panel has to
     // be open for any of them to be read. It always is - the button that gets
     // here lives in it - but nothing else guarantees that.
     shareOpen.add(matchId);
     if (shareBusy) {
-      if (shareBusy !== matchId) {
-        setShare(matchId, {
-          phase: "idle",
-          error: "Another replay is being shared right now. Wait for that one to finish.",
-          retry: true,
-        });
-      }
+      // The `||` is for the one path where shareBusy is set and the promise is
+      // not: a throw between the two assignments below. Unreachable today, and a
+      // caller crashing on `null.then` is not the way to find out otherwise.
+      if (shareBusy === matchId) return shareRunning || Promise.resolve(null);
+      setShare(matchId, {
+        phase: "idle",
+        error: "Another replay is being shared right now. Wait for that one to finish.",
+        retry: true,
+      });
       return Promise.resolve(null);
     }
     const endpoint = shareEndpoint;
@@ -959,7 +970,7 @@
     }
     shareBusy = matchId;
     setShare(matchId, { phase: "preparing", link: null, error: null, retry: false });
-    return runShare(matchId, endpoint)
+    shareRunning = runShare(matchId, endpoint)
       .then(
         (made) => {
           setShare(matchId, {
@@ -981,7 +992,9 @@
       // match until the page is reloaded.
       .finally(() => {
         shareBusy = null;
+        shareRunning = null;
       });
+    return shareRunning;
   }
 
   /* What to show for a failed share. Three sources, and only the middle one may
@@ -1001,21 +1014,17 @@
     return { error: SHARE.MESSAGES.unprepared, retry: false };
   }
 
-  /* The field is selected either way, so a blocked clipboard still leaves the
-   * link ready for a manual copy rather than leaving the user with nothing.
-   * The button says what happened and then goes back to whatever it said.
-   *
-   * share/clipboard.js rather than a local copy: the standalone viewer hands
+  /* share/clipboard.js rather than a local copy: the standalone viewer hands
    * over links from a button too, and the two surfaces have drifted on smaller
-   * things than this. */
-  function copyLink(link, field, button) {
-    window.RAClipboard.copyToButton(link, button, { field });
-  }
-
+   * things than this. Handing it the field selects it either way, so a blocked
+   * clipboard leaves the link ready for a manual copy rather than leaving the
+   * user with nothing. */
   function copyShareLink(matchId, button) {
     const s = shareState.get(matchId);
     if (!s || !s.link) return;
-    copyLink(s.link, document.querySelector(`[data-sharelink="${CSS.escape(matchId)}"]`), button);
+    window.RAClipboard.copyToButton(s.link, button, {
+      field: document.querySelector(`[data-sharelink="${CSS.escape(matchId)}"]`),
+    });
   }
 
   // ---- share a link to this moment --------------------------------------
@@ -1056,9 +1065,16 @@
     )}</p>`;
   }
 
+  /* A failed read is an empty list: there is nothing to reuse that we can see,
+   * and an upload is the right answer to that. lastError is consumed the way
+   * rememberShare consumes it - left unchecked, chrome logs a warning about an
+   * error this already handles. */
   function readStoredShares() {
     return new Promise((resolve) =>
-      chrome.storage.local.get({ shares: [] }, (data) => resolve((data && data.shares) || []))
+      chrome.storage.local.get({ shares: [] }, (data) => {
+        void chrome.runtime.lastError;
+        resolve((data && data.shares) || []);
+      })
     );
   }
 
@@ -1492,11 +1508,9 @@
     if (listCopyId) {
       const record = shares.find((r) => r.objectId === listCopyId);
       if (record) {
-        copyLink(
-          shareLinkOf(record),
-          document.querySelector(`[data-sharelistlink="${CSS.escape(listCopyId)}"]`),
-          e.target
-        );
+        window.RAClipboard.copyToButton(shareLinkOf(record), e.target, {
+          field: document.querySelector(`[data-sharelistlink="${CSS.escape(listCopyId)}"]`),
+        });
       }
       return;
     }
