@@ -314,6 +314,17 @@
     // Fit once more after layout settles; the first fit runs inside create(),
     // before the chapter row has necessarily taken its final height.
     root.requestAnimationFrame(() => playback.refit());
+
+    /* Anything appearing above the player steals height from the stage, and the
+     * board keeps whatever scale it was fitted at — so it sits clipped until the
+     * window happens to be resized. The card-art notice does exactly that, about
+     * two seconds in. Same guard as the extension's modal: the callback writes only
+     * a transform on a child, which changes no layout, so it cannot feed itself.
+     * Nothing disconnects it because this page never tears the player down. */
+    if (typeof root.ResizeObserver === "function") {
+      new root.ResizeObserver(() => playback.refit()).observe(ui.stage);
+    }
+
     watchCardArt();
   }
 
