@@ -651,17 +651,36 @@
     return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
   };
 
+  /* The read-only link field and its Copy button. Both the panel under a match
+   * and the shares list render one, and as two copies they drifted - only the
+   * list's carried the field's accessible name, leaving the panel's input
+   * announced as nothing but "edit text". One builder, so the next change
+   * reaches both.
+   *
+   * `field` and `copy` name the data attributes, because each caller keys its
+   * rows differently: the panel by match id, the list by object id, since a
+   * match can have been shared more than once. That is all that still differs. */
+  function shareLinkRowHtml(link, id, { label, field, copy, copyText }) {
+    return `<div class="share-link-row">
+          <input class="share-link" type="text" readonly spellcheck="false"
+                 aria-label="Share link for ${esc(label)}"
+                 data-${field}="${esc(id)}" value="${esc(link)}" />
+          <button class="rp-btn" data-${copy}="${esc(id)}">${esc(copyText)}</button>
+        </div>`;
+  }
+
   function shareBoxInner(matchId) {
     const s = shareState.get(matchId) || {};
     let body;
     if (s.link) {
       const expires = new Date(s.createdAt + SHARE.SHARE_TTL_MS);
       body = `
-        <div class="share-link-row">
-          <input class="share-link" type="text" readonly spellcheck="false"
-                 data-sharelink="${esc(matchId)}" value="${esc(s.link)}" />
-          <button class="rp-btn" data-sharecopy="${esc(matchId)}">Copy link</button>
-        </div>
+        ${shareLinkRowHtml(s.link, matchId, {
+          label: "this match",
+          field: "sharelink",
+          copy: "sharecopy",
+          copyText: "Copy link",
+        })}
         <p class="share-note">Uploaded and verified. Expires ${esc(expires.toLocaleDateString())}.</p>`;
     } else if (s.phase && s.phase !== "idle") {
       body = `<p class="share-progress">${esc(SHARE_PHASES[s.phase] || "Working…")}</p>`;
@@ -680,10 +699,12 @@
 
   /** Repaint one match's panel in place. A collapsed row simply has none. */
   function paintShare(matchId) {
-    shareOpen.add(matchId);
     const box = document.querySelector(`[data-sharebox="${CSS.escape(matchId)}"]`);
     if (!box) return;
-    box.hidden = false;
+    // Whether the panel is open is the toggle's business and beginShare's, not
+    // a repaint's: a paint that forces it open means setShare can never update
+    // a collapsed panel without reopening it.
+    box.hidden = !shareOpen.has(matchId);
     box.innerHTML = shareBoxInner(matchId);
   }
 
@@ -780,8 +801,10 @@
     if (!SHARE.hasShareMagic(head.bytes)) throw new ShareUiError(SHARE.MESSAGES.unverified, true);
   }
 
+  /* Enters already painted as "preparing" by beginShare, which is the caller
+   * that owns the busy flag; painting it a second time here would run the whole
+   * panel through innerHTML twice for one state. */
   async function runShare(matchId, endpoint) {
-    setShare(matchId, { phase: "preparing", link: null, error: null });
     await paintYield();
 
     const reply = await readReplay(matchId);
@@ -872,6 +895,10 @@
   }
 
   function beginShare(matchId) {
+    // Every message this raises is shown inside the panel, so the panel has to
+    // be open for any of them to be read. It always is - the button that gets
+    // here lives in it - but nothing else guarantees that.
+    shareOpen.add(matchId);
     if (shareBusy) {
       if (shareBusy !== matchId) {
         setShare(matchId, {
@@ -889,7 +916,7 @@
       return;
     }
     shareBusy = matchId;
-    setShare(matchId, { phase: "preparing", error: null, retry: false });
+    setShare(matchId, { phase: "preparing", link: null, error: null, retry: false });
     runShare(matchId, endpoint)
       .then(
         ({ link, createdAt }) => setShare(matchId, { phase: "done", link, createdAt, error: null }),
@@ -1031,12 +1058,12 @@
             : esc(SHARE.expiryText(record, now))
         }</td>
         <td class="sh-link-cell">
-          <div class="share-link-row">
-            <input class="share-link" type="text" readonly spellcheck="false"
-                   aria-label="Share link for ${esc(label)}"
-                   data-sharelistlink="${oid}" value="${esc(shareLinkOf(record))}" />
-            <button class="rp-btn" data-sharelistcopy="${oid}">Copy</button>
-          </div>
+          ${shareLinkRowHtml(shareLinkOf(record), record.objectId, {
+            label,
+            field: "sharelistlink",
+            copy: "sharelistcopy",
+            copyText: "Copy",
+          })}
         </td>
         <td class="sh-actions">
           <button class="rp-btn" data-sharerecheck="${oid}" ${
@@ -1081,6 +1108,11 @@
     recheckState.set(objectId, { busy: true });
     paintRecheck(objectId);
     const settle = (outcome) => {
+      // The row can go while the endpoint is answering - cleared from the list,
+      // or pruned by a write. refreshShares() drops answers for rows it no
+      // longer lists, so an answer stored after that would be an entry nothing
+      // paints and nothing removes.
+      if (!shares.some((r) => r.objectId === objectId)) return;
       recheckState.set(objectId, SHARE.describeRecheck(outcome));
       paintRecheck(objectId);
     };
