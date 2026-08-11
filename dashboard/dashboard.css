@@ -958,3 +958,16 @@ input[type="number"]:focus { outline: none; border-color: var(--accent); }
   color: var(--ink-2); font: inherit; text-align: left; cursor: pointer;
 }
 .vd-open:hover { background: transparent; color: var(--ink); text-decoration: underline; }
+
+/* The Replays row's share toggle, beside the label that opens the replay. A
+   quiet control: sharing is a deliberate, one-way act and this is a
+   diagnostics table, so it should not compete with the numbers next to it. */
+.vd-share {
+  background: transparent; border: 0; padding: 0 0 0 10px;
+  color: var(--accent); font: inherit; font-size: 12px; cursor: pointer;
+}
+.vd-share:hover { background: transparent; color: var(--ink); text-decoration: underline; }
+/* Full width beneath its row, so opening a panel cannot drag the numeric
+   columns out of line with the rows above and below it. */
+.vd-share-row > td { background: var(--surface-sunk); padding: 0 14px 12px; }
+.vd-share-row .share-box { margin-top: 0; }

@@ -553,11 +553,17 @@
 
   function visualRow(record) {
     const label = esc(visualLabel(record));
+    const id = esc(record.matchId);
+    const open = shareOpen.has(record.matchId);
     return `<tr>
         <td>${
           playable(record)
-            ? `<button class="vd-open" data-visual="${esc(record.matchId)}"
-                       title="Play this replay">${label}</button>`
+            ? `<button class="vd-open" data-visual="${id}"
+                       title="Play this replay">${label}</button>
+               <button class="vd-share" data-share="${id}"
+                       title="Turn this replay into an encrypted link anyone can open">${
+                 open ? "hide" : "share a link"
+               }</button>`
             : label
         }</td>
         <td>${fmtBytes(record.compressedBytes)}</td>
@@ -567,7 +573,17 @@
         <td>${fmtMs(statOf(record, "captureP50Ms"))}</td>
         <td>${fmtMs(statOf(record, "captureMaxMs"))}</td>
         ${visualStateCell(record)}
-      </tr>`;
+      </tr>${
+        // The share panel is one component with one state per match id, so the
+        // copy here and the copy in the expanded match row show the same phase.
+        // It sits in its own full-width row rather than in the first cell,
+        // which would drag the numeric columns out of line.
+        open
+          ? `<tr class="vd-share-row"><td colspan="8">
+               <div class="share-box" data-sharebox="${id}">${shareBoxInner(record.matchId)}</div>
+             </td></tr>`
+          : ""
+      }`;
   }
 
   function renderVisualPanel() {
@@ -776,8 +792,16 @@
 
   /** Repaint one match's panel in place. A collapsed row simply has none. */
   function paintShare(matchId) {
-    const box = document.querySelector(`[data-sharebox="${CSS.escape(matchId)}"]`);
-    if (!box) return;
+    /* querySelectorAll, not querySelector: the same match can have a panel in
+     * the expanded row AND in the Replays list at the same time, and updating
+     * only the first in document order would leave the other frozen on a phase
+     * it had already left. */
+    const boxes = document.querySelectorAll(`[data-sharebox="${CSS.escape(matchId)}"]`);
+    if (!boxes.length) return;
+    for (const box of boxes) paintOneShareBox(box, matchId);
+  }
+
+  function paintOneShareBox(box, matchId) {
     // Whether the panel is open is the toggle's business and beginShare's, not
     // a repaint's: a paint that forces it open means setShare can never update
     // a collapsed panel without reopening it.
@@ -787,8 +811,13 @@
     // click handler to keep the two in step, because a share could only ever
     // start from inside an already-open panel; a share started from the replay
     // modal opens this one from somewhere the toggle cannot see.
-    const toggle = document.querySelector(`[data-share="${CSS.escape(matchId)}"]`);
-    if (toggle) toggle.textContent = shareOpen.has(matchId) ? "hide" : "share a link";
+    for (const toggle of document.querySelectorAll(`[data-share="${CSS.escape(matchId)}"]`)) {
+      // Only the Replays list labels its toggle; the expanded row's button says
+      // "Share a link" and stays put.
+      if (toggle.classList.contains("vd-share")) {
+        toggle.textContent = shareOpen.has(matchId) ? "hide" : "share a link";
+      }
+    }
   }
 
   function setShare(matchId, patch) {
@@ -1638,17 +1667,19 @@
     // Sharing. The panel is toggled in place rather than through render(), so
     // opening it disturbs nothing else in the row - and a share already running
     // cannot be closed out from under itself.
-    const shareId = e.target?.dataset?.share;
-    if (shareId) {
+    const shareBtn = e.target?.closest?.("[data-share]");
+    if (shareBtn) {
+      const shareId = shareBtn.dataset.share;
+      // A share already running must not be closed out from under itself.
       if (shareBusy === shareId) return;
-      const box = document.querySelector(`[data-sharebox="${CSS.escape(shareId)}"]`);
-      if (!box) return;
       if (shareOpen.has(shareId)) shareOpen.delete(shareId);
       else shareOpen.add(shareId);
-      const open = shareOpen.has(shareId);
-      box.hidden = !open;
-      box.innerHTML = shareBoxInner(shareId);
-      e.target.textContent = open ? "hide" : "share a link";
+      /* Re-render rather than poking one box. The panel can be asked for from
+       * the expanded match row, from that row's ⋯ menu while it is collapsed,
+       * or from the Replays list - and only a render puts it where it was
+       * asked for. Nothing in flight is lost: shareState lives outside the DOM
+       * precisely so a rebuild cannot drop it. */
+      render();
       return;
     }
     const shareGoId = e.target?.dataset?.sharego;
