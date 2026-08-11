@@ -22,6 +22,8 @@ const {
   expiryText,
   readShareList,
   reusableShare,
+  reuseNotice,
+  planShare,
   describeRecheck
 } = require("../share/share-ui-support.js");
 
@@ -395,6 +397,65 @@ test("an unreadable shares key or a missing match id reuses nothing", () => {
   for (const bad of [undefined, null, ""]) {
     assert.strictEqual(reusableShare([record()], bad, CREATED), null, String(bad));
   }
+});
+
+/* ---- reuse, unless forced ----------------------------------------------
+ *
+ * Two buttons produce a share link - the replay modal's "copy a link to this
+ * moment" and the match row's "Create share link" - and both take this
+ * decision. It is a decision and not a lookup because of the escape hatch: a
+ * forced upload must not be talked out of itself by a share that happens to be
+ * live.
+ */
+
+test("a live share is reused, and its record comes back to rebuild the link from", () => {
+  const plan = planShare([record()], "m1", CREATED + HOUR, { forceNew: false });
+  assert.strictEqual(plan.action, "reuse");
+  assert.strictEqual(plan.record.objectId, "A".repeat(22));
+});
+
+test("nothing live means an upload, and no record to pretend otherwise with", () => {
+  assert.deepStrictEqual(planShare([], "m1", CREATED, { forceNew: false }), {
+    action: "upload",
+    record: null
+  });
+  // Expired, and one an hour short of the reuse floor: both are uploads.
+  const stale = record({ createdAt: CREATED });
+  assert.strictEqual(planShare([stale], "m1", CREATED + SHARE_TTL_MS).action, "upload");
+  assert.strictEqual(planShare([stale], "m1", CREATED + SHARE_TTL_MS - HOUR).action, "upload");
+});
+
+/* The escape hatch. Someone about to publish a link wants the full seven days,
+ * not the two left on a share made five days ago, and there is no other way to
+ * get them: a share cannot be extended, re-uploaded in place, or revoked. */
+test("forcing uploads even when a share with days left exists", () => {
+  const plan = planShare([record()], "m1", CREATED + HOUR, { forceNew: true });
+  assert.deepStrictEqual(plan, { action: "upload", record: null });
+});
+
+// Skipping the lookup rather than overriding its answer is the point: a share
+// landing between the press and the read must not turn a forced upload into a
+// reuse of the very share the presser was refusing.
+test("forcing ignores a share that landed a moment ago", () => {
+  const justLanded = [record({ objectId: "C".repeat(22), createdAt: CREATED + HOUR })];
+  assert.strictEqual(planShare(justLanded, "m1", CREATED + HOUR, { forceNew: true }).action, "upload");
+});
+
+test("no options at all reads as not forced", () => {
+  assert.strictEqual(planShare([record()], "m1", CREATED + HOUR).action, "reuse");
+  assert.strictEqual(planShare([record()], "m1", CREATED + HOUR, {}).action, "reuse");
+});
+
+/* The sentence a reused link is handed over with. It is asserted rather than
+ * left to the two panels because it carries the one fact the presser cannot
+ * otherwise learn: they got what is left of a week, not a fresh one. */
+test("a reused link says it is reused and when it dies", () => {
+  const now = CREATED + 5 * 86400000;
+  const text = reuseNotice(record(), now);
+  assert.match(text, /Reusing the share already made for this match/);
+  assert.match(text, /no second upload/);
+  assert.ok(text.includes(expiryText(record(), now)), "the remaining life must be spelled out");
+  assert.match(text, /in 2 days/);
 });
 
 // The outcomes need different reactions from the reader: the link works, the

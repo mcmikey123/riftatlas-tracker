@@ -574,6 +574,12 @@
    * 7-day lifecycle rule removes it. So the Share button opens a panel that says
    * all of that first, and the upload is a second, deliberate click.
    *
+   * That second click does not always upload. A live share for this match is
+   * handed back instead - see `startRowShare` - because a second upload leaves a
+   * second undeletable copy of the same replay on the endpoint for the same
+   * seven days. The panel says when a link is reused and offers a forced upload
+   * for someone who wants a full week rather than what is left of one.
+   *
    * Building a share blocks the main thread for ~600 ms on the worst replay
    * measured - JSON.stringify 224 ms plus deflate 273 ms, with crypto at 3 ms -
    * and peaks near 380 MB. Every phase therefore paints before it begins, and
@@ -690,7 +696,15 @@
           copy: "sharecopy",
           copyText: "Copy link",
         })}
-        <p class="share-note">Uploaded and verified. Expires ${esc(expires.toLocaleDateString())}.</p>`;
+        ${
+          s.reuse
+            ? `<p class="share-note">${esc(SHARE.reuseNotice(s.reuse, Date.now()))}</p>
+        <button class="rp-btn share-again" data-sharenew="${esc(matchId)}"
+                title="Upload this replay again for a full ${SHARE.SHARE_TTL_DAYS} days. The copy already on the endpoint stays there until it expires.">Create a new link anyway</button>`
+            : `<p class="share-note">Uploaded and verified. Expires ${esc(
+                expires.toLocaleDateString()
+              )}.</p>`
+        }`;
     } else if (s.phase && s.phase !== "idle") {
       body = `<p class="share-progress">${esc(SHARE_PHASES[s.phase] || "Working…")}</p>`;
     } else {
@@ -969,7 +983,11 @@
       return Promise.resolve(null);
     }
     shareBusy = matchId;
-    setShare(matchId, { phase: "preparing", link: null, error: null, retry: false });
+    // `reuse` goes with the link it described: what follows is an upload, and a
+    // stale reuse notice under a freshly uploaded link would say the opposite of
+    // what happened. Cleared here rather than on completion because every share
+    // passes through this phase, including a failing one.
+    setShare(matchId, { phase: "preparing", link: null, reuse: null, error: null, retry: false });
     shareRunning = runShare(matchId, endpoint)
       .then(
         (made) => {
@@ -995,6 +1013,43 @@
         shareRunning = null;
       });
     return shareRunning;
+  }
+
+  /* The match row's "Create share link", and its "Create a new link anyway".
+   *
+   * The reuse decision lives here rather than inside `beginShare` because
+   * `beginShare` is also what the replay modal's moment path calls, and that
+   * path has already made the decision itself - it has a timestamp to splice
+   * into the link and a panel of its own to paint into, neither of which this
+   * side knows about. A check inside `beginShare` would run second, on a
+   * question already answered, and would have to be told to keep quiet for one
+   * of its two callers. One decision per button, taken by the button.
+   *
+   * The storage read happens on the click, not when the panel was opened, which
+   * is what makes this the check at the moment of upload: the panel can sit open
+   * for as long as it likes, and a share landing from the modal in the meantime
+   * is found here. `forceNew` is the one case that skips the lookup, because
+   * finding a share is exactly what the presser is refusing.
+   *
+   * Consent is not asked again: the disclosure is rendered above this button
+   * every time the panel is painted, so it is on screen for both the reuse and
+   * the forced upload. */
+  async function startRowShare(matchId, options) {
+    const plan = SHARE.planShare(await readStoredShares(), matchId, Date.now(), options);
+    if (plan.action === "reuse") {
+      // No upload and no record: a second record for the same object would be a
+      // duplicate row in the shares panel claiming to be a second share.
+      setShare(matchId, {
+        phase: "idle",
+        link: shareLinkOf(plan.record),
+        createdAt: plan.record.createdAt,
+        reuse: plan.record,
+        error: null,
+        retry: false,
+      });
+      return;
+    }
+    beginShare(matchId);
   }
 
   /* What to show for a failed share. Three sources, and only the middle one may
@@ -1116,21 +1171,12 @@
    * for the same object would be a duplicate row in the shares panel claiming to
    * be a second share.
    *
-   * What it has left is said out loud. A reused share carries whatever remains
-   * of its seven days, not seven fresh ones, and the sharer has no other way to
-   * learn that: they pressed a button and got a link, and the recipient is the
-   * one who finds out it died. `reusableShare` refuses anything with under a day
-   * on it, so this is never counting down in hours - but "in 2 days" and "in 6
-   * days" are different things to be handing someone, and only one of them is
-   * what a fresh share would have given. */
+   * What it has left is said out loud, in the wording the match row's own reuse
+   * uses - `SHARE.reuseNotice`, so the two buttons cannot drift into describing
+   * the same decision differently. */
   function offerReusedLink(panel, button, record, atSeconds) {
     const link = shareLinkOf(record, atSeconds);
-    const field = showMomentLink(
-      panel,
-      link,
-      `Reusing the share already made for this match — no second upload, and no second copy on ` +
-        `the endpoint. It expires ${SHARE.expiryText(record, Date.now())}.`
-    );
+    const field = showMomentLink(panel, link, SHARE.reuseNotice(record, Date.now()));
     window.RAClipboard.copyToButton(link, button, { field });
   }
 
@@ -1533,7 +1579,17 @@
     }
     const shareGoId = e.target?.dataset?.sharego;
     if (shareGoId) {
-      beginShare(shareGoId);
+      // Disabled synchronously: the shares read below is asynchronous, and the
+      // panel does not repaint until it comes back. Every outcome repaints from
+      // shareState, which is what puts the button back or replaces it.
+      e.target.disabled = true;
+      startRowShare(shareGoId, { forceNew: false });
+      return;
+    }
+    const shareNewId = e.target?.dataset?.sharenew;
+    if (shareNewId) {
+      e.target.disabled = true;
+      startRowShare(shareNewId, { forceNew: true });
       return;
     }
     const shareCopyId = e.target?.dataset?.sharecopy;

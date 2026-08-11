@@ -358,6 +358,58 @@
   }
 
   /**
+   * What to say when a link came out of an existing share rather than an upload.
+   *
+   * One sentence in one place because two buttons produce it - the replay
+   * modal's "copy a link to this moment" and the match row's "Create share
+   * link" - and a reader who presses both must not be told two different
+   * things about the same decision.
+   *
+   * What the share has left is said out loud. A reused share carries whatever
+   * remains of its seven days, not seven fresh ones, and the sharer has no
+   * other way to learn that: they pressed a button and got a link, and the
+   * recipient is the one who finds out it died. `reusableShare` refuses
+   * anything with under a day on it, so this is never counting down in hours -
+   * but "in 2 days" and "in 6 days" are different things to be handing
+   * someone, and only one of them is what a fresh share would have given.
+   */
+  function reuseNotice(record, now) {
+    return (
+      "Reusing the share already made for this match — no second upload, and no second copy " +
+      `on the endpoint. It expires ${expiryText(record, now)}.`
+    );
+  }
+
+  /**
+   * Whether pressing a share button should hand back a share that already
+   * exists or upload the replay again.
+   *
+   *   { action: "reuse", record }   rebuild the link from `record`
+   *   { action: "upload", record: null }   run the pipeline
+   *
+   * `options.forceNew` is the escape hatch behind "Create a new link anyway",
+   * and it is the whole reason this is a decision rather than a lookup. Reuse
+   * is right almost always - it costs a base64 decode instead of 600 ms of
+   * blocked main thread, a 3.5 MB PUT and a second undeletable object - but it
+   * hands over a link with whatever is left of the original seven days.
+   * Someone who wants the full week for a link they are about to publish has
+   * no way to get it otherwise: there is no revocation, no re-upload of an
+   * existing share, and no way to extend one.
+   *
+   * Forcing deliberately skips the lookup rather than overriding its answer, so
+   * a share landing a moment earlier cannot turn a forced upload into a reuse
+   * of the very share the presser was trying not to reuse.
+   *
+   * Pure over the raw stored array, a clock and the flag, so "reuse, unless
+   * forced" is decidable - and asserted - without a DOM or a click.
+   */
+  function planShare(raw, matchId, now, options) {
+    if (options && options.forceNew) return { action: "upload", record: null };
+    const record = reusableShare(raw, matchId, now);
+    return record ? { action: "reuse", record } : { action: "upload", record: null };
+  }
+
+  /**
    * What a re-check learned. Four outcomes, deliberately not two: "couldn't
    * reach the endpoint" is not "expired", and reporting it as expired would
    * tell someone their share was gone when it is still being served.
@@ -439,6 +491,8 @@
     expiryText,
     readShareList,
     reusableShare,
+    reuseNotice,
+    planShare,
     describeRecheck
   };
 

@@ -306,6 +306,11 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 .share-progress { margin: 0; font-size: 12px; color: var(--accent); }
 .share-error { margin: 0 0 8px; font-size: 12px; color: #f3c0c0; max-width: 62ch; }
 .share-note { margin: 6px 0 0; font-size: 11px; color: var(--ink-3); }
+/* "Create a new link anyway", under the note explaining that the link above was
+   reused. It sits below prose rather than beside the Copy button on purpose:
+   pressing it uploads 3.5 MB and leaves a second undeletable copy, so it is not
+   a control to hit while aiming for Copy. */
+.share-again { margin-top: 8px; }
 .share-link-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .share-link {
   flex: 1 1 280px; min-width: 0;
