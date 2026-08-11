@@ -20,7 +20,8 @@
     }
   ],
   "action": {
-    "default_title": "Rift Atlas Stats Tracker - open dashboard"
+    "default_title": "Rift Atlas Stats Tracker",
+    "default_popup": "popup/popup.html"
   },
   "background": {
     "service_worker": "background.js"

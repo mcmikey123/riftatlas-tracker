@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Rift Atlas Tracker</title>
+<link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+<header class="head">
+  <span class="mark"></span>
+  <span class="title">Rift Atlas Tracker</span>
+  <!-- Filled by popup.js: the dot's colour and the wording both come from the
+       visual replay setting, so there is no default state written here that
+       could be seen and believed for a frame before the read lands. -->
+  <span class="status" id="status" hidden><span class="status-dot" id="statusDot"></span><span id="statusText"></span></span>
+</header>
+
+<main class="body">
+  <!-- Everything state-dependent. Rendered as one string so the four states are
+       four branches of one function rather than a set of toggled elements. -->
+  <div id="state"></div>
+  <button class="open" id="open">Open dashboard</button>
+  <p class="foot" id="foot">Local to this browser.</p>
+</main>
+
+<script src="../dashboard/format.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>
