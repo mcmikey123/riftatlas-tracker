@@ -44,6 +44,25 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
+
+/* The `hidden` attribute has to beat every author display rule in this file.
+   A UA stylesheet's [hidden] { display: none } loses to any class selector
+   that sets display, so `.menu-list { display: flex }` quietly made every
+   header menu permanently open, and the same trap had already caught the
+   banners, the search field, the custom date range, the capture card and the
+   archive-mode nav hiding. One rule rather than a guard per component, because
+   the next component would forget too. */
+[hidden] { display: none !important; }
+
+/* Dark form controls. A native <select>'s dropdown, a date picker and a
+   scrollbar are painted by the platform, not by this stylesheet, so without
+   this they render light on a dark page - which is what a white option list
+   behind a dark control actually is. */
+:root { color-scheme: dark; }
+option {
+  background: var(--surface);
+  color: var(--ink);
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -194,6 +213,9 @@ button.danger:hover, .btn-danger:hover { background: rgba(224, 138, 138, 0.12); 
 }
 .filter > span { color: var(--ink-3); }
 .filter select {
+  /* Transparent so the control reads as one pill, but the popup is painted
+     from this background - hence color-scheme: dark above, which is what
+     keeps the option list dark rather than system-white. */
   background: transparent; border: 0; color: var(--ink); font-size: 13px;
   padding: 0; font-family: inherit;
 }

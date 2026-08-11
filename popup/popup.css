@@ -125,3 +125,9 @@ body {
 }
 .open:hover { background: #9ab8f8; }
 .foot { margin: 0; text-align: center; font-size: 11px; color: var(--ink-3); }
+
+/* Native controls are painted by the platform, not by this file. Without this
+   a scrollbar renders light on a dark popup. Kept in step with
+   dashboard/dashboard.css, which declares the same thing for the same reason. */
+:root { color-scheme: dark; }
+[hidden] { display: none !important; }

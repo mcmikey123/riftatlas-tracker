@@ -30,6 +30,12 @@ export const VIEWS = ["overview", "matches", "series", "replays", "shares", "set
 /* Hidden in archive mode rather than disabled - see the header comment. */
 const LIVE_ONLY = new Set(["replays", "shares"]);
 
+/* The views the filter row actually applies to. Replays is a list of
+   recordings, Shared links a register of uploads, and Settings is not data at
+   all - none of them narrow by champion, deck, mode or date, so a filter row
+   above them is a control that does nothing to what is underneath it. */
+const FILTERED = new Set(["overview", "matches", "series"]);
+
 // ---- view switching ----------------------------------------------------
 
 export function setView(view) {
@@ -58,15 +64,16 @@ function paintViews() {
     item.setAttribute("aria-current", on ? "page" : "false");
   }
 
-  // The filter row is shared, but two of its controls are not: Format belongs
-  // to Series, and the search field to the two table views.
+  // The filter row is shared by the three data views and hidden on the rest.
+  const filters = $(".filter-row");
+  if (filters) filters.hidden = !FILTERED.has(state.view);
+
+  // The search field belongs to the two table views only.
   const searchable = state.view === "matches" || state.view === "series";
   const wrap = $("[data-search-wrap]");
   const note = $("[data-filter-note]");
   if (wrap) wrap.hidden = !searchable;
   if (note) note.hidden = searchable;
-  const format = $(".filter-series");
-  if (format) format.hidden = state.view !== "series";
 }
 
 // ---- the nav -----------------------------------------------------------

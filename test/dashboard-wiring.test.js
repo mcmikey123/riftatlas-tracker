@@ -87,6 +87,31 @@ test("nothing in the dashboard loads a remote origin", () => {
   }
 });
 
+test("the hidden attribute beats every display rule in the stylesheet", () => {
+  /* The UA's [hidden] { display: none } loses to any author selector that sets
+   * display, and this sheet sets display on almost everything. That quietly
+   * made every header menu permanently open, and had already caught the
+   * banners, the search field, the custom date range, the capture card and the
+   * archive-mode nav hiding - all of which toggle `hidden` from JS.
+   *
+   * Asserted here rather than fixed per component, because the component after
+   * next would forget too. */
+  const css = fs.readFileSync(path.join(DIR, "dashboard.css"), "utf8");
+  assert.match(
+    css,
+    /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/,
+    "dashboard.css needs a global [hidden] { display: none !important } or JS-toggled elements stay visible"
+  );
+});
+
+test("native form controls are told the page is dark", () => {
+  // A <select>'s dropdown, a date picker and a scrollbar are painted by the
+  // platform. Without color-scheme they render light on a dark page, which is
+  // what a white option list behind a dark control is.
+  const css = fs.readFileSync(path.join(DIR, "dashboard.css"), "utf8");
+  assert.match(css, /color-scheme:\s*dark/, "dashboard.css must declare color-scheme: dark");
+});
+
 test("the filter row is static markup, not something a render rebuilds", () => {
   // content.js saves the live match every three seconds, which drives a
   // re-render. A search field inside re-rendered markup loses its caret and
