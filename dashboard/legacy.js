@@ -214,6 +214,19 @@
   const BUNDLE_VERSION = 2;
 
   /** Full portable bundle: matches with logs inline, optionally card codes. */
+  /* The match array with its series fields filled in. Reads the same settings
+   * the dashboard renders with, so an export describes the series the user was
+   * actually looking at. */
+  function withSeries(matches) {
+    const SERIES = window.RATrackerSeries;
+    if (!SERIES) return matches;
+    return SERIES.detect(matches, {
+      enabled: seriesSettings.seriesDetect !== false,
+      windowMinutes: seriesSettings.seriesWindowMinutes,
+      format: seriesSettings.seriesFormatDefault,
+    }).matches;
+  }
+
   function buildBundle(includeCards, cb) {
     if (archive) {
       return cb({
@@ -225,7 +238,13 @@
       });
     }
     chrome.storage.local.get(null, (data) => {
-      const matches = all.map((m) =>
+      /* Automatic series are worked out at render time and never written, so
+       * an export has to compute them too - otherwise a backup carries only
+       * the groupings made by hand and every detected series is lost on
+       * import. The manual ones are already on the records and pass through
+       * detect() untouched. */
+      const decorated = withSeries(all);
+      const matches = decorated.map((m) =>
         Object.assign({}, m, { log: ((data["log_" + m.id] || {}).log) || [] })
       );
       const deckCards = {};
@@ -1925,7 +1944,7 @@
 
   on("#exportCsv", "click", () => {
     buildBundle(false, (bundle) => {
-      const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","notes"];
+      const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","seriesId","seriesGame","seriesFormat","seriesSource","notes"];
       const extra = ["duration","verdict","myCommits","oppCommits","myConquers","oppConquers","myTrashed","oppTrashed","logLines"];
       const lines = [cols.concat(extra).join(",")].concat(
         bundle.matches.map((m) => {
@@ -2162,6 +2181,9 @@
   // The settings shape lives in storage.js now - a second copy here would drop
   // whichever keys it had not heard about on every write it made.
   const defaultSettings = STORE.defaultSettings;
+  // Mirrored so buildBundle can decorate an export without waiting on storage.
+  let seriesSettings = STORE.defaultSettings;
+  STORE.getSettings((s) => { seriesSettings = s; });
   const getSettings = STORE.getSettings;
   const setSettings = STORE.setSettings;
 
