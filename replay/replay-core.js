@@ -92,9 +92,11 @@
    *
    * `startAtMs` opens somewhere other than the beginning — a share link that
    * names a moment is the reason it exists. It is clamped to the recording, and
-   * it does not interact with `autoplay` at all: a replay opened at a moment
-   * plays or waits by exactly the same rule as one opened at the start, so a
-   * timestamped link cannot be a way around `prefers-reduced-motion`.
+   * it suppresses autoplay: someone sent that link to say "look at this", and
+   * playing on from it walks off the thing being pointed at. Passing `0` still
+   * counts as naming a moment; omit `startAtMs` entirely to mean "no moment
+   * given". It can only ever suppress autoplay, never grant it, so a timestamped
+   * link is still no way around `prefers-reduced-motion`.
    */
   function create(options) {
     const { quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay } = root.RAReplayTimeline;
@@ -313,7 +315,7 @@
     // Branched rather than "seek to the start, then maybe play": pausing at a
     // position and then playing from it makes rrweb build the full snapshot
     // twice, and each build is a visible flash of the board.
-    if (shouldAutoplay(options.autoplay, reducedMotion())) start();
+    if (shouldAutoplay(options.autoplay, reducedMotion(), options.startAtMs != null)) start();
     else replayer.pause(at);
     emit();
 

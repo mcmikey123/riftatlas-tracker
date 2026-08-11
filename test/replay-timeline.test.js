@@ -337,6 +337,27 @@ test("prefers-reduced-motion overrides a surface that asked to autoplay", () => 
   assert.strictEqual(shouldAutoplay(true, true), false);
 });
 
+test("a link naming a moment opens paused at it", () => {
+  // The sender is pointing at that moment; playing on walks off it before the
+  // recipient has looked. A plain link, with no moment named, still plays.
+  assert.strictEqual(shouldAutoplay(true, false, true), false);
+  assert.strictEqual(shouldAutoplay(true, false, false), true);
+});
+
+test("second zero is a named moment, not the absence of one", () => {
+  // The caller distinguishes these: `startAtMs: 0` is a link that says "the very
+  // start", `startAtMs: null` is a link that says nothing. Only the second plays.
+  assert.strictEqual(shouldAutoplay(true, false, 0 != null), false);
+  assert.strictEqual(shouldAutoplay(true, false, null != null), true);
+});
+
+test("naming a moment can only suppress autoplay, never grant it", () => {
+  // Otherwise a timestamped link would be a way around prefers-reduced-motion,
+  // or around a surface that never asked to autoplay at all.
+  assert.strictEqual(shouldAutoplay(false, false, false), false);
+  assert.strictEqual(shouldAutoplay(true, true, false), false);
+});
+
 /* ---- who owns a keypress ------------------------------------------------
  *
  * Both viewers hang their shortcuts off a document-level keydown, and both now

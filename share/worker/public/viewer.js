@@ -283,9 +283,10 @@
       meta,
       marks,
       autoplay: true,
-      // A link that names a moment opens at it. Autoplay is decided by the same
-      // rule either way, prefers-reduced-motion included - a timestamp says
-      // where to start, never whether to start moving.
+      // A plain link plays on open; a link that names a moment opens paused at it,
+      // because the sender is pointing at that moment and playing on walks off it.
+      // The core makes that call - see shouldAutoplay - so both surfaces cannot
+      // drift on it. null here means "no moment given"; 0 means second zero.
       startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
       onTime: paintTime,
       onPlayState: paintPlayState
