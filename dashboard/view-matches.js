@@ -450,12 +450,18 @@ export function mountMatches() {
       state.filters.champion = "";
       state.filters.deck = "";
       state.filters.mode = "";
+      state.filters.format = "";
       state.filters.dateRange = { preset: "all", from: null, to: null };
+      /* One search field feeds both tables, so clearing it here has to clear
+       * both copies. Leaving the Series one set hides most of that view behind
+       * a term its own now-empty field no longer shows, and Series has no
+       * "clear filters" of its own to undo it with. */
       state.tables.matches.search = "";
+      state.tables.series.search = "";
       resetPaging();
       // The filter row is static DOM this view does not own, so its controls
       // are put back by hand rather than by a re-render.
-      for (const [id, value] of [["#fMyChampion", ""], ["#fDeck", ""], ["#fMode", ""], ["#fDates", "all"], ["#fSearch", ""]]) {
+      for (const [id, value] of [["#fMyChampion", ""], ["#fDeck", ""], ["#fMode", ""], ["#fFormat", ""], ["#fDates", "all"], ["#fSearch", ""]]) {
         const el = document.querySelector(id);
         if (el) el.value = value;
       }
@@ -493,6 +499,21 @@ export function mountMatches() {
       return;
     }
 
+    /* "Share replay" is reachable from the row's ⋯ menu while the row is
+     * collapsed, and legacy.js's share handler toggles a panel that only
+     * exists inside the EXPANDED row - so it found no panel and returned
+     * silently, leaving a menu item that did nothing. Expanding the row is
+     * what puts that panel on the page; the share itself stays legacy.js's,
+     * which owns it, so a click landing on the panel's own button falls
+     * through to it untouched. */
+    const share = e.target.closest?.("[data-share]");
+    if (share && !state.openRows.has(share.dataset.share)) {
+      state.openRows.add(share.dataset.share);
+      state.openRowMenu = null;
+      emit();
+      return;
+    }
+
     /* Any other click closes an open row menu. Deliberately last, so the
      * branches above - including the menu's own items - have already run and
      * this only sees clicks that were not meant for it. */
@@ -513,6 +534,18 @@ export function mountMatches() {
     if (e.key === "Escape" && state.openRowMenu) {
       state.openRowMenu = null;
       emit();
+      return;
+    }
+    /* The expander is a <span role="button" tabindex="0">: it takes focus and
+     * announces itself as a button, but a span gets no activation from the
+     * platform, so a keyboard user could reach it and never open it. Enter and
+     * Space are what the role promises, forwarded to the one click branch
+     * above rather than duplicating it. */
+    if (e.key === "Enter" || e.key === " ") {
+      const toggle = e.target.closest?.("[data-toggle]");
+      if (!toggle) return;
+      e.preventDefault(); // Space would otherwise scroll the page.
+      toggle.click();
     }
   });
 

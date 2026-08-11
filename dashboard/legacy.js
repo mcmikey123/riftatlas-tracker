@@ -12,6 +12,7 @@
   let archive = null; // { name, matches, deckCards }
 
   const STORE = window.RATrackerStorage;
+  const SERIES = window.RATrackerSeries;
   const analyse = (m) => window.RATrackerAnalysis.analyse(m);
   const $ = (s) => document.querySelector(s);
   const readOnly = () => archive !== null;
@@ -1733,7 +1734,14 @@
         danger: true,
       }).then((ok) => {
         if (!ok) return;
+        const gone = all.find((x) => x.id === del);
         all = all.filter((x) => x.id !== del);
+        /* A HAND-MADE series is stored, so deleting one of its games leaves a
+         * hole no later pass closes - detection rebuilds automatic groupings
+         * only and steps around manual ones by design. Renumbering here is what
+         * stops a surviving pair reading G1 and G3, and dissolves a series left
+         * with a single game rather than leaving it wearing a G1 badge. */
+        if (gone && gone.seriesId) all = SERIES.renumber(all, gone.seriesId);
         expanded.delete(del);
         logCache.delete(del);
         STORE.removeKeys(["deckcards_" + del, "log_" + del]);

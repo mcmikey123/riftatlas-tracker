@@ -2,13 +2,16 @@
  * several of them. It reaches for elements by id, and the redesign is moving
  * that markup around underneath it.
  *
- * Two failure modes, both silent in a browser and both caught here:
+ * The failure mode caught here is silent in a browser: an id legacy.js still
+ * uses gets renamed or dropped from the markup, and the feature behind it stops
+ * working with nothing in the console, because every access in that file is
+ * null-guarded on purpose.
  *
- *   - An id legacy.js still uses gets renamed or dropped from the markup. The
- *     feature behind it stops working, with nothing in the console, because
- *     every access in that file is null-guarded on purpose.
- *   - A module and a classic script both claim the same control, so a click
- *     runs two handlers.
+ * NOT caught here, and worth knowing about: two owners for one control. A
+ * module and legacy.js can both claim a data-* attribute, which is sometimes
+ * the bug (two handlers on one click) and sometimes the design (the module
+ * expands the row, legacy.js drives the panel inside it). Source shape cannot
+ * tell those apart, so the seam is checked by reading it, not by this file.
  *
  * This is a source-shape test, which is the pattern the repo already uses for
  * invariants that span files - see test/vendor-contract.test.js.

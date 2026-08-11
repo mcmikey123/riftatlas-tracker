@@ -397,6 +397,49 @@ test("a series cannot survive as one game", () => {
   assert.equal(byId(after, "g1").seriesId, null, "the last game left is not a series of one");
 });
 
+/* Removal has to survive the pass that runs on the very next render, or it
+ * undoes itself and the button looks broken. The two-game case is the one that
+ * matters most: a 2-0 Bo3 is complete at two games, so it is the shape most
+ * automatic series actually have, and it dissolves rather than leaving
+ * survivors behind to act as walls. */
+test("removing a game from a two-game series is not undone by the next pass", () => {
+  const out = run(backToBack(["win", "win"]));
+  assert.ok(byId(out, "g1").seriesId, "the pair should have been detected as a series");
+  const after = S.stripAuto(S.removeFromSeries(out, "g2"));
+  const rescanned = run(after);
+  assert.equal(byId(rescanned, "g1").seriesId, null, "g1 was regrouped after being taken apart");
+  assert.equal(byId(rescanned, "g2").seriesId, null, "g2 rejoined the series it was removed from");
+});
+
+test("removing a game from a longer series is not undone by the next pass", () => {
+  const out = run(backToBack(["win", "loss", "win"]));
+  const after = S.stripAuto(S.removeFromSeries(out, "g2"));
+  const rescanned = run(after);
+  assert.equal(byId(rescanned, "g2").seriesId, null, "g2 rejoined the series it was removed from");
+  assert.equal(byId(rescanned, "g1").seriesGame, 1);
+  assert.equal(byId(rescanned, "g3").seriesGame, 2, "the survivors keep their closed-up numbering");
+});
+
+/* Automatic grouping is derived and must never reach storage - this is the
+ * check that the write path a view actually takes honours that. */
+test("stripAuto leaves only what was grouped by hand", () => {
+  const out = run(backToBack(["win", "loss", "win"]));
+  const stripped = S.stripAuto(out);
+  for (const m of stripped) {
+    assert.equal(m.seriesId, null, `${m.id} carried an automatic series into the write`);
+    assert.equal(m.seriesSource, null);
+  }
+});
+
+test("stripAuto keeps a hand-made series, and the edit that made it", () => {
+  const out = run(backToBack(["win", "loss"]));
+  const id = byId(out, "g1").seriesId;
+  const stripped = S.stripAuto(S.setFormat(out, id, "bo5"));
+  assert.equal(byId(stripped, "g1").seriesId, id, "the edited series was stripped along with the rest");
+  assert.equal(byId(stripped, "g1").seriesFormat, "bo5");
+  assert.equal(byId(stripped, "g2").seriesSource, "manual");
+});
+
 test("changing one series' format makes it manual, so the default stops applying", () => {
   const out = run(backToBack(["win", "loss"]));
   const id = byId(out, "g1").seriesId;

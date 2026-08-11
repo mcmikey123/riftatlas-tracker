@@ -436,6 +436,14 @@
     if (!target || !target.seriesId) return out;
     const seriesId = target.seriesId;
     clearSeries(target);
+    /* The removed game is marked manual with no series of its own. 'manual' is
+     * the only thing detect() will not revise, and without it the next pass
+     * sees a free automatic match sitting beside its old neighbours and groups
+     * it straight back. The survivors below are walls that cover the case of a
+     * series of three or more - but a series of TWO dissolves entirely, leaving
+     * no wall at all and both games free to reform the identical series on the
+     * very next render. */
+    target.seriesSource = "manual";
     /* The survivors become manual. Without this they keep seriesSource 'auto',
      * detect() clears every non-manual record on its next pass, and the game
      * just removed is regrouped straight back in - the removal would undo

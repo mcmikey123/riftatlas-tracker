@@ -337,4 +337,16 @@ export function mountSeries() {
       return;
     }
   });
+
+  /* Same as the Matches expander: a <span role="button" tabindex="0"> takes
+   * focus and announces itself as a button, but a span is activated by nothing
+   * the platform provides. Forwarded to the click branch above so there stays
+   * one place that opens a series. */
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const toggle = e.target.closest?.("[data-sertoggle]");
+    if (!toggle) return;
+    e.preventDefault(); // Space would otherwise scroll the page.
+    toggle.click();
+  });
 }
