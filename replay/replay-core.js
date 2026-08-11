@@ -97,8 +97,8 @@
    * counts as naming a moment; pass `null` or omit `startAtMs` entirely to mean
    * "no moment given" — the share viewer passes an explicit `null` for a link
    * without a timestamp, and the dashboard omits it. It can only ever suppress
-   * autoplay, never grant it, so a timestamped
-   * link is still no way around `prefers-reduced-motion`.
+   * autoplay, never grant it, so a timestamped link is still no way around
+   * `prefers-reduced-motion`.
    */
   function create(options) {
     const { quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay, stripInertLinks } =
