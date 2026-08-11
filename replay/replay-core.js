@@ -101,11 +101,18 @@
    * link is still no way around `prefers-reduced-motion`.
    */
   function create(options) {
-    const { quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay } = root.RAReplayTimeline;
+    const { quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay, stripInertLinks } =
+      root.RAReplayTimeline;
 
     const stage = options.stage;
     const scaleEl = options.scaleEl;
-    const events = options.events;
+    // Favicons and preloads captured from the game's <head> are mounted on every
+    // keyframe, where they only ever produce a refused request and a console
+    // line. Scrubbed here, at the one point both surfaces mount through, so it
+    // covers the dashboard modal and the share viewer — and every share already
+    // uploaded, since nothing about the stored bytes changes. The caller's array
+    // is left alone; stripInertLinks is pure.
+    const events = stripInertLinks(options.events);
     const marks = options.marks || timeline(events);
     const onTime = options.onTime || function () {};
     const onPlayState = options.onPlayState || function () {};

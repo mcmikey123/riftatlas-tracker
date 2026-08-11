@@ -3,7 +3,8 @@
  * The arithmetic behind a replay's transport: which moments are settled board
  * states, how many of them a chip row can show, how far a truncated capture
  * actually got, what scale the board is drawn at, and whether a given seek
- * leaves the replay running.
+ * leaves the replay running — plus `stripInertLinks`, the one scrub the event
+ * stream gets on its way into the engine.
  *
  * Pure by construction: no DOM, no escaping, no chrome APIs, no rrweb. Callers
  * escape whatever they interpolate into markup, so the same functions serve the
@@ -240,6 +241,129 @@
       : `${covered} of this match`;
   }
 
+  /**
+   * `rel` tokens that make a <link> pure overhead once it is replayed.
+   *
+   * The recorder captures `document.documentElement`, so the game's whole
+   * <head> is serialised into every keyframe and re-mounted on every rebuild.
+   * The nodes below then make the viewer go to the network for something no
+   * viewer will ever see: the favicons are refused by the viewer's img-src
+   * (which stays tight — a favicon nobody looks at is not worth reaching
+   * play.riftatlas.com for), and the preloads are fetched and then warned about
+   * because nothing consumes them, scripting being off inside rrweb's iframe.
+   *
+   * The list is exactly "reaches the network, renders nothing". `canonical`,
+   * `author`, `alternate` and friends are left in: they cost a few bytes and no
+   * requests, and shrinking the list is how this stays provably safe. Dropping
+   * `alternate` in particular would be a bug waiting to happen — `rel="alternate
+   * stylesheet"` is a stylesheet.
+   *
+   * Tokens, not whole `rel` strings, because `rel` is a space-separated list:
+   * "shortcut icon" is the common spelling of a favicon.
+   */
+  const INERT_LINK_RELS = Object.freeze([
+    "icon",
+    "shortcut", // only ever seen as "shortcut icon"
+    "apple-touch-icon",
+    "apple-touch-icon-precomposed",
+    "mask-icon",
+    "manifest", // nothing is installable from a replay iframe
+    "preload",
+    "modulepreload",
+    "prefetch",
+    "preconnect",
+    "dns-prefetch"
+  ]);
+
+  const INERT_LINK_REL_SET = new Set(INERT_LINK_RELS);
+
+  /**
+   * Whether this node is a <link> that can be removed without changing a pixel.
+   *
+   * Three conditions, and the first two exist because the failure mode of
+   * getting this wrong is silent. `store/css-assets.js` swaps a stylesheet's
+   * text for `attributes.__cssRef` and the viewer swaps it back to `_cssText`,
+   * and the vendored rrweb turns a <link> into a <style> only when `_cssText`
+   * is truthy — so a dropped stylesheet is not an error, it is a replay that
+   * plays perfectly and completely unstyled.
+   *
+   *   - a node carrying `_cssText` or `__cssRef` is a stylesheet whatever its
+   *     `rel` claims, and is never a candidate;
+   *   - every token of `rel` must be inert, so "alternate stylesheet", or any
+   *     future rel we have not thought about paired with one we have, keeps the
+   *     node. A <link> with no `rel` at all has no token and is kept too.
+   *
+   * The set is an allowlist of things to drop rather than a denylist of things
+   * to keep, which is the direction that fails safe: an unrecognised <link>
+   * survives.
+   */
+  function isInertLink(node) {
+    if (!node || typeof node !== "object") return false;
+    if (String(node.tagName || "").toLowerCase() !== "link") return false;
+
+    const attributes = node.attributes;
+    if (!attributes || typeof attributes !== "object") return false;
+    if (attributes._cssText !== undefined || attributes.__cssRef !== undefined) return false;
+
+    const rel = typeof attributes.rel === "string" ? attributes.rel : "";
+    const tokens = rel.toLowerCase().split(/\s+/).filter(Boolean);
+    return tokens.length > 0 && tokens.every((token) => INERT_LINK_REL_SET.has(token));
+  }
+
+  /**
+   * Rebuild a node tree without its inert <link> children, returning the
+   * original node whenever nothing below it changed.
+   *
+   * Deliberately the same shape and the same reach as `mapNode`/`mapEvents` in
+   * `store/css-assets.js` — full snapshots only, via `event.data.node` — rather
+   * than a second, wider walker. Nodes added later by a mutation are therefore
+   * out of reach here exactly as they are out of reach of CSS extraction: a
+   * page that swaps its favicon at runtime still mounts that one <link>. It
+   * costs one refused request instead of one per keyframe, and reaching into
+   * mutation `adds` would mean deleting nodes a later `removes` still refers to.
+   */
+  function pruneNode(node) {
+    if (!node || typeof node !== "object" || !Array.isArray(node.childNodes)) return node;
+
+    let changed = false;
+    const kept = [];
+    for (const child of node.childNodes) {
+      if (isInertLink(child)) {
+        changed = true;
+        continue;
+      }
+      const next = pruneNode(child);
+      if (next !== child) changed = true;
+      kept.push(next);
+    }
+
+    return changed ? Object.assign({}, node, { childNodes: kept }) : node;
+  }
+
+  /**
+   * The event stream with every inert <link> removed from every full snapshot.
+   *
+   * Pure, and identity-preserving like `store/css-assets.js`: a stream with
+   * nothing to strip comes back as the very same array, so replays of pages
+   * without a decorated <head> pay nothing.
+   */
+  function stripInertLinks(events) {
+    if (!Array.isArray(events)) return events;
+
+    let changed = false;
+    const next = events.map((event) => {
+      const node = event && event.data && event.data.node;
+      if (!node) return event;
+      const nextNode = pruneNode(node);
+      if (nextNode === node) return event;
+      changed = true;
+      const nextData = Object.assign({}, event.data, { node: nextNode });
+      return Object.assign({}, event, { data: nextData });
+    });
+
+    return changed ? next : events;
+  }
+
   // Same dual export as store/css-assets.js: a global for the browser, CommonJS
   // for `node --test`.
   const api = {
@@ -249,6 +373,9 @@
     MAX_SCALE,
     SCALE_STEP,
     SEEK,
+    INERT_LINK_RELS,
+    isInertLink,
+    stripInertLinks,
     quantise,
     resumesAfterSeek,
     seekOutcome,

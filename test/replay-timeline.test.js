@@ -12,6 +12,9 @@ const assert = require("node:assert/strict");
 const {
   MAX_SCALE,
   SEEK,
+  INERT_LINK_RELS,
+  isInertLink,
+  stripInertLinks,
   quantise,
   resumesAfterSeek,
   seekOutcome,
@@ -400,4 +403,189 @@ test("the replay itself, and a missing target, own nothing", () => {
     assert.strictEqual(targetOwnsKey(target, " "), false, JSON.stringify(target));
     assert.strictEqual(targetOwnsKey(target, "ArrowRight"), false, JSON.stringify(target));
   }
+});
+
+/* ── stripInertLinks ──────────────────────────────────────────────────────────
+ *
+ * The recorder captures documentElement, so the game's whole <head> rides along
+ * in every keyframe: favicons the viewer's img-src refuses, preloads nothing
+ * consumes. Stripping them is easy; stripping one node too many is the
+ * expensive mistake, because a <link> that was going to become a <style> takes
+ * the entire stylesheet with it and the replay plays unstyled with no error at
+ * all. Every "kept" case below is guarding that.
+ */
+
+const link = (attributes) => ({ type: 2, tagName: "link", attributes, id: 40 });
+
+/** A full snapshot with `headChildren` in <head>, three levels deep. */
+function headSnapshot(headChildren, timestamp = 1000) {
+  return {
+    type: FULL_SNAPSHOT,
+    timestamp,
+    data: {
+      node: {
+        type: 0,
+        id: 1,
+        childNodes: [
+          {
+            type: 2,
+            tagName: "html",
+            attributes: { lang: "en" },
+            id: 2,
+            childNodes: [
+              { type: 2, tagName: "head", attributes: {}, id: 3, childNodes: headChildren },
+              { type: 2, tagName: "body", attributes: {}, id: 4, childNodes: [] }
+            ]
+          }
+        ]
+      }
+    }
+  };
+}
+
+/** The <head> children of the first event's snapshot tree. */
+const headOf = (events) => events[0].data.node.childNodes[0].childNodes[0].childNodes;
+
+test("the icons the viewer's CSP refuses are stripped", () => {
+  for (const rel of ["icon", "shortcut icon", "apple-touch-icon",
+    "apple-touch-icon-precomposed", "mask-icon"]) {
+    const events = stripInertLinks([headSnapshot([link({ rel, href: "/favicon.ico" })])]);
+    assert.deepEqual(headOf(events), [], `rel="${rel}" is fetched from the game's origin for nobody`);
+  }
+});
+
+test("the preload family is stripped", () => {
+  for (const rel of ["preload", "modulepreload", "prefetch", "preconnect", "dns-prefetch", "manifest"]) {
+    const events = stripInertLinks([headSnapshot([link({ rel, href: "/effects/clock.webp" })])]);
+    assert.deepEqual(headOf(events), [], `rel="${rel}" reaches the network and renders nothing`);
+  }
+});
+
+test("rel is matched by token, in any case and any order", () => {
+  const events = stripInertLinks([headSnapshot([
+    link({ rel: "SHORTCUT ICON", href: "/favicon.ico" }),
+    link({ rel: "icon  shortcut", href: "/favicon.ico" })
+  ])]);
+  assert.deepEqual(headOf(events), []);
+});
+
+test("a stylesheet whose text is still inline is kept", () => {
+  const sheet = link({ rel: "stylesheet", href: "/app.css", _cssText: ".board{color:red}" });
+  const events = stripInertLinks([headSnapshot([sheet])]);
+  assert.deepEqual(headOf(events), [sheet], "rrweb turns this into a <style>; dropping it unstyles the replay");
+});
+
+test("a stylesheet reduced to a __cssRef is kept", () => {
+  const sheet = link({ rel: "stylesheet", href: "/app.css", __cssRef: "h4096" });
+  const events = stripInertLinks([headSnapshot([sheet])]);
+  assert.deepEqual(headOf(events), [sheet], "the viewer rehydrates this ref back into _cssText");
+});
+
+/* The belt to the braces above: the rel says "drop me", the payload says
+ * "I am a stylesheet". The payload wins, so no unusual, absent or mistaken rel
+ * can cost a sheet. */
+test("a node carrying stylesheet text is kept whatever its rel claims", () => {
+  for (const carrier of [{ _cssText: ".a{}" }, { __cssRef: "h1" }, { _cssText: "" }, { __cssRef: "" }]) {
+    const sheet = link(Object.assign({ rel: "preload", as: "style", href: "/app.css" }, carrier));
+    const events = stripInertLinks([headSnapshot([sheet])]);
+    assert.deepEqual(headOf(events), [sheet], JSON.stringify(carrier));
+  }
+});
+
+test("a <link> with no rel, an unknown rel, or a partly-inert rel is kept", () => {
+  const kept = [
+    link({ href: "/mystery" }),
+    link({ rel: "", href: "/mystery" }),
+    link({ rel: "stylesheet", href: "/app.css" }),
+    link({ rel: "canonical", href: "https://play.riftatlas.com/" }),
+    link({ rel: "alternate stylesheet", href: "/dark.css" }),
+    link({ rel: "preload stylesheet", href: "/app.css" })
+  ];
+  const events = stripInertLinks([headSnapshot(kept.slice())]);
+  assert.deepEqual(headOf(events), kept);
+});
+
+test("only <link> elements are candidates", () => {
+  const kept = [
+    { type: 2, tagName: "meta", attributes: { rel: "icon" }, id: 50 },
+    { type: 2, tagName: "style", attributes: { _cssText: ".a{}" }, id: 51 },
+    { type: 3, textContent: "icon", id: 52 }
+  ];
+  const events = stripInertLinks([headSnapshot(kept.slice())]);
+  assert.deepEqual(headOf(events), kept);
+});
+
+test("inert links are stripped wherever they sit in the tree", () => {
+  const keeper = link({ rel: "stylesheet", href: "/app.css", _cssText: ".a{}" });
+  const deep = {
+    type: 2,
+    tagName: "div",
+    attributes: { id: "board" },
+    id: 60,
+    childNodes: [
+      link({ rel: "preload", as: "image", href: "/card.webp" }),
+      { type: 2, tagName: "span", attributes: {}, id: 61, childNodes: [link({ rel: "icon" })] }
+    ]
+  };
+  const events = stripInertLinks([headSnapshot([keeper, deep])]);
+  const head = headOf(events);
+
+  assert.deepEqual(head[0], keeper);
+  assert.deepEqual(head[1].childNodes, [
+    { type: 2, tagName: "span", attributes: {}, id: 61, childNodes: [] }
+  ]);
+});
+
+test("every full snapshot is scrubbed, not just the first", () => {
+  const events = stripInertLinks([
+    headSnapshot([link({ rel: "icon" })], 1000),
+    mutation(1500),
+    headSnapshot([link({ rel: "icon" })], 2000)
+  ]);
+  assert.deepEqual(headOf(events), []);
+  assert.deepEqual(events[2].data.node.childNodes[0].childNodes[0].childNodes, []);
+});
+
+/* Identity, as store/css-assets.js does it: a stream with nothing to strip is
+ * the same array, holding the same events, holding the same nodes. Replays run
+ * to tens of megabytes, and cloning one to change nothing is pure cost. */
+test("a stream with nothing to strip is returned by reference", () => {
+  const events = [
+    headSnapshot([link({ rel: "stylesheet", href: "/app.css", _cssText: ".a{}" })]),
+    mutation(1500)
+  ];
+  assert.strictEqual(stripInertLinks(events), events);
+});
+
+test("untouched events and untouched subtrees keep their identity", () => {
+  const clean = headSnapshot([link({ rel: "stylesheet", _cssText: ".a{}" })], 1000);
+  const dirty = headSnapshot([link({ rel: "icon" })], 2000);
+  const body = dirty.data.node.childNodes[0].childNodes[1];
+
+  const events = stripInertLinks([clean, dirty]);
+  assert.notStrictEqual(events, [clean, dirty]);
+  assert.strictEqual(events[0], clean, "an event with nothing to strip is not rebuilt");
+  assert.notStrictEqual(events[1], dirty);
+  assert.strictEqual(
+    events[1].data.node.childNodes[0].childNodes[1],
+    body,
+    "<body> is where the replay is; it must not be cloned to strip a favicon"
+  );
+});
+
+test("a stream that is not an array, or carries no snapshot, is handed back", () => {
+  for (const events of [null, undefined, "nope", { length: 1 }]) {
+    assert.strictEqual(stripInertLinks(events), events);
+  }
+  const odd = [{ type: 3, timestamp: 1, data: {} }, null, { timestamp: 2 }];
+  assert.strictEqual(stripInertLinks(odd), odd);
+});
+
+test("the drop list holds nothing that can render", () => {
+  // A rel that paints, or that a browser resolves into content, must never be
+  // on this list. `alternate` is the trap: "alternate stylesheet" is a sheet.
+  for (const rel of ["stylesheet", "alternate", "canonical", "author", "license", "next", "prev"]) {
+    assert.equal(INERT_LINK_RELS.includes(rel), false, `rel="${rel}" must not be dropped`);
+  }
+  assert.equal(isInertLink(link({ rel: "stylesheet" })), false);
 });
