@@ -45,7 +45,9 @@ The **game summary** reads the log and reports a playstyle verdict — Aggressiv
 
 ## Best-of-3 series
 
-Matches against the same opponent, in the same mode, played back to back are grouped into a best-of series for you. "Back to back" means the gap from one match ending to the next starting falls inside a window — **45 minutes** by default, settable from 5 to 240 in Settings, along with whether a series still in progress is assumed to be a Bo3 or a Bo5.
+The extension reads the format straight off the lobby — the **Best of 1 / Best of 3** toggle when you are hosting, and the room's summary line when you join a hosted Bo3. That matters more than it sounds: **a Best of 1 is never grouped into a series**, whatever the timing looks like. Two Bo1 games against the same opponent ten minutes apart are a rematch, not a best-of-three, and the lobby already said so.
+
+For Bo3 games, matches against the same opponent in the same mode played back to back are grouped for you. "Back to back" means the gap from one match ending to the next starting falls inside a window — **45 minutes** by default, settable from 5 to 240 in Settings.
 
 The **Series** view shows one row per series, expandable into its games. Its tiles are the reason it exists: series win rate beside game win rate, how often you recover after losing game one, and how often you reach a decider. Your matches already held all of that; the old dashboard had nowhere to show it.
 
