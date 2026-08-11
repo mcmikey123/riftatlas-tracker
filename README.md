@@ -47,7 +47,9 @@ The **game summary** reads the log and reports a playstyle verdict — Aggressiv
 
 The extension reads the format straight off the lobby — the **Best of 1 / Best of 3** toggle when you are hosting, and the room's summary line when you join a hosted Bo3. That matters more than it sounds: **a Best of 1 is never grouped into a series**, whatever the timing looks like. Two Bo1 games against the same opponent ten minutes apart are a rematch, not a best-of-three, and the lobby already said so.
 
-For Bo3 games, matches against the same opponent in the same mode played back to back are grouped for you. "Back to back" means the gap from one match ending to the next starting falls inside a window — **45 minutes** by default, settable from 5 to 240 in Settings.
+For Bo3 games, consecutive games against the same opponent are grouped for you, and a series ends when someone takes it — two wins — so the game after that starts a new one. **The clock is not consulted.** A best-of-three played across a long session, or picked up again after a break, is grouped correctly however long the gap; and a change of opponent ends a series outright, because a best-of-three is played against one person.
+
+The **Minutes between games** setting still exists, but it now applies only to matches recorded before the extension started reading the format from the lobby — where there is no format to go on and the gap is the only clue left.
 
 The **Series** view shows one row per series, expandable into its games. Its tiles are the reason it exists: series win rate beside game win rate, how often you recover after losing game one, and how often you reach a decider. Your matches already held all of that; the old dashboard had nowhere to show it.
 

@@ -93,15 +93,32 @@
    * which makes the condition structural rather than something to re-check.
    */
   function joins(prev, cur, windowMs) {
-    /* The queue said one game. That is a fact from the site, and it outranks
-     * every inference the timing rule can make: two Bo1 games against the same
-     * opponent a few minutes apart are a rematch, which is the single most
-     * likely thing this rule would otherwise get wrong. */
+    /* The lobby said one game. That is a fact from the site and it settles the
+     * question outright: two Bo1 games against the same opponent are a
+     * rematch, never a series. */
     if (prev.matchFormat === "bo1" || cur.matchFormat === "bo1") return false;
+
+    /* A Bo3 is played against one person, so a change of opponent is not a
+     * proximity guess - it is proof the previous series ended. Two matches
+     * against nobody-in-particular are not evidence of anything, so an unnamed
+     * opponent groups with nothing. */
     const who = text(prev.opponentName);
-    // Two matches against nobody-in-particular are not evidence of a rematch.
     if (!who || who !== text(cur.opponentName)) return false;
     if (text(prev.mode) !== text(cur.mode)) return false;
+
+    /* THE CLOCK IS ONLY CONSULTED WHEN THE FORMAT IS UNKNOWN.
+     *
+     * Once both matches say bo3, the site has already told us they are games
+     * of a best-of-three against the same opponent, and completion decides
+     * where one series ends and the next begins. Timing adds nothing and takes
+     * something away: a series played over a long session, or resumed after a
+     * break, is exactly the case a window gets wrong.
+     *
+     * Records written before content.js began reading the lobby have no format
+     * to go on, so for those the old gap rule still applies - the clock stands
+     * in for the fact only where the fact is missing. */
+    if (prev.matchFormat === "bo3" && cur.matchFormat === "bo3") return true;
+
     const ended = ms(prev.endedAt);
     const started = ms(cur.startedAt);
     // A previous match with no end is still being played; there is no gap to

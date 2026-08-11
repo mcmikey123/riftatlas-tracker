@@ -148,6 +148,50 @@ test("a Bo3 that goes the distance holds all three games", () => {
   assert.equal(byId(out, "g3").seriesGame, 3);
 });
 
+test("two Bo3 games hours apart are still one series - the clock is not consulted", () => {
+  // The lobby said best-of-three against this opponent. A long session, or a
+  // break between games, is exactly what a time window gets wrong.
+  const games = [
+    match({ id: "g1", startedAt: at(0), endedAt: at(20), result: "win", matchFormat: "bo3" }),
+    match({ id: "g2", startedAt: at(600), endedAt: at(620), result: "loss", matchFormat: "bo3" }),
+  ];
+  const out = run(games, { windowMinutes: 45 });
+  assert.equal(byId(out, "g1").seriesId, byId(out, "g2").seriesId);
+  assert.ok(byId(out, "g1").seriesId);
+});
+
+test("a change of opponent ends a Bo3 series even with no gap at all", () => {
+  // A best-of-three is played against one person, so this is proof rather
+  // than proximity.
+  const games = [
+    match({ id: "g1", startedAt: at(0), endedAt: at(20), result: "win", matchFormat: "bo3" }),
+    match({ id: "g2", startedAt: at(25), endedAt: at(45), result: "win", matchFormat: "bo3",
+            opponentName: "someone-else" }),
+  ];
+  const out = run(games);
+  assert.equal(byId(out, "g1").seriesId, null);
+  assert.equal(byId(out, "g2").seriesId, null);
+});
+
+test("two Bo3 series against the same opponent are split by completion, not by time", () => {
+  const games = ["win", "win", "loss", "loss"].map((result, i) =>
+    match({ id: "g" + (i + 1), startedAt: at(i * 300), endedAt: at(i * 300 + 20), result, matchFormat: "bo3" })
+  );
+  const out = run(games);
+  assert.equal(byId(out, "g1").seriesId, byId(out, "g2").seriesId, "2-0 takes the first");
+  assert.notEqual(byId(out, "g3").seriesId, byId(out, "g1").seriesId);
+  assert.equal(byId(out, "g3").seriesId, byId(out, "g4").seriesId, "the next two are a second series");
+});
+
+test("a record with no captured format still obeys the window", () => {
+  // The clock stands in for the fact only where the fact is missing.
+  const games = [
+    match({ id: "g1", startedAt: at(0), endedAt: at(20) }),
+    match({ id: "g2", startedAt: at(600), endedAt: at(620) }),
+  ];
+  assert.equal(byId(run(games, { windowMinutes: 45 }), "g1").seriesId, null);
+});
+
 test("a Best of 1 match never joins a series, however close the games are", () => {
   // The lobby already said it was one game. Two Bo1 games against the same
   // opponent minutes apart are a rematch, and that is the single most likely

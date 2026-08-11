@@ -311,20 +311,24 @@
             <label class="setting">
               <input type="checkbox" id="sDetect" data-mutates />
               <span class="setting-text">
-                <span class="setting-name">Group back-to-back matches into a series</span>
-                <span class="setting-copy">Matches against the same opponent, in the same mode, played back
-                  to back inside the window below, are grouped as a best-of series automatically.
-                  Anything you group or ungroup yourself is left alone from then on.</span>
+                <span class="setting-name">Group best-of-three games into a series</span>
+                <span class="setting-copy">The lobby says whether a game is Best of 1 or Best of 3.
+                  Consecutive Best of 3 games against the same opponent are grouped, and a series ends
+                  when someone takes it &mdash; two wins &mdash; so the next game starts a new one. A
+                  Best of 1 is never grouped. Anything you group or ungroup yourself is left alone from
+                  then on.</span>
               </span>
             </label>
             <label class="setting setting-number">
               <input type="number" id="sWindow" step="1" min="5" max="240" data-mutates />
               <span class="setting-text">
-                <span class="setting-name">Minutes between games</span>
-                <span class="setting-copy">5&ndash;240, measured from one match ending to the next starting.
-                  Longer catches slow opponents; shorter avoids sweeping up an unrelated rematch.
-                  A Best of 1 game is never grouped whatever the gap, because the lobby already
-                  said it was a single game.</span>
+                <span class="setting-name">Minutes between games (older matches only)</span>
+                <span class="setting-copy">5&ndash;240, measured from one match ending to the next
+                  starting. This applies <b>only to matches recorded before the extension started
+                  reading the format from the lobby</b>, where there is no format to go on and the
+                  gap is the only clue left. Games that know their own format ignore it entirely, so
+                  a series played over a long session is grouped correctly however long the break
+                  between games.</span>
               </span>
             </label>
             <div class="setting-strip">
