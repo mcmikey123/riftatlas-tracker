@@ -1599,13 +1599,9 @@
       render();
       return;
     }
-    const toggle = e.target?.dataset?.toggle;
-    if (toggle) {
-      if (expanded.has(toggle)) expanded.delete(toggle);
-      else expanded.add(toggle);
-      render();
-      return;
-    }
+    /* The expander moved to view-matches.js with the row it opens. This file
+     * kept a private `expanded` Set that nothing renders from any more, so a
+     * branch here would only fire a second render for the same click. */
     const visualId = e.target?.dataset?.visual;
     if (visualId) {
       const m = all.find((x) => x.id === visualId) || { id: visualId };
@@ -1679,12 +1675,15 @@
       forgetShare(forgetId);
       return;
     }
-    const logId = e.target?.dataset?.log;
-    if (logId) {
-      const box = document.querySelector(`[data-logbox="${CSS.escape(logId)}"]`);
+    const logBtn = e.target?.closest?.("[data-log]");
+    if (logBtn) {
+      const box = document.querySelector(`[data-logbox="${CSS.escape(logBtn.dataset.log)}"]`);
       if (box) {
         box.hidden = !box.hidden;
-        e.target.textContent = box.hidden ? "show" : "hide";
+        // Only the caret, never the button's whole contents: the label beside
+        // it is part of the same button.
+        const caret = logBtn.querySelector("span");
+        if (caret) caret.textContent = box.hidden ? "▸" : "▾";
       }
       return;
     }

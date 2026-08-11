@@ -163,7 +163,7 @@ function gameRows(s, readOnly) {
       return `<div class="grow">
       <span class="cell"></span>
       <span class="cell cell-date ${decider ? "is-decider" : ""}">
-        <span class="d1">G${m.seriesGame == null ? "?" : m.seriesGame}${decider ? " ●" : ""}</span>
+        <span class="d1">G${esc(m.seriesGame == null ? "?" : m.seriesGame)}${decider ? " ●" : ""}</span>
         <span class="d2">${esc(fmtTime(m.startedAt))}</span></span>
       <span class="cell cell-matchup"><span class="d1">
         <span class="dot dot-${RESULT_DOT[m.result === "win" ? "win" : m.result === "loss" ? "loss" : "unfinished"]}"></span>
@@ -228,6 +228,20 @@ export function renderSeries(container, all, readOnly) {
 /* Everything below writes, and everything below is a deliberate user action.
  * All of them go through storage.js, which refuses while an archive is open. */
 
+/* The stored array carries series fields only where the user grouped by hand.
+ * An edit aimed at a DERIVED series therefore has nothing to match on, so the
+ * fields are materialised first, the edit runs against those, and stripAuto
+ * puts everything the edit did not claim back to being derived. Without this,
+ * "Remove from series" and "Change to Bo5" silently did nothing on every
+ * automatically detected series - which is almost all of them. */
+function editable() {
+  return S.detect(LEGACY().matches(), {
+    enabled: state.seriesSettings.seriesDetect !== false,
+    windowMinutes: state.seriesSettings.seriesWindowMinutes,
+    format: state.seriesSettings.seriesFormatDefault,
+  }).matches;
+}
+
 function persist(matches, then) {
   try {
     STORE.writeMatches(matches, then);
@@ -285,7 +299,7 @@ export function mountSeries() {
     if (remove) {
       // Removing renumbers what is left, and a series that would be left with
       // one game dissolves rather than leaving a lone match wearing a G1 badge.
-      persist(S.removeFromSeries(LEGACY().matches(), remove.dataset.serremove), emit);
+      persist(S.stripAuto(S.removeFromSeries(editable(), remove.dataset.serremove)), emit);
       return;
     }
 
@@ -300,7 +314,7 @@ export function mountSeries() {
     const format = e.target.closest?.("[data-serformat]");
     if (format) {
       const [id, next] = format.dataset.serformat.split("|");
-      persist(S.setFormat(LEGACY().matches(), id, next), () => {
+      persist(S.stripAuto(S.setFormat(editable(), id, next)), () => {
         state.openRowMenu = null;
         emit();
       });

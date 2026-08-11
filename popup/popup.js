@@ -189,7 +189,7 @@
             (m) => `<div class="recent-row">
           <span class="recent-dot dot-${kinds[m.result] || "unknown"}"></span>
           <span class="recent-who">vs ${esc(champ(m.opponentChampion || m.opponentLegend))}</span>
-          <span class="recent-score">${fmtScore(m)}</span>
+          <span class="recent-score">${esc(fmtScore(m))}</span>
         </div>`
           )
           .join("")}

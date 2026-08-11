@@ -232,7 +232,7 @@ function detail(m, readOnly) {
       </table>
       <p class="coverage">Based on ${a.lines} log line${a.lines === 1 ? "" : "s"}${
         a.unmatched ? ` · ${a.unmatched} line${a.unmatched === 1 ? "" : "s"} not recognised by the parser` : ""
-      }. Turns: ${m.turns || "?"}.</p>`
+      }. Turns: ${esc(m.turns || "?")}.</p>`
     : `<p class="coverage">No game log was captured for this match.</p>`;
 
   // The verdict reads posture, not quality: Aggressive and Passive are both
@@ -469,6 +469,15 @@ export function mountMatches() {
       return;
     }
 
+    const toggle = e.target.closest?.("[data-toggle]");
+    if (toggle) {
+      const id = toggle.dataset.toggle;
+      if (state.openRows.has(id)) state.openRows.delete(id);
+      else state.openRows.add(id);
+      emit();
+      return;
+    }
+
     const more = e.target.closest?.("[data-rowmenu]");
     if (more) {
       state.openRowMenu = state.openRowMenu === more.dataset.rowmenu ? null : more.dataset.rowmenu;
@@ -487,7 +496,14 @@ export function mountMatches() {
     /* Any other click closes an open row menu. Deliberately last, so the
      * branches above - including the menu's own items - have already run and
      * this only sees clicks that were not meant for it. */
-    if (state.openRowMenu && !e.target.closest?.(".row-menu")) {
+    if (
+      state.openRowMenu &&
+      !e.target.closest?.(".row-menu") &&
+      // The series view's toggle is handled in its own listener, which runs
+      // after this one - nulling the id here would make its second click
+      // reopen the menu instead of closing it.
+      !e.target.closest?.("[data-sermenu]")
+    ) {
       state.openRowMenu = null;
       emit();
     }

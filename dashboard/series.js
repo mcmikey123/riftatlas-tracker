@@ -436,6 +436,13 @@
     if (!target || !target.seriesId) return out;
     const seriesId = target.seriesId;
     clearSeries(target);
+    /* The survivors become manual. Without this they keep seriesSource 'auto',
+     * detect() clears every non-manual record on its next pass, and the game
+     * just removed is regrouped straight back in - the removal would undo
+     * itself within one render. */
+    for (const m of out) {
+      if (m.seriesId === seriesId) m.seriesSource = "manual";
+    }
     return renumber(out, seriesId);
   }
 
@@ -450,6 +457,22 @@
     games.forEach((g, i) => {
       g.seriesGame = i + 1;
     });
+    return out;
+  }
+
+  /**
+   * Clear the series fields on everything not grouped by hand.
+   *
+   * Automatic grouping is derived and must never reach storage. An edit made
+   * against a derived series has to materialise those fields to work on them,
+   * so this is what runs before the write: whatever the edit marked manual
+   * stays, everything else goes back to being recomputed each render.
+   */
+  function stripAuto(matches) {
+    const out = (matches || []).map((m) => Object.assign({}, m));
+    for (const m of out) {
+      if (m.seriesSource !== "manual") clearSeries(m);
+    }
     return out;
   }
 
@@ -485,6 +508,7 @@
     groupManually,
     removeFromSeries,
     renumber,
+    stripAuto,
     setFormat,
   };
 })(typeof window !== "undefined" ? window : globalThis);
