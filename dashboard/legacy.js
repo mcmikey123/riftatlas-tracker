@@ -334,6 +334,9 @@
     setText("#tWins", wins);
     setText("#tLosses", losses);
     setText("#tWinrate", decided ? Math.round((wins / decided) * 100) + "%" : "–");
+    // 57% of 207 and 57% of 7 are not the same claim, so the tile carries its
+    // own denominator.
+    setText("#tDecided", decided ? `of ${decided} decided` : "");
 
     const durations = rows.map((m) => m.durationMs).filter((d) => Number.isFinite(d) && d > 0);
     setText(
@@ -348,7 +351,28 @@
     renderVisualPanel();
     renderSharesPanel();
     renderArchiveBanner();
+    if (bridge.onRender) bridge.onRender();
   }
+
+  /* The bridge to the module half, for as long as this file still owns data the
+   * shell needs to describe: the match array behind the nav counts, the replay
+   * figures behind the capture card, and whether an archive is open.
+   *
+   * Deliberately getters rather than a snapshot - `all` is reassigned wholesale
+   * by load(), so anything holding the array itself would be reading a
+   * discarded one within a second of an archive being opened. Every entry here
+   * disappears as its view is ported. */
+  const bridge = {
+    matches: () => all,
+    visualRecords: () => visualRecords,
+    visualAssets: () => visualAssets,
+    keepMatches: () => keepMatches,
+    shares: () => shares,
+    archiveName: () => (archive ? archive.name : ""),
+    readOnly,
+    onRender: null, // main.js sets this
+  };
+  window.RATrackerLegacy = bridge;
 
   function renderArchiveBanner() {
     const b = $("#archiveBanner");
@@ -365,8 +389,22 @@
     document.body.classList.toggle("read-only", readOnly());
   }
 
+  /* How many rows an aggregate table shows before it offers "see all".
+   *
+   * Nothing is hidden silently: the footer states the true total and expanding
+   * is one click, in place. The cap exists because a long tail of one-game
+   * opponents pushes the rows that carry weight off the screen. */
+  const AGG_LIMIT = 8;
+  const aggExpanded = new Set();
+
+  /* Four steps of one hue. The break points are quarters of the range rather
+   * than anything about good or bad: this encodes magnitude, not judgement. */
+  const rateStep = (rate) => (rate >= 0.75 ? 4 : rate >= 0.5 ? 3 : rate >= 0.25 ? 2 : 1);
+
   function renderAgg(tbody, rows, keyFn) {
     if (!tbody) return;
+    const table = tbody.closest("table");
+    const key = table ? table.id : "";
     const agg = new Map();
     for (const m of rows) {
       const k = keyFn(m);
@@ -376,25 +414,39 @@
       if (m.result === "loss") a.l++;
       agg.set(k, a);
     }
-    tbody.innerHTML = "";
     if (!agg.size) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No matches recorded yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No matches recorded yet.</td></tr>';
       return;
     }
-    [...agg.entries()]
-      .sort((a, b) => b[1].games - a[1].games)
-      .forEach(([name, a]) => {
-        const decided = a.w + a.l;
-        const rate = decided ? a.w / decided : null;
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${esc(name)}</td><td>${a.games}</td><td>${a.w}</td><td>${a.l}</td>
-          <td><div class="bar-wrap"><div class="bar-track"><div class="bar" style="width:${
-            rate === null ? 0 : Math.round(rate * 100)
-          }%"></div></div><span class="pct">${rate === null ? "–" : Math.round(rate * 100) + "%"}</span></div></td>
-          <td></td>`;
-        tbody.appendChild(tr);
-      });
+
+    const all = [...agg.entries()].sort((a, b) => b[1].games - a[1].games);
+    const open = aggExpanded.has(key);
+    const shown = open ? all : all.slice(0, AGG_LIMIT);
+
+    tbody.innerHTML =
+      shown
+        .map(([name, a]) => {
+          const decided = a.w + a.l;
+          const rate = decided ? a.w / decided : null;
+          const pct = rate === null ? 0 : Math.round(rate * 100);
+          // An unnamed deck is a hint, not a deck whose name is "Unlabelled".
+          const unlabelled = name === "Unlabelled";
+          const label = unlabelled ? "— unlabelled —" : esc(name);
+          return `<tr>
+          <td class="${unlabelled ? "unlabelled" : ""}">${label}</td>
+          <td>${a.games}</td><td>${a.w}</td><td>${a.l}</td>
+          <td><div class="bar-wrap"><div class="bar-track">${
+            // No decided results: an empty track and a dash. A zero-width bar
+            // at 0% would read as "lost them all".
+            rate === null ? "" : `<div class="bar rate-${rateStep(rate)}" style="width:${pct}%"></div>`
+          }</div><span class="pct">${rate === null ? "–" : pct + "%"}</span></div></td>
+        </tr>`;
+        })
+        .join("") +
+      (all.length > AGG_LIMIT
+        ? `<tr><td colspan="5" class="agg-more">Showing ${shown.length} of ${all.length}
+             <button data-aggmore="${esc(key)}">${open ? "show fewer" : "see all"}</button></td></tr>`
+        : "");
   }
 
   const COLSPAN = 13;
@@ -1602,6 +1654,13 @@
   });
 
   document.addEventListener("click", (e) => {
+    const aggMore = e.target?.dataset?.aggmore;
+    if (aggMore) {
+      if (aggExpanded.has(aggMore)) aggExpanded.delete(aggMore);
+      else aggExpanded.add(aggMore);
+      render();
+      return;
+    }
     const toggle = e.target?.dataset?.toggle;
     if (toggle) {
       if (expanded.has(toggle)) expanded.delete(toggle);

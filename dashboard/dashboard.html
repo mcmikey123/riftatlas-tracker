@@ -8,155 +8,322 @@
 <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
-<div id="archiveBanner" class="banner banner-archive" hidden>
-  <span id="archiveBannerText"></span>
-  <span class="banner-actions">
-    <button id="archiveExit">Exit archive view</button>
-  </span>
-</div>
 
-<div id="backupBanner" class="banner" hidden>
-  <span id="backupBannerText"></span>
-  <span class="banner-actions">
-    <button id="bannerBackup">Back up now</button>
-    <button id="bannerDismiss" class="ghost">Dismiss</button>
-  </span>
-</div>
+<!-- The shell. Header, banner stack, then a body row of nav + content pane.
+     Views are hidden/shown rather than navigated: there is one document, one
+     set of filters, and switching costs nothing.
 
-<header>
-  <h1>Rift Atlas Stats Tracker</h1>
-  <div class="actions">
-    <button id="exportCsv">Export CSV</button>
-    <button id="exportJson">Export JSON</button>
-    <button id="importJson">Import JSON</button>
+     Element ids below are load-bearing. legacy.js still renders several of
+     these views and wires several of these controls, and is being drained one
+     view at a time - so the chrome changed around the ids rather than
+     replacing them. -->
+
+<header class="app-head">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <h1>Rift Atlas Stats Tracker</h1>
+    <span class="brand-version">0.13.0</span>
+  </div>
+  <span class="local-pill"><span class="dot dot-win" aria-hidden="true"></span>Stored on this machine only</span>
+
+  <div class="head-actions">
+    <div class="menu" data-menu="export">
+      <button class="btn" data-menubtn="export" aria-haspopup="true" aria-expanded="false">Export <span aria-hidden="true">▾</span></button>
+      <div class="menu-list" data-menulist="export" hidden>
+        <button id="exportCsv" class="menu-item">Export CSV</button>
+        <button id="exportJson" class="menu-item">Export JSON</button>
+      </div>
+    </div>
+
+    <button id="importJson" class="btn" data-mutates>Import JSON</button>
     <input type="file" id="importFile" accept="application/json" hidden />
-    <button id="archiveClear" title="Download everything as one file, then clear it from the extension">Archive &amp; clear</button>
-    <button id="viewArchive" title="Open an archive file read-only, without touching your live data">View archive</button>
+
+    <div class="menu" data-menu="archive">
+      <button class="btn" data-menubtn="archive" aria-haspopup="true" aria-expanded="false">Archive <span aria-hidden="true">▾</span></button>
+      <div class="menu-list" data-menulist="archive" hidden>
+        <button id="archiveClear" class="menu-item" data-mutates>Archive &amp; clear</button>
+        <button id="viewArchive" class="menu-item">View archive</button>
+      </div>
+    </div>
     <input type="file" id="archiveFile" accept="application/json" hidden />
-    <button id="clearAll" class="danger">Clear all</button>
+
+    <span class="head-divider" aria-hidden="true"></span>
+
+    <div class="menu" data-menu="more">
+      <button class="btn btn-quiet" data-menubtn="more" aria-haspopup="true" aria-expanded="false" aria-label="More actions">⋯</button>
+      <div class="menu-list menu-right" data-menulist="more" hidden>
+        <button id="clearAll" class="menu-item menu-danger" data-mutates>Clear all</button>
+      </div>
+    </div>
   </div>
 </header>
 
-<section class="filters">
-  <label>My champion
-    <select id="fMyChampion"><option value="">All</option></select>
-  </label>
-  <label>My deck
-    <select id="fDeck"><option value="">All</option></select>
-  </label>
-  <label>Mode
-    <select id="fMode"><option value="">All</option></select>
-  </label>
-  <label>Count unknown results in stats
-    <input type="checkbox" id="fUnknown" />
-  </label>
-  <label title="Saves a JSON copy of your matches to your Downloads folder once a day, so history survives reinstalling the extension.">Daily auto-backup to Downloads
-    <input type="checkbox" id="autoBackup" />
-  </label>
-  <span id="backupState" class="backup-state"></span>
-  <label title="Records each match as the site's own markup and stylesheets, replayable exactly as it looked. Recording is always at full fidelity — it is never thinned out to save space.">Visual replay
-    <input type="checkbox" id="visualEnabled" />
-  </label>
-  <label title="The setting that decides how much disk visual replays use. Once you have this many, the oldest replay is deleted at the end of each match — the match record, its game log, its result and its card list are kept either way. The capture panel below shows what a replay actually costs.">Keep visual replays for the newest (matches)
-    <input type="number" id="visualKeep" step="1" />
-  </label>
-  <label title="A safeguard, not a target — you should not normally need to touch it. If one match's recording somehow runs past this, capture stops there and the replay is marked truncated rather than being recorded at lower fidelity. Leave blank for no ceiling at all.">Stop a runaway recording at (MB, blank = no limit)
-    <input type="number" id="visualCeiling" step="1" placeholder="no limit" />
-  </label>
-</section>
+<div class="banner-stack">
+  <!-- Archive always renders above backup when both are present. -->
+  <div id="archiveBanner" class="banner banner-archive" hidden>
+    <span class="banner-tag banner-tag-archive">Archive</span>
+    <span id="archiveBannerText" class="banner-text"></span>
+    <span class="banner-actions">
+      <button id="archiveExit" class="btn btn-sm">Exit archive view</button>
+    </span>
+  </div>
 
-<section class="tiles">
-  <div class="tile"><span class="tile-label">Games</span><span class="tile-value" id="tGames">0</span></div>
-  <div class="tile"><span class="tile-label">Wins</span><span class="tile-value win" id="tWins">0</span></div>
-  <div class="tile"><span class="tile-label">Losses</span><span class="tile-value loss" id="tLosses">0</span></div>
-  <div class="tile"><span class="tile-label">Win rate</span><span class="tile-value" id="tWinrate">&ndash;</span></div>
-  <div class="tile"><span class="tile-label">Avg duration</span><span class="tile-value" id="tDuration">&ndash;</span></div>
-</section>
+  <div id="backupBanner" class="banner" hidden>
+    <span class="banner-tag banner-tag-backup">Backup</span>
+    <span id="backupBannerText" class="banner-text"></span>
+    <span class="banner-actions">
+      <button id="bannerBackup" class="btn btn-sm btn-primary" data-mutates>Back up now</button>
+      <button id="bannerDismiss" class="btn btn-sm btn-quiet">Dismiss</button>
+    </span>
+  </div>
+</div>
 
-<section>
-  <h2>Win rate vs opponent champion</h2>
-  <table id="vsTable">
-    <thead><tr><th>Opponent champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+<div class="app-body">
+  <nav class="side-nav" aria-label="Views">
+    <span class="nav-label">View</span>
+    <button class="nav-item" data-goto="overview">Overview</button>
+    <button class="nav-item" data-goto="matches">Matches <span class="nav-count" data-count="matches"></span></button>
+    <button class="nav-item" data-goto="series">Series <span class="nav-count" data-count="series"></span></button>
+    <button class="nav-item" data-nav-live="replays" data-goto="replays">Replays <span class="nav-count" data-count="replays"></span></button>
+    <button class="nav-item" data-nav-live="shares" data-goto="shares">Shared links <span class="nav-count" data-count="shares"></span></button>
+    <span class="nav-rule" aria-hidden="true"></span>
+    <button class="nav-item" data-goto="settings">Settings</button>
 
-<section>
-  <h2>By my deck</h2>
-  <p class="hint">
-    Deck names are worked out from the deck you had open in the picker before the game, falling back to the board, the room URL,
-    then the deck you played last. Hover a name to see which it was, and change it from the <b>Deck</b> column of Match history
-    to correct it — decks on the same champion can't be told apart automatically.
-    <button id="autoDeck" class="inline-btn" title="Group matches by the cards you actually played">Detect decks from cards played</button>
-    <button id="bulkLabel" class="inline-btn">Label all unlabelled matches…</button>
-  </p>
-  <table id="deckTable">
-    <thead><tr><th>Deck</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+    <span class="nav-spacer"></span>
 
-<section>
-  <h2>By my champion</h2>
-  <table id="myTable">
-    <thead><tr><th>My champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+    <!-- A read-only mirror of two settings, so the state is visible without
+         opening Settings. -->
+    <div class="capture-card">
+      <span class="nav-label">Capture</span>
+      <span class="capture-state"><span class="dot" data-capture-dot></span><span data-capture-text></span></span>
+      <span class="capture-meta" data-capture-meta></span>
+    </div>
+  </nav>
 
-<section>
-  <h2>Match history</h2>
-  <p class="hint">Click a row to open the game summary, notes and full log. Results can be changed at any time &mdash; edits are marked &ldquo;manual&rdquo;.</p>
-  <table id="historyTable">
-    <thead><tr>
-      <th></th><th>Date</th><th>Mode</th><th>Room</th><th>My champion</th><th>Deck</th><th>Opponent</th>
-      <th>Opp. champion</th><th>Score</th><th>Length</th><th>Result</th><th>Source</th><th></th>
-    </tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+  <main class="content">
 
-<section id="visualPanel" hidden>
-  <h2>Visual replay capture</h2>
-  <p class="hint">
-    What each visual recording actually cost, newest first. These are the numbers to pick a retention count by:
-    every replay is captured at full fidelity, so disk use is simply the mean per-match size times how many
-    matches you keep &mdash; both are in the totals at the bottom. A match marked <b>truncated</b> hit the runaway
-    ceiling or the perf kill switch and stopped recording before the game ended, and a <b>capture max</b> near
-    150&nbsp;ms means a frame came close to the point where capture disables itself.
-    Blank figures (&mdash;) were never recorded &mdash; a match still in progress, or one captured before these
-    counters existed.
-  </p>
-  <table id="visualTable">
-    <thead><tr>
-      <th>Match</th><th>Compressed</th><th>Chunks</th><th>Keyframes</th><th>Mean delta</th>
-      <th>Capture p50</th><th>Capture max</th><th>State</th>
-    </tr></thead>
-    <tbody></tbody>
-    <tfoot></tfoot>
-  </table>
-</section>
+    <!-- Filters are STATIC DOM. render() must never rewrite this row: the
+         dashboard re-renders every three seconds while a match is live, and a
+         search field inside re-rendered markup would lose its caret and its
+         value each time. -->
+    <section class="filter-row" data-filters>
+      <span class="nav-label">Filters</span>
+      <label class="filter"><span>My champion</span>
+        <select id="fMyChampion"><option value="">All</option></select>
+      </label>
+      <label class="filter"><span>My deck</span>
+        <select id="fDeck"><option value="">All</option></select>
+      </label>
+      <label class="filter"><span>Mode</span>
+        <select id="fMode"><option value="">All</option></select>
+      </label>
+      <label class="filter filter-series" hidden><span>Format</span>
+        <select id="fFormat"><option value="">All</option><option value="bo3">Bo3</option><option value="bo5">Bo5</option></select>
+      </label>
+      <label class="filter"><span>Dates</span>
+        <select id="fDates">
+          <option value="all">All time</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="365">Last year</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+      <span class="filter-custom" data-custom-range hidden>
+        <input type="date" id="fFrom" aria-label="From date" />
+        <span class="filter-to">to</span>
+        <input type="date" id="fTo" aria-label="To date" />
+      </span>
+      <label class="check"><input type="checkbox" id="fUnknown" /><span>Count unknown results</span></label>
 
-<section id="sharesPanel" hidden>
-  <h2>Shared replay links</h2>
-  <p class="hint">
-    Every share link created from this browser, newest first. A link is a bearer token: anyone it reaches can watch
-    the replay, which includes your opponent's display name and the match chat.
-    <b>A share can't be unshared.</b> There is no way to revoke one early &mdash; each expires on its own
-    7&nbsp;days after it was created, when the endpoint deletes the encrypted copy, and that sweep can run up to a
-    day late. <b>Re-check</b> asks the endpoint whether a share's copy is still there.
-    Clearing an expired share removes this local record and nothing else; the record is the only place its
-    decryption key is kept, so a cleared link can never be rebuilt.
-  </p>
-  <table id="sharesTable">
-    <thead><tr>
-      <th>Match</th><th>Created</th><th>Expires</th><th>Link</th><th>Re-check</th>
-    </tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+      <span class="filter-end">
+        <span class="filter-note" data-filter-note>Filters apply to every view</span>
+        <span class="search" data-search-wrap hidden>
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input type="search" id="fSearch" placeholder="Search" aria-label="Search matches" />
+          <button class="search-clear" data-search-clear aria-label="Clear search" hidden>✕</button>
+        </span>
+      </span>
+    </section>
 
-<footer>All data is stored locally in your browser. Nothing is uploaded anywhere unless you create a share link for a replay, which uploads that one replay encrypted.</footer>
+    <!-- ====================== Overview ====================== -->
+    <section class="view" data-view="overview">
+      <div class="tiles">
+        <div class="tile"><span class="tile-label">Games</span><span class="tile-value" id="tGames">0</span></div>
+        <div class="tile"><span class="tile-label">Wins</span><span class="tile-value win" id="tWins">0</span></div>
+        <div class="tile"><span class="tile-label">Losses</span><span class="tile-value loss" id="tLosses">0</span></div>
+        <div class="tile"><span class="tile-label">Win rate</span><span class="tile-row"><span class="tile-value" id="tWinrate">&ndash;</span><span class="tile-sub" id="tDecided"></span></span></div>
+        <div class="tile"><span class="tile-label">Avg duration</span><span class="tile-value" id="tDuration">&ndash;</span></div>
+      </div>
+
+      <div class="agg-grid">
+        <div class="card card-vs">
+          <div class="card-head"><h2>Win rate vs opponent champion</h2></div>
+          <table id="vsTable" class="agg">
+            <thead><tr><th>Champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="agg-stack">
+          <div class="card">
+            <div class="card-head">
+              <h2>By my deck</h2>
+              <span class="card-actions">
+                <button id="autoDeck" class="btn btn-sm" data-mutates>Detect decks from cards played</button>
+                <button id="bulkLabel" class="btn btn-sm btn-quiet" data-mutates>Label all unlabelled…</button>
+              </span>
+            </div>
+            <p class="card-band">
+              Deck names come from the deck you had open when the match started, or from the board,
+              or from your previous match. Every name carries where it came from &mdash; open a row in
+              Matches to see it.
+            </p>
+            <table id="deckTable" class="agg">
+              <thead><tr><th>Deck</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>By my champion</h2></div>
+            <table id="myTable" class="agg">
+              <thead><tr><th>Champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================== Matches ====================== -->
+    <section class="view" data-view="matches" hidden>
+      <p class="hint">Click a row to open the game summary, notes and full log. Results can be changed at any time &mdash; edits are marked &ldquo;manual&rdquo;.</p>
+      <table id="historyTable">
+        <thead><tr>
+          <th></th><th>Date</th><th>Mode</th><th>Room</th><th>My champion</th><th>Deck</th><th>Opponent</th>
+          <th>Opp. champion</th><th>Score</th><th>Length</th><th>Result</th><th>Source</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- ====================== Series ====================== -->
+    <section class="view" data-view="series" hidden>
+      <p class="empty-view">Series grouping is being built. Matches are unaffected.</p>
+    </section>
+
+    <!-- ====================== Replays ====================== -->
+    <section class="view" data-view="replays" hidden>
+      <section id="visualPanel" hidden>
+        <h2>Visual replay capture</h2>
+        <p class="hint">
+          What each visual recording actually cost, newest first. These are the numbers to pick a retention count by:
+          every replay is captured at full fidelity, so disk use is simply the mean per-match size times how many
+          matches you keep &mdash; both are in the totals at the bottom. A match marked <b>truncated</b> hit the runaway
+          ceiling or the perf kill switch and stopped recording before the game ended, and a <b>capture max</b> near
+          150&nbsp;ms means a frame came close to the point where capture disables itself.
+          Blank figures (&mdash;) were never recorded &mdash; a match still in progress, or one captured before these
+          counters existed.
+        </p>
+        <table id="visualTable">
+          <thead><tr>
+            <th>Match</th><th>Compressed</th><th>Chunks</th><th>Keyframes</th><th>Mean delta</th>
+            <th>Capture p50</th><th>Capture max</th><th>State</th>
+          </tr></thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </section>
+      <p class="empty-view" data-empty="replays" hidden>No recordings yet.</p>
+    </section>
+
+    <!-- ====================== Shared links ====================== -->
+    <section class="view" data-view="shares" hidden>
+      <section id="sharesPanel" hidden>
+        <h2>Shared replay links</h2>
+        <p class="hint">
+          Every share link created from this browser, newest first. A link is a bearer token: anyone it reaches can watch
+          the replay, which includes your opponent's display name and the match chat.
+          <b>A share can't be unshared.</b> There is no way to revoke one early &mdash; each expires on its own
+          7&nbsp;days after it was created, when the endpoint deletes the encrypted copy, and that sweep can run up to a
+          day late. <b>Re-check</b> asks the endpoint whether a share's copy is still there.
+          Clearing an expired share removes this local record and nothing else; the record is the only place its
+          decryption key is kept, so a cleared link can never be rebuilt.
+        </p>
+        <table id="sharesTable">
+          <thead><tr>
+            <th>Match</th><th>Created</th><th>Expires</th><th>Link</th><th>Re-check</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </section>
+
+    <!-- ====================== Settings ====================== -->
+    <section class="view" data-view="settings" hidden>
+      <div class="settings-grid">
+        <div class="card">
+          <div class="card-head"><h2>Backups</h2></div>
+          <div class="card-body">
+            <label class="setting">
+              <input type="checkbox" id="autoBackup" data-mutates />
+              <span class="setting-text">
+                <span class="setting-name">Daily auto-backup to Downloads</span>
+                <span class="setting-copy">Once a day, writes a JSON copy of your matches, logs and card codes to
+                  <code>Downloads/riftatlas-backups/</code>. Turning this on asks Chrome for the
+                  <code>downloads</code> permission; if you decline, the switch goes back off.
+                  Replays are not in a backup and cannot be restored from one.</span>
+              </span>
+            </label>
+            <div class="setting-strip">
+              <span id="backupState" class="backup-state"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Visual replay</h2></div>
+          <div class="card-body">
+            <label class="setting">
+              <input type="checkbox" id="visualEnabled" data-mutates />
+              <span class="setting-text">
+                <span class="setting-name">Record a visual replay of each match</span>
+                <span class="setting-copy">Captures the game's own page as you play so you can watch the match back.
+                  Roughly 1&ndash;3&nbsp;MB per match, stored in this browser only. The tracker's own overlay is
+                  excluded from the recording.</span>
+              </span>
+            </label>
+            <label class="setting setting-number">
+              <input type="number" id="visualKeep" step="1" data-mutates />
+              <span class="setting-text">
+                <span class="setting-name">Keep replays for the newest N matches</span>
+                <span class="setting-copy" data-keep-copy>1&ndash;500. When a new match is recorded, the oldest replay
+                  beyond this number is deleted.</span>
+              </span>
+            </label>
+            <label class="setting setting-number">
+              <input type="number" id="visualCeiling" step="1" placeholder="no limit" data-mutates />
+              <span class="setting-text">
+                <span class="setting-name">Stop a runaway recording at N MB</span>
+                <span class="setting-copy">16&ndash;4096, or leave it blank for no limit. If a single match's capture
+                  passes this, recording stops and the replay is marked <b>truncated</b> &mdash; the turns already
+                  captured still play.</span>
+              </span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="app-foot">
+      Everything on this page is stored on this computer. Nothing is uploaded anywhere, with one
+      exception: a replay you explicitly choose to share.
+    </footer>
+  </main>
+</div>
+
 <script src="format.js"></script>
 <script src="analysis.js"></script>
 <script src="fingerprint.js"></script>
@@ -164,6 +331,7 @@
      arithmetic. Classic scripts rather than modules so the test suite, which
      is CommonJS, can require() them. -->
 <script src="series.js"></script>
+<script src="table.js"></script>
 <script src="../vendor/rrweb-replay.min.js"></script>
 <script src="../replay/replay-timeline.js"></script>
 <script src="../replay/replay-core.js"></script>
@@ -184,5 +352,8 @@
 <!-- Being drained one view at a time. Every element it reaches for may already
      have been ported, so nothing in it dereferences a query result directly. -->
 <script src="legacy.js"></script>
+<!-- The shell. A module, which is deferred, so every classic script above has
+     already run and every window.RA* global is present. -->
+<script type="module" src="main.js"></script>
 </body>
 </html>

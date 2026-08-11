@@ -46,44 +46,262 @@
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  padding: 24px clamp(16px, 4vw, 48px) 48px;
   background: var(--bg);
   color: var(--ink);
   font: 14px/1.5 var(--font-ui);
 }
-.banner {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  flex-wrap: wrap; margin: 0 0 16px; padding: 11px 16px; border-radius: 10px;
-  background: rgba(124, 92, 45, 0.28); border: 1px solid rgba(240, 190, 110, 0.45);
-  color: #ffe6bf; font-size: 13px;
-}
-.banner-actions { display: flex; gap: 8px; }
-.banner-archive {
-  background: rgba(45, 92, 124, 0.32); border-color: rgba(134, 190, 240, 0.5);
-  color: #d7ecff;
-}
-.banner-archive button { background: rgba(150, 205, 255, 0.16); border-color: rgba(134, 190, 240, 0.5); color: #e8f5ff; }
-.banner-archive button:hover { background: rgba(150, 205, 255, 0.26); }
-body.read-only #clearAll, body.read-only #archiveClear { opacity: 0.4; pointer-events: none; }
-.banner button {
-  background: rgba(255, 214, 150, 0.16); border-color: rgba(240, 190, 110, 0.5);
-  color: #ffeccd;
-}
-.banner button:hover { background: rgba(255, 214, 150, 0.26); }
-.banner button.ghost { background: transparent; }
-.backup-state { color: var(--ink-3); font-size: 11.5px; align-self: center; }
-header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
-h1 { font-size: 20px; margin: 0; }
-h2 { font-size: 15px; margin: 28px 0 8px; color: var(--ink-2); }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 14px; font-weight: 600; margin: 0; color: var(--ink); }
+
+/* Transitions are 120ms on hover and background, 160ms on an expander, and
+   there is no entrance animation anywhere. This is a data tool: things that
+   fade in on arrival make it feel slower, not richer. */
 button {
   padding: 7px 12px; border-radius: 7px; border: 1px solid var(--border);
-  background: var(--surface-2); color: var(--ink); cursor: pointer; font-size: 13px;
+  background: var(--surface-2); color: var(--ink); cursor: pointer;
+  font-size: 13px; font-family: inherit;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-button:hover { background: #27395c; }
-button.danger { border-color: rgba(224, 138, 138, 0.5); color: #f3c0c0; }
-.filters { display: flex; gap: 20px; flex-wrap: wrap; margin: 18px 0 6px; color: var(--ink-2); font-size: 13px; }
-.filters label { display: flex; align-items: center; gap: 8px; }
+button:hover { background: #25375a; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.danger, .btn-danger { border-color: rgba(224, 138, 138, 0.5); color: var(--loss); background: transparent; }
+button.danger:hover, .btn-danger:hover { background: rgba(224, 138, 138, 0.12); }
+.btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
+.btn-quiet { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-quiet:hover { background: var(--surface-2); border-color: var(--border); color: var(--ink); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 550; }
+.btn-primary:hover { background: #9ab8f8; border-color: #9ab8f8; }
+
+/* --- header --- */
+.app-head {
+  display: flex; align-items: center; gap: 16px;
+  height: 52px; padding: 0 18px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand-mark {
+  width: 20px; height: 20px; border-radius: 5px; background: var(--accent);
+  align-self: center; flex: 0 0 auto;
+}
+.brand-version { font: 11px var(--font-mono); color: var(--ink-3); }
+.local-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 12px; color: var(--ink-2); white-space: nowrap;
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: 0 0 auto; }
+.dot-win { background: var(--win); }
+.dot-loss { background: var(--loss); }
+.dot-draw { background: var(--draw); }
+.dot-accent { background: var(--accent); }
+.dot-off { background: var(--ink-off); }
+.head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.head-divider { width: 1px; height: 22px; background: var(--border); }
+
+/* --- menus --- */
+.menu { position: relative; }
+.menu-list {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  min-width: 180px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  display: flex; flex-direction: column;
+}
+.menu-right { left: auto; right: 0; }
+.menu-item {
+  text-align: left; background: transparent; border: 0; border-radius: 6px;
+  padding: 7px 10px; font-size: 13px; color: var(--ink-2); white-space: nowrap;
+}
+.menu-item:hover { background: var(--surface-2); color: var(--ink); }
+/* Danger is last in its menu and is the only red thing in it. */
+.menu-danger { color: var(--loss); }
+.menu-danger:hover { background: rgba(224, 138, 138, 0.12); color: var(--loss); }
+
+/* --- banners --- */
+.banner-stack { display: flex; flex-direction: column; }
+.banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 18px;
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+  font-size: 13px; color: var(--ink-2);
+}
+.banner-text { flex: 1; }
+.banner-actions { display: flex; gap: 8px; }
+.banner-tag {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em;
+  padding: 2px 6px; border-radius: 4px;
+}
+/* The archive banner is the only accent-bordered element on screen: it is the
+   one thing that changes what every other control on the page will do. */
+.banner-tag-archive { color: var(--accent); border: 1px solid rgba(134, 168, 246, 0.5); }
+.banner-tag-backup { color: var(--draw); border: 1px solid rgba(201, 180, 122, 0.5); }
+.backup-state { color: var(--ink-3); font-size: 12px; }
+
+/* --- body row --- */
+.app-body { display: flex; align-items: stretch; min-height: calc(100vh - 52px); }
+
+.side-nav {
+  flex: 0 0 212px; width: 212px;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 16px 12px; background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+.nav-label {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-3); padding: 4px 10px 8px;
+}
+.nav-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: 7px; border: 0; background: transparent;
+  color: var(--ink-2); font-size: 13px; text-align: left;
+}
+.nav-item:hover { background: var(--surface); color: var(--ink); }
+.nav-item.on {
+  background: var(--surface-2); color: var(--ink); font-weight: 550;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.nav-count { font: 11px var(--font-mono); color: var(--ink-3); }
+.nav-rule { height: 1px; background: var(--border); margin: 10px 0; }
+.nav-spacer { flex: 1; }
+.capture-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; display: flex; flex-direction: column; gap: 5px;
+}
+.capture-card .nav-label { padding: 0; }
+.capture-state { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.capture-meta { font-size: 11px; color: var(--ink-3); }
+
+.content {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 20px;
+  padding: 20px 22px 26px;
+}
+
+/* --- filter row ---
+   Static DOM. Nothing re-renders this: content.js saves the live match every
+   three seconds, and a search field rebuilt on that cadence would drop the
+   caret roughly twenty times a minute. */
+.filter-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.filter-row .nav-label { padding: 0 2px 0 0; }
+.filter {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 7px;
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: 13px; color: var(--ink);
+}
+.filter > span { color: var(--ink-3); }
+.filter select {
+  background: transparent; border: 0; color: var(--ink); font-size: 13px;
+  padding: 0; font-family: inherit;
+}
+.filter select:focus { outline: none; }
+.filter-custom { display: inline-flex; align-items: center; gap: 6px; }
+.filter-custom input {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--ink); padding: 5px 8px; font-size: 12px; font-family: inherit;
+}
+.filter-to { color: var(--ink-3); font-size: 12px; }
+.check { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.check input[type="checkbox"] {
+  appearance: none; width: 14px; height: 14px; border-radius: 4px; margin: 0;
+  background: var(--bg); border: 1px solid rgba(134, 168, 246, 0.5); cursor: pointer;
+}
+.check input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.check input[type="checkbox"]:checked::after {
+  content: "✓"; display: block; color: var(--bg); font-size: 10px; line-height: 12px; text-align: center;
+}
+.filter-end { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.filter-note { font-size: 12px; color: var(--ink-3); }
+.search {
+  display: inline-flex; align-items: center; gap: 6px; width: 210px;
+  padding: 6px 10px; border-radius: 7px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.search:focus-within { border-color: rgba(134, 168, 246, 0.45); }
+.search-icon { color: var(--ink-3); }
+.search input {
+  flex: 1; min-width: 0; background: transparent; border: 0; color: var(--ink);
+  font-size: 13px; font-family: inherit;
+}
+.search input:focus { outline: none; }
+.search-clear { background: transparent; border: 0; color: var(--ink-3); padding: 0 2px; font-size: 12px; }
+.search-clear:hover { color: var(--ink); background: transparent; }
+
+/* --- views --- */
+.view { display: flex; flex-direction: column; gap: 20px; }
+.view[hidden] { display: none; }
+.empty-view { color: var(--ink-3); font-size: 13px; margin: 0; padding: 24px 0; }
+
+/* --- cards --- */
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden;
+}
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 13px 16px; border-bottom: 1px solid var(--border);
+}
+.card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.card-body { padding: 15px 16px; display: flex; flex-direction: column; gap: 16px; }
+/* A sunk explanatory band between a card's header and its data. */
+.card-band {
+  margin: 0; padding: 11px 16px; background: var(--surface-sunk);
+  font-size: 12px; line-height: 1.55; color: var(--ink-2);
+}
+.agg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+.agg-stack { display: flex; flex-direction: column; gap: 14px; }
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+
+/* --- settings --- */
+.setting { display: flex; gap: 11px; align-items: flex-start; cursor: pointer; }
+.setting-text { display: flex; flex-direction: column; gap: 4px; }
+.setting-name { font-size: 13px; color: var(--ink); }
+.setting-copy { font-size: 12px; line-height: 1.55; color: var(--ink-2); }
+.setting-copy code {
+  font: 11.5px var(--font-mono); background: var(--surface-sunk);
+  padding: 1px 4px; border-radius: 4px;
+}
+.setting input[type="checkbox"] {
+  appearance: none; width: 34px; height: 20px; border-radius: 999px; margin: 2px 0 0;
+  background: var(--surface-2); border: 1px solid var(--border);
+  position: relative; cursor: pointer; flex: 0 0 auto;
+  transition: background 120ms ease;
+}
+.setting input[type="checkbox"]::after {
+  content: ""; position: absolute; top: 1px; left: 1px;
+  width: 16px; height: 16px; border-radius: 50%; background: var(--ink-3);
+  transition: transform 120ms ease, background 120ms ease;
+}
+.setting input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.setting input[type="checkbox"]:checked::after { transform: translateX(14px); background: var(--bg); }
+.setting-number input[type="number"] { width: 62px; flex: 0 0 auto; margin-top: 1px; }
+.setting-strip {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border-radius: 8px; background: var(--surface-sunk);
+}
+
+/* --- footer --- */
+.app-foot {
+  margin-top: auto; padding-top: 14px;
+  border-top: 1px solid rgba(134, 168, 246, 0.16);
+  font-size: 12px; color: var(--ink-3);
+}
+
+/* --- read-only archive mode ---
+   Every mutating control drops to --ink-off on --surface with no hover. The
+   `disabled` attribute is set in JS as well, so these are unreachable by
+   keyboard and announced as disabled rather than merely looking it. */
+body.read-only button:disabled,
+body.read-only select:disabled,
+body.read-only input:disabled,
+body.read-only textarea:disabled {
+  color: var(--ink-off); background: var(--surface); border-color: rgba(134, 168, 246, 0.16);
+  cursor: default;
+}
+body.read-only button:disabled:hover { background: var(--surface); }
 select {
   background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; font-size: 13px;
@@ -99,27 +317,73 @@ input[type="url"] {
   border-radius: 6px; padding: 5px 8px; font-size: 12px; width: 260px;
 }
 input[type="url"]:focus { outline: none; border-color: var(--accent); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 14px 0 8px; }
+.tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
 .tile {
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  padding: 14px 16px; display: grid; gap: 4px;
+  padding: 14px 16px; display: grid; gap: 6px; align-content: start;
 }
-.tile-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
-.tile-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tile-label {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+.tile-value {
+  font-size: 28px; font-weight: 600; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+}
 .tile-value.win { color: var(--win); }
 .tile-value.loss { color: var(--loss); }
-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+/* The win-rate tile carries its own denominator, because 57% of 207 and 57% of
+   7 are not the same claim. */
+.tile-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.tile-sub { font-size: 12px; color: var(--ink-3); }
+
+table { width: 100%; border-collapse: collapse; background: var(--surface); }
 th, td { text-align: left; padding: 8px 12px; font-variant-numeric: tabular-nums; }
-th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); background: var(--surface-2); }
-tbody tr { border-top: 1px solid rgba(134, 168, 246, 0.12); }
-tbody tr:hover { background: rgba(134, 168, 246, 0.06); }
-.bar-wrap { display: flex; align-items: center; gap: 8px; min-width: 160px; }
-.bar {
-  height: 8px; border-radius: 4px; background: var(--accent);
-  min-width: 2px;
+th {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-3); background: var(--surface-sunk); font-weight: 400;
 }
-.bar-track { flex: 1; background: rgba(134, 168, 246, 0.14); border-radius: 4px; }
-.pct { width: 44px; text-align: right; color: var(--ink-2); }
+tbody tr { border-top: 1px solid var(--rule); }
+tbody tr:hover { background: rgba(134, 168, 246, 0.06); }
+
+/* --- aggregate tables --- */
+/* One grid so the three tables line their columns up with each other, which is
+   what makes them readable side by side. */
+.agg { border: 0; }
+.agg thead th { border-bottom: 1px solid rgba(134, 168, 246, 0.16); }
+.agg th, .agg td { padding: 9px 8px; font-size: 13px; }
+.agg th:first-child, .agg td:first-child { padding-left: 16px; }
+.agg th:last-child, .agg td:last-child { padding-right: 16px; }
+.agg td:nth-child(2), .agg td:nth-child(3), .agg td:nth-child(4) {
+  font-family: var(--font-mono); font-size: 12px; width: 44px; text-align: right;
+}
+.agg th:nth-child(2), .agg th:nth-child(3), .agg th:nth-child(4) { text-align: right; }
+.agg td:nth-child(2) { color: var(--ink-2); }
+.agg td:nth-child(3) { color: var(--win); }
+.agg td:nth-child(4) { color: var(--loss); }
+.agg td:last-child { width: 132px; }
+/* A deck nobody named is a hint, not a deck called "unlabelled". */
+.agg .unlabelled { color: var(--ink-3); font-style: italic; }
+.agg-more {
+  padding: 9px 16px; font-size: 12px; color: var(--ink-3);
+  border-top: 1px solid rgba(134, 168, 246, 0.16);
+}
+.agg-more button {
+  background: transparent; border: 0; color: var(--accent); padding: 0 0 0 4px;
+  font-size: 12px; text-decoration: underline;
+}
+.agg-more button:hover { background: transparent; color: var(--ink); }
+
+.bar-wrap { display: flex; align-items: center; gap: 8px; }
+.bar-track { flex: 1; height: 6px; background: rgba(134, 168, 246, 0.14); border-radius: 3px; }
+.bar { height: 6px; border-radius: 3px; background: var(--accent); min-width: 2px; }
+/* Four steps of ONE hue. Never red/green: a 40% deck is a deck with a 40% win
+   rate, and painting it like a failure state turns a reading into a verdict. */
+.bar.rate-1 { background: var(--rate-1); }
+.bar.rate-2 { background: var(--rate-2); }
+.bar.rate-3 { background: var(--rate-3); }
+.bar.rate-4 { background: var(--rate-4); }
+.pct { width: 38px; text-align: right; color: var(--ink-2); font: 12px var(--font-mono); }
 .result-win { color: var(--win); font-weight: 600; }
 .result-loss { color: var(--loss); font-weight: 600; }
 .result-draw { color: var(--draw); font-weight: 600; }
