@@ -160,6 +160,10 @@
 <script src="format.js"></script>
 <script src="analysis.js"></script>
 <script src="fingerprint.js"></script>
+<!-- Pure logic, unit tested under node --test: the series rule and the table
+     arithmetic. Classic scripts rather than modules so the test suite, which
+     is CommonJS, can require() them. -->
+<script src="series.js"></script>
 <script src="../vendor/rrweb-replay.min.js"></script>
 <script src="../replay/replay-timeline.js"></script>
 <script src="../replay/replay-core.js"></script>
@@ -174,6 +178,11 @@
 <script src="../share/share-ui-support.js"></script>
 <script src="../share/repaint.js"></script>
 <script src="../share/clipboard.js"></script>
-<script src="dashboard.js"></script>
+<!-- The dashboard's only writer. After share/config.js, whose default endpoint
+     is part of the settings shape, and before anything that could write. -->
+<script src="storage.js"></script>
+<!-- Being drained one view at a time. Every element it reaches for may already
+     have been ported, so nothing in it dereferences a query result directly. -->
+<script src="legacy.js"></script>
 </body>
 </html>

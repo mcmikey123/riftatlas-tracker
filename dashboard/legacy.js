@@ -11,9 +11,55 @@
   // When viewing an archive file we render from memory and never write.
   let archive = null; // { name, matches, deckCards }
 
+  const STORE = window.RATrackerStorage;
   const analyse = (m) => window.RATrackerAnalysis.analyse(m);
   const $ = (s) => document.querySelector(s);
   const readOnly = () => archive !== null;
+
+  /* Opening or closing an archive is the one thing that decides whether the
+   * array in memory is this browser's history or a file's. The writer refuses
+   * every match write while it is a file's, so the two must never disagree -
+   * hence one setter rather than four assignments. */
+  function setArchive(next) {
+    archive = next;
+    STORE.setReadOnly(next !== null);
+  }
+
+  /* THIS FILE IS BEING DRAINED. The redesign replaces its markup one view at a
+   * time, so from here on every element this file reaches for may already be
+   * gone - and a bare `$("#x").addEventListener(...)` on a missing element
+   * throws during the initial run, which aborts the whole IIFE and takes
+   * `load()` and the storage listener at the bottom with it. Not degraded:
+   * dead, silently, for every feature still living here.
+   *
+   * So nothing below dereferences a query result directly. Each helper is a
+   * no-op when its element has already been ported, which is what lets each
+   * phase of the port ship on its own. */
+  const on = (sel, type, fn) => {
+    const el = $(sel);
+    if (el) el.addEventListener(type, fn);
+    return el;
+  };
+  const val = (sel) => {
+    const el = $(sel);
+    return el ? el.value : "";
+  };
+  const isChecked = (sel) => {
+    const el = $(sel);
+    return !!(el && el.checked);
+  };
+  const setText = (sel, s) => {
+    const el = $(sel);
+    if (el) el.textContent = s;
+  };
+  const setHtml = (sel, s) => {
+    const el = $(sel);
+    if (el) el.innerHTML = s;
+  };
+  const hideBackupBanner = () => {
+    const el = $("#backupBanner");
+    if (el) el.hidden = true;
+  };
 
   // ---- data access -----------------------------------------------------
 
@@ -43,10 +89,10 @@
         });
         clean.forEach((m) => delete m.log);
         writes.matches = clean;
-        chrome.storage.local.set(writes);
+        STORE.writeKeys(writes);
         console.info("[RA-Tracker] migrated %d inline logs to separate keys", inline.length);
       } else if (clean.length !== raw.length) {
-        chrome.storage.local.set({ matches: clean });
+        STORE.writeMatches(clean);
       }
       clean.forEach((m) => delete m.log);
       all = clean.sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
@@ -71,7 +117,7 @@
     chrome.storage.local.get(null, (data) => {
       const keys = Object.keys(data || {}).filter((k) => k.startsWith("replay_"));
       if (!keys.length) return;
-      chrome.storage.local.remove(keys, () =>
+      STORE.removeKeys(keys, () =>
         console.info("[RA-Tracker] removed %d obsolete snapshot replays", keys.length)
       );
     });
@@ -79,7 +125,7 @@
 
   function persist(matches, then) {
     if (readOnly()) return;
-    chrome.storage.local.set({ matches }, then || render);
+    STORE.writeMatches(matches, then || render);
   }
 
   function getLog(id, cb) {
@@ -258,6 +304,7 @@
   }
 
   function fillSelect(sel, values) {
+    if (!sel) return;
     const current = sel.value;
     sel.length = 1;
     values.sort().forEach((v) => sel.add(new Option(v, v)));
@@ -265,10 +312,10 @@
   }
 
   function filtered(includeUnknownAnyway) {
-    const mc = $("#fMyChampion").value;
-    const mode = $("#fMode").value;
-    const deck = $("#fDeck").value;
-    const inclUnknown = includeUnknownAnyway || $("#fUnknown").checked;
+    const mc = val("#fMyChampion");
+    const mode = val("#fMode");
+    const deck = val("#fDeck");
+    const inclUnknown = includeUnknownAnyway || isChecked("#fUnknown");
     return all.filter((m) => {
       if (mc && champ(m.myChampion || m.myLegend) !== mc) return false;
       if (deck && deckOf(m) !== deck) return false;
@@ -283,15 +330,16 @@
     const wins = rows.filter((m) => m.result === "win").length;
     const losses = rows.filter((m) => m.result === "loss").length;
     const decided = wins + losses;
-    $("#tGames").textContent = rows.length;
-    $("#tWins").textContent = wins;
-    $("#tLosses").textContent = losses;
-    $("#tWinrate").textContent = decided ? Math.round((wins / decided) * 100) + "%" : "–";
+    setText("#tGames", rows.length);
+    setText("#tWins", wins);
+    setText("#tLosses", losses);
+    setText("#tWinrate", decided ? Math.round((wins / decided) * 100) + "%" : "–");
 
     const durations = rows.map((m) => m.durationMs).filter((d) => Number.isFinite(d) && d > 0);
-    $("#tDuration").textContent = durations.length
-      ? fmtDuration(durations.reduce((a, b) => a + b, 0) / durations.length)
-      : "–";
+    setText(
+      "#tDuration",
+      durations.length ? fmtDuration(durations.reduce((a, b) => a + b, 0) / durations.length) : "–"
+    );
 
     renderAgg($("#vsTable tbody"), rows, (m) => champ(m.opponentChampion || m.opponentLegend));
     renderAgg($("#deckTable tbody"), rows, deckOf);
@@ -307,13 +355,18 @@
     if (!b) return;
     b.hidden = !archive;
     if (archive) {
-      $("#archiveBannerText").textContent = `Viewing archive “${archive.name}” — ${archive.matches.length} matches, read-only. Your live data is untouched.`;
-      $("#backupBanner").hidden = true; // not about the archive you're viewing
+      setText(
+        "#archiveBannerText",
+        `Viewing archive “${archive.name}” — ${archive.matches.length} matches, read-only. Your live data is untouched.`
+      );
+      const nag = $("#backupBanner");
+      if (nag) nag.hidden = true; // not about the archive you're viewing
     }
     document.body.classList.toggle("read-only", readOnly());
   }
 
   function renderAgg(tbody, rows, keyFn) {
+    if (!tbody) return;
     const agg = new Map();
     for (const m of rows) {
       const k = keyFn(m);
@@ -349,6 +402,7 @@
   function renderHistory(rows) {
     ensureVisualIds();
     const tbody = $("#historyTable tbody");
+    if (!tbody) return;
     tbody.innerHTML = "";
     if (!rows.length) {
       tbody.innerHTML = `<tr><td colspan="${COLSPAN}" class="empty">No matches recorded yet. Play a match on play.riftatlas.com with the extension installed.</td></tr>`;
@@ -537,14 +591,16 @@
 
     // Every record gets a row: retention is the store's job, and it never hands
     // back more than the retention setting allows.
-    $("#visualTable tbody").innerHTML = records.map(visualRow).join("");
+    setHtml("#visualTable tbody", records.map(visualRow).join(""));
 
     const bytes = records.reduce((n, r) => n + (Number(r.compressedBytes) || 0), 0);
     const chunks = records.reduce((n, r) => n + (Number(r.chunkCount) || 0), 0);
     // What retention actually costs: every replay is captured at full fidelity,
     // so the mean is the only figure needed to price a different keep count.
     const mean = records.length ? bytes / records.length : 0;
-    $("#visualTable tfoot").innerHTML = `
+    setHtml(
+      "#visualTable tfoot",
+      `
       <tr class="vd-total">
         <td>Total · ${records.length} match${records.length === 1 ? "" : "es"}</td>
         <td>${fmtBytes(bytes)}</td>
@@ -564,7 +620,8 @@
           ${fmtBytes(mean)} per match on average &mdash; keeping the newest ${keepMatches}
           works out at roughly ${fmtBytes(mean * keepMatches)} once that many have been played
         </td>
-      </tr>`;
+      </tr>`
+    );
   }
 
   // ---- replay sharing --------------------------------------------------
@@ -948,7 +1005,7 @@
       chrome.storage.local.get({ shares: [] }, (data) => {
         const shares = SHARE.pruneShares(data.shares, Date.now());
         shares.push(record);
-        chrome.storage.local.set({ shares }, () => {
+        STORE.writeShares(shares, () => {
           void chrome.runtime.lastError;
           resolve();
         });
@@ -1367,10 +1424,13 @@
     panel.hidden = readOnly();
     if (panel.hidden) return;
     const now = Date.now();
-    $("#sharesTable tbody").innerHTML = shares.length
-      ? shares.map((r) => shareListRow(r, now)).join("")
-      : `<tr><td colspan="5" class="empty">No share links have been created from this browser.
-           Open a match with a replay and choose “share a link”.</td></tr>`;
+    setHtml(
+      "#sharesTable tbody",
+      shares.length
+        ? shares.map((r) => shareListRow(r, now)).join("")
+        : `<tr><td colspan="5" class="empty">No share links have been created from this browser.
+           Open a match with a replay and choose “share a link”.</td></tr>`
+    );
   }
 
   /** Repaint one row's outcome in place, so re-checking keeps keyboard focus. */
@@ -1436,7 +1496,7 @@
       const kept = SHARE.pruneShares(data.shares, Date.now()).filter(
         (s) => !(s && s.objectId === objectId)
       );
-      chrome.storage.local.set({ shares: kept }, () => {
+      STORE.writeShares(kept, () => {
         void chrome.runtime.lastError;
         recheckState.delete(objectId);
         refreshShares();
@@ -1504,7 +1564,7 @@
     // Marked manual either way: clearing it is a decision too, and it stops the
     // tracker re-detecting a name onto a match that is still running.
     m.deckSource = "manual";
-    chrome.storage.local.set({ matches: all }, () => {
+    STORE.writeMatches(all, () => {
       buildFilterOptions();
       render(); // a new name has to reach every other row's picker
     });
@@ -1531,7 +1591,7 @@
         const m = all.find((x) => x.id === id);
         if (!m) return;
         m.notes = value;
-        chrome.storage.local.set({ matches: all }, () => {
+        STORE.writeMatches(all, () => {
           if (state) {
             state.textContent = "saved";
             setTimeout(() => (state.textContent = ""), 1500);
@@ -1644,7 +1704,7 @@
       if (!targets.length) return alert(`No unlabelled ${champion} matches to update.`);
       if (!confirm(`Label ${targets.length} unlabelled ${champion} match${targets.length === 1 ? "" : "es"} as “${name}”?`)) return;
       targets.forEach((m) => { m.deckName = name; m.deckSource = "manual"; });
-      chrome.storage.local.set({ matches: all }, () => { buildFilterOptions(); render(); });
+      STORE.writeMatches(all, () => { buildFilterOptions(); render(); });
       return;
     }
     const del = e.target?.dataset?.del;
@@ -1652,7 +1712,7 @@
       all = all.filter((x) => x.id !== del);
       expanded.delete(del);
       logCache.delete(del);
-      chrome.storage.local.remove(["deckcards_" + del, "log_" + del]);
+      STORE.removeKeys(["deckcards_" + del, "log_" + del]);
       forgetVisual(del);
       persist(all, () => { buildFilterOptions(); render(); });
     }
@@ -1672,9 +1732,9 @@
 
   // Bulk-label every unlabelled match (respecting the champion filter, so you
   // can do one champion at a time when you play several).
-  $("#bulkLabel").addEventListener("click", () => {
+  on("#bulkLabel", "click", () => {
     if (readOnly()) return;
-    const champFilter = $("#fMyChampion").value;
+    const champFilter = val("#fMyChampion");
     const targets = all.filter(
       (m) =>
         !(m.deckName || "").trim() &&
@@ -1691,7 +1751,7 @@
     const clean = name.trim();
     if (!clean) return;
     targets.forEach((m) => { m.deckName = clean; m.deckSource = "manual"; });
-    chrome.storage.local.set({ matches: all }, () => {
+    STORE.writeMatches(all, () => {
       buildFilterOptions();
       render();
       alert(`Labelled ${targets.length} match${targets.length === 1 ? "" : "es"} as “${clean}”.`);
@@ -1699,7 +1759,7 @@
   });
 
   // Recognise decks from the cards actually played.
-  $("#autoDeck").addEventListener("click", () => {
+  on("#autoDeck", "click", () => {
     if (readOnly()) return;
     const FP = window.RATrackerFingerprint;
     chrome.storage.local.get(null, (data) => {
@@ -1742,7 +1802,7 @@
           named += c.size;
         });
         if (!named) return;
-        chrome.storage.local.set({ matches: all }, () => {
+        STORE.writeMatches(all, () => {
           buildFilterOptions();
           render();
           alert(`Labelled ${named} matches.`);
@@ -1771,20 +1831,20 @@
       if (!ok) return;
       const byId = new Map(proposals.map((p) => [p.match.id, p.deck]));
       all.forEach((m) => { if (byId.has(m.id)) { m.deckName = byId.get(m.id); m.deckSource = "fingerprint"; } });
-      chrome.storage.local.set({ matches: all }, () => {
+      STORE.writeMatches(all, () => {
         buildFilterOptions();
         render();
       });
     });
   });
 
-  $("#exportJson").addEventListener("click", () => {
+  on("#exportJson", "click", () => {
     buildBundle(true, (bundle) =>
       download(`riftatlas-matches-${stamp()}.json`, JSON.stringify(bundle, null, 2), "application/json")
     );
   });
 
-  $("#exportCsv").addEventListener("click", () => {
+  on("#exportCsv", "click", () => {
     buildBundle(false, (bundle) => {
       const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","notes"];
       const extra = ["duration","verdict","myCommits","oppCommits","myConquers","oppConquers","myTrashed","oppTrashed","logLines"];
@@ -1864,19 +1924,19 @@
         if (Array.isArray(codes) && codes.length) writes["deckcards_" + id] = { id, codes };
       }
       writes.matches = [...byId.values()];
-      chrome.storage.local.set(writes, cb);
+      STORE.writeKeys(writes, cb);
     });
   }
 
-  $("#importJson").addEventListener("click", () => $("#importFile").click());
-  $("#importFile").addEventListener("change", (e) => {
+  on("#importJson", "click", () => { const f = $("#importFile"); if (f) f.click(); });
+  on("#importFile", "change", (e) => {
     const file = e.target.files[0];
     if (!file) return;
     file.text().then((text) => {
       try {
         const bundle = parseBundle(text);
         writeBundleToStorage(bundle, () => {
-          archive = null;
+          setArchive(null);
           logCache.clear();
           load();
           alert(`Imported ${bundle.matches.length} matches into your live data.`);
@@ -1889,7 +1949,7 @@
   });
 
   // Archive & clear: download everything, then wipe local storage.
-  $("#archiveClear").addEventListener("click", () => {
+  on("#archiveClear", "click", () => {
     if (readOnly()) return;
     if (!all.length) return alert("There are no matches to archive.");
     buildBundle(true, (bundle) => {
@@ -1912,12 +1972,12 @@
           const keys = Object.keys(data || {}).filter(
             (k) => k === "shares" || k.startsWith("deckcards_") || k.startsWith("log_")
           );
-          chrome.storage.local.remove(keys, () => {
+          STORE.removeKeys(keys, () => {
             all = [];
             expanded.clear();
             logCache.clear();
             forgetAllVisual();
-            chrome.storage.local.set({ matches: [] }, () => {
+            STORE.writeMatches([], () => {
               buildFilterOptions();
               render();
               alert("Local data cleared. The archive file has everything.");
@@ -1929,26 +1989,27 @@
   });
 
   // View archive: render a file read-only without touching stored data.
-  $("#viewArchive").addEventListener("click", () => {
+  on("#viewArchive", "click", () => {
     if (archive) {
-      archive = null;
+      setArchive(null);
       logCache.clear();
-      $("#viewArchive").textContent = "View archive";
+      setText("#viewArchive", "View archive");
       load();
       return;
     }
-    $("#archiveFile").click();
+    const picker = $("#archiveFile");
+    if (picker) picker.click();
   });
-  $("#archiveFile").addEventListener("change", (e) => {
+  on("#archiveFile", "change", (e) => {
     const file = e.target.files[0];
     if (!file) return;
     file.text().then((text) => {
       try {
         const bundle = parseBundle(text);
-        archive = { name: file.name, matches: bundle.matches, deckCards: bundle.deckCards };
+        setArchive({ name: file.name, matches: bundle.matches, deckCards: bundle.deckCards });
         logCache.clear();
         expanded.clear();
-        $("#viewArchive").textContent = "Exit archive";
+        setText("#viewArchive", "Exit archive");
         load();
       } catch (err) {
         alert("Could not read archive: " + err.message);
@@ -1956,14 +2017,14 @@
     });
     e.target.value = "";
   });
-  $("#archiveExit").addEventListener("click", () => {
-    archive = null;
+  on("#archiveExit", "click", () => {
+    setArchive(null);
     logCache.clear();
-    $("#viewArchive").textContent = "View archive";
+    setText("#viewArchive", "View archive");
     load();
   });
 
-  $("#clearAll").addEventListener("click", () => {
+  on("#clearAll", "click", () => {
     if (readOnly()) return;
     if (confirm(
       "Delete ALL recorded matches, logs, replays and share links? " +
@@ -1978,7 +2039,7 @@
         const keys = Object.keys(data || {}).filter(
           (k) => k === "shares" || k.startsWith("deckcards_") || k.startsWith("log_")
         );
-        if (keys.length) chrome.storage.local.remove(keys);
+        if (keys.length) STORE.removeKeys(keys);
       });
       persist(all, () => { buildFilterOptions(); render(); });
     }
@@ -1987,25 +2048,12 @@
   // ---- backups ---------------------------------------------------------
 
   const DAY_MS = 86400000;
-  // The recorder reads visualReplay* out of this same object at match start,
-  // and the service worker reads the retention count out of it at every gc.
-  // shareEndpoint is a public URL, not a secret - see share/config.js. It is a
-  // setting, but has no Settings field: a self-hoster can still point the
-  // extension at their own instance without editing code by writing it to
-  // storage, and everyone else is spared a box they would never touch. There is
-  // deliberately no TTL setting: expiry is a bucket-wide lifecycle rule, not a
-  // property of a share.
-  const defaultSettings = {
-    autoBackup: false, lastBackup: 0, bannerDismissed: 0,
-    visualReplayEnabled: true, visualReplayKeepMatches: 25, visualReplayMaxMatchMb: 512,
-    shareEndpoint: window.RAShareConfig.DEFAULT_SHARE_ENDPOINT,
-  };
 
-  const getSettings = (cb) =>
-    chrome.storage.local.get({ settings: defaultSettings }, (d) =>
-      cb(Object.assign({}, defaultSettings, d.settings || {}))
-    );
-  const setSettings = (s, cb) => chrome.storage.local.set({ settings: s }, cb || (() => {}));
+  // The settings shape lives in storage.js now - a second copy here would drop
+  // whichever keys it had not heard about on every write it made.
+  const defaultSettings = STORE.defaultSettings;
+  const getSettings = STORE.getSettings;
+  const setSettings = STORE.setSettings;
 
   function writeBackup(cb) {
     if (!all.length) return cb && cb(new Error("nothing to back up"));
@@ -2047,7 +2095,8 @@
   function refreshBackupUI() {
     getSettings((s) => {
       chrome.permissions.contains({ permissions: ["downloads"] }, (granted) => {
-        $("#autoBackup").checked = !!(s.autoBackup && granted);
+        const box = $("#autoBackup");
+        if (box) box.checked = !!(s.autoBackup && granted);
         showBackupState(s);
         if (s.autoBackup && granted && Date.now() - (s.lastBackup || 0) > DAY_MS) writeBackup();
         maybeShowBanner(s, granted);
@@ -2065,16 +2114,19 @@
       !archive && all.length >= 3 && (never || stale) && !(s.autoBackup && granted) && !dismissedRecently;
     banner.hidden = !show;
     if (show) {
-      $("#backupBannerText").textContent = never
+      setText(
+        "#backupBannerText",
+        never
         ? `You have ${all.length} matches stored only inside this extension. Removing it — or loading it from a different folder — wipes them. Save a backup.`
-        : `Your last backup was ${new Date(s.lastBackup).toLocaleDateString()}. Matches since then exist only inside this extension.`;
+          : `Your last backup was ${new Date(s.lastBackup).toLocaleDateString()}. Matches since then exist only inside this extension.`
+      );
     }
   }
 
   const requestBackupPermission = (cb) =>
     chrome.permissions.request({ permissions: ["downloads"] }, cb);
 
-  $("#autoBackup").addEventListener("change", (e) => {
+  on("#autoBackup", "change", (e) => {
     const on = e.target.checked;
     if (!on) {
       getSettings((s) => { s.autoBackup = false; setSettings(s, refreshBackupUI); });
@@ -2093,14 +2145,14 @@
     });
   });
 
-  $("#bannerBackup").addEventListener("click", () => {
+  on("#bannerBackup", "click", () => {
     chrome.permissions.contains({ permissions: ["downloads"] }, (granted) => {
       const go = () =>
         writeBackup((err) => {
           if (err) buildBundle(false, (b) =>
             download(`riftatlas-matches-${stamp()}.json`, JSON.stringify(b, null, 2), "application/json")
           );
-          $("#backupBanner").hidden = true;
+          hideBackupBanner();
         });
       if (granted) return go();
       requestBackupPermission((ok) => {
@@ -2108,7 +2160,7 @@
         buildBundle(false, (b) =>
           download(`riftatlas-matches-${stamp()}.json`, JSON.stringify(b, null, 2), "application/json")
         );
-        $("#backupBanner").hidden = true;
+        hideBackupBanner();
       });
     });
   });
@@ -2145,23 +2197,31 @@
     // The spinners' bounds come from the constants above so the two can't drift.
     const keep = $("#visualKeep");
     const ceiling = $("#visualCeiling");
-    keep.min = String(KEEP_MIN);
-    keep.max = String(KEEP_MAX);
-    ceiling.min = String(CEILING_MIN_MB);
-    ceiling.max = String(CEILING_MAX_MB);
+    if (keep) {
+      keep.min = String(KEEP_MIN);
+      keep.max = String(KEEP_MAX);
+    }
+    if (ceiling) {
+      ceiling.min = String(CEILING_MIN_MB);
+      ceiling.max = String(CEILING_MAX_MB);
+    }
     getSettings((s) => {
-      $("#visualEnabled").checked = s.visualReplayEnabled !== false;
+      const enabled = $("#visualEnabled");
+      if (enabled) enabled.checked = s.visualReplayEnabled !== false;
+      // Read whether or not the field exists: the diagnostics panel projects
+      // disk use from it, and that projection outlives this file's own markup.
       keepMatches = clampKeep(s.visualReplayKeepMatches);
-      keep.value = keepMatches;
+      if (keep) keep.value = keepMatches;
       const mb = clampCeiling(s.visualReplayMaxMatchMb);
-      ceiling.value = mb > 0 ? mb : ""; // blank, not 0, is what "no limit" looks like
+      // blank, not 0, is what "no limit" looks like
+      if (ceiling) ceiling.value = mb > 0 ? mb : "";
       // The panel projects disk use from the retention count, so it has to be
       // redrawn whenever that number changes.
       renderVisualPanel();
     });
   }
 
-  $("#visualEnabled").addEventListener("change", (e) => {
+  on("#visualEnabled", "change", (e) => {
     const on = e.target.checked;
     getSettings((s) => {
       s.visualReplayEnabled = on;
@@ -2169,7 +2229,7 @@
     });
   });
 
-  $("#visualKeep").addEventListener("change", (e) => {
+  on("#visualKeep", "change", (e) => {
     const n = clampKeep(e.target.value);
     e.target.value = n; // show what was actually stored, clamp included
     getSettings((s) => {
@@ -2178,7 +2238,7 @@
     });
   });
 
-  $("#visualCeiling").addEventListener("change", (e) => {
+  on("#visualCeiling", "change", (e) => {
     const mb = clampCeiling(e.target.value);
     e.target.value = mb > 0 ? mb : "";
     getSettings((s) => {
@@ -2187,10 +2247,10 @@
     });
   });
 
-  $("#bannerDismiss").addEventListener("click", () => {
+  on("#bannerDismiss", "click", () => {
     getSettings((s) => {
       s.bannerDismissed = Date.now();
-      setSettings(s, () => { $("#backupBanner").hidden = true; });
+      setSettings(s, () => { hideBackupBanner(); });
     });
   });
 
