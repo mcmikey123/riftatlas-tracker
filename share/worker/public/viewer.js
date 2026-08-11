@@ -6,6 +6,9 @@
  *
  *   /#1.<object-id>.<key>   ->   GET /b/<object-id>   ->   AES-GCM   ->   rrweb
  *
+ * An optional fourth fragment field is a position in whole seconds, and the
+ * replay opens there. "Copy link to this moment" is the other half of it.
+ *
  * The fragment never leaves the browser, so the instance serving this page
  * cannot read what it is storing. It follows that everything here runs in the
  * client and that every failure has to be explained in the page itself.
@@ -35,7 +38,8 @@
     "RAShareHosts",
     "rehydrateCssAssets",
     "RAShareViewer",
-    "RARepaint"
+    "RARepaint",
+    "RAClipboard"
   ];
 
   // Secondary lines. The headline says what happened; these say what to do,
@@ -214,9 +218,32 @@
     }, CARD_ART_INTERVAL_MS);
   }
 
-  function mount(meta, events) {
+  /**
+   * A link to this same share, opening wherever the replay is right now.
+   *
+   * The endpoint is this page's own origin, which is the whole point of the
+   * Worker serving both the viewer and the object: the link a recipient
+   * forwards is the link they were given, pointing at the instance that
+   * actually holds the bytes.
+   *
+   * The address bar is deliberately left alone. Rewriting location.hash as
+   * playback advanced would push a history entry every few seconds and turn
+   * Back into "one second earlier"; this button is the explicit gesture
+   * instead.
+   */
+  function copyMoment(link, button) {
+    const url = root.RAShareHosts.buildLink({
+      endpoint: root.location.origin,
+      objectId: link.objectId,
+      keyBytes: link.keyBytes,
+      atSeconds: root.RAShareHosts.toLinkSeconds(playback.getTime())
+    });
+    root.RAClipboard.copyToButton(url, button);
+  }
+
+  function mount(meta, events, link) {
     const { ViewerError, fmtClock } = root.RAShareViewer;
-    const { MAX_CHIPS, timeline, evenly, truncationText } = root.RAReplayTimeline;
+    const { MAX_CHIPS, SEEK, timeline, evenly, truncationText } = root.RAReplayTimeline;
 
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
@@ -255,6 +282,12 @@
       events,
       meta,
       marks,
+      autoplay: true,
+      // A plain link plays on open; a link that names a moment opens paused at it,
+      // because the sender is pointing at that moment and playing on walks off it.
+      // The core makes that call - see shouldAutoplay - so both surfaces cannot
+      // drift on it. null here means "no moment given"; 0 means second zero.
+      startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
       onTime: paintTime,
       onPlayState: paintPlayState
     });
@@ -265,29 +298,47 @@
 
     ui.sub.textContent = summarise(meta, marks, playback.totalTime);
     ui.play.addEventListener("click", () => playback.togglePlay());
+    ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));
     ui.prev.addEventListener("click", () => playback.stepTo(-1));
     ui.next.addEventListener("click", () => playback.stepTo(1));
-    ui.seek.addEventListener("input", () => playback.seek(parseInt(ui.seek.value, 10) || 0));
+    // `input` fires all the way through a drag, so the drag holds playback and
+    // the end of the drag is what puts it back. The end is taken from the events
+    // that always fire — never from `change`, which Gecko withholds when the
+    // value lands back where the interaction started it, and this page is served
+    // to whatever browser the link was opened in.
+    ui.seek.addEventListener("input", () => playback.seek(parseInt(ui.seek.value, 10) || 0, SEEK.DRAG));
+    for (const type of root.RAReplayCore.DRAG_END_EVENTS) ui.seek.addEventListener(type, playback.endDrag);
     ui.chapters.addEventListener("click", (e) => {
       const ms = e.target && e.target.dataset ? e.target.dataset.ms : undefined;
-      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0);
+      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
     });
     // Fit once more after layout settles; the first fit runs inside create(),
     // before the chapter row has necessarily taken its final height.
     root.requestAnimationFrame(() => playback.refit());
+
+    /* Anything appearing above the player steals height from the stage, and the
+     * board keeps whatever scale it was fitted at — so it sits clipped until the
+     * window happens to be resized. The card-art notice does exactly that, about
+     * two seconds in. Same guard as the extension's modal: the callback writes only
+     * a transform on a child, which changes no layout, so it cannot feed itself.
+     * Nothing disconnects it because this page never tears the player down. */
+    if (typeof root.ResizeObserver === "function") {
+      new root.ResizeObserver(() => playback.refit()).observe(ui.stage);
+    }
+
     watchCardArt();
   }
 
   function onKey(e) {
     if (!playback) return;
-    const target = e.target;
-    const tag = (target && target.tagName) || "";
-    // The slider owns its own arrow keys, and a focused button owns space.
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-    if (target && target.isContentEditable) return;
+    // Text entry owns its keys and a focused button owns space. The rule itself
+    // is `targetOwnsKey` in replay-timeline.js, shared with the extension's
+    // modal: this page and that one had drifted on it four times, and a guard
+    // that is right in one viewer and absent in the other is one bug shipped
+    // twice.
+    if (root.RAReplayTimeline.targetOwnsKey(e.target, e.key)) return;
 
     if (e.key === " " || e.key === "Spacebar") {
-      if (tag === "BUTTON") return;
       e.preventDefault();
       playback.togglePlay();
     } else if (e.key === "ArrowLeft") {
@@ -298,10 +349,10 @@
       playback.stepTo(1);
     } else if (e.key === "Home") {
       e.preventDefault();
-      playback.seek(0);
+      playback.seek(0, root.RAReplayTimeline.SEEK.JUMP);
     } else if (e.key === "End") {
       e.preventDefault();
-      playback.seek(playback.totalTime);
+      playback.seek(playback.totalTime, root.RAReplayTimeline.SEEK.JUMP);
     }
   }
 
@@ -326,7 +377,7 @@
       const events = rehydrate(payload);
 
       try {
-        mount((payload && payload.meta) || {}, events);
+        mount((payload && payload.meta) || {}, events, link);
       } catch (err) {
         // Everything from here down is the engine refusing the recording, which
         // is one remedy — reading it — not the generic "something went wrong".
@@ -342,7 +393,7 @@
 
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
-      "player", "play", "prev", "next", "seek", "clock", "chapters", "stage", "scale"]) {
+      "player", "play", "prev", "next", "seek", "clock", "copyAt", "chapters", "stage", "scale"]) {
       ui[id] = doc.getElementById(id);
     }
 

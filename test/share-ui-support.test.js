@@ -17,8 +17,13 @@ const {
   isPrunable,
   pruneShares,
   PRUNE_GRACE_MS,
+  MIN_REUSE_MS,
+  remainingMs,
   expiryText,
   readShareList,
+  reusableShare,
+  reuseNotice,
+  planShare,
   describeRecheck
 } = require("../share/share-ui-support.js");
 
@@ -280,6 +285,177 @@ test("a missing or non-array shares key reads as no shares", () => {
   for (const bad of [undefined, null, {}, "shares", 7]) {
     assert.deepStrictEqual(readShareList(bad), [], String(bad));
   }
+});
+
+/* ---- which share gets reused -------------------------------------------
+ *
+ * This is what stands between "copy a link to this moment" and re-uploading
+ * 3.5 MB every time someone presses it, so it is tested as the decision it is
+ * rather than left as a lookup inside a click handler.
+ */
+
+test("a match with no share at all has nothing to reuse", () => {
+  assert.strictEqual(reusableShare([], "m1", CREATED), null);
+  assert.strictEqual(reusableShare([record({ matchId: "m2" })], "m1", CREATED), null);
+});
+
+test("a live share for this match is what gets reused", () => {
+  const found = reusableShare([record()], "m1", CREATED + HOUR);
+  assert.ok(found, "a share created an hour ago must be reusable");
+  assert.strictEqual(found.objectId, "A".repeat(22));
+  assert.strictEqual(found.key, "B".repeat(43));
+  // The record's own endpoint comes back, not the one in Settings: the object
+  // lives where it was uploaded, however the setting has moved since.
+  assert.strictEqual(found.endpoint, "https://share.example.workers.dev");
+});
+
+// Records are keyed by object id, so a match can hold several. The newest has
+// the most days left on it, and that is the one worth handing out.
+test("the newest live share wins when a match has several", () => {
+  const found = reusableShare(
+    [
+      record({ objectId: "A".repeat(22), createdAt: CREATED }),
+      record({ objectId: "C".repeat(22), createdAt: CREATED + 2 * HOUR }),
+      record({ objectId: "B".repeat(22), createdAt: CREATED + HOUR })
+    ],
+    "m1",
+    CREATED + 3 * HOUR
+  );
+  assert.strictEqual(found.objectId, "C".repeat(22));
+});
+
+// The object behind an expired record is gone or going, so reusing it would
+// hand over a link that opens to nothing. Uploading again is the right answer.
+test("an expired share is never reused, however recent it is otherwise", () => {
+  const stale = record({ createdAt: CREATED });
+  assert.strictEqual(reusableShare([stale], "m1", CREATED + SHARE_TTL_MS), null);
+  assert.strictEqual(reusableShare([stale], "m1", CREATED + SHARE_TTL_MS + HOUR), null);
+});
+
+/* Unexpired is not the bar. A link is handed over to be opened later, so a
+ * record with minutes left on it is reused into a share the sharer believes they
+ * just made and the recipient finds dead tomorrow - and nothing can re-share or
+ * revoke it. A fresh upload costs 3.5 MB and buys seven days. */
+test("a share about to expire is uploaded afresh rather than reused", () => {
+  const stale = record({ createdAt: CREATED });
+  const dies = CREATED + SHARE_TTL_MS;
+  assert.ok(reusableShare([stale], "m1", dies - MIN_REUSE_MS), "exactly the minimum still reuses");
+  assert.strictEqual(reusableShare([stale], "m1", dies - MIN_REUSE_MS + 1), null, "one ms under does not");
+  assert.strictEqual(reusableShare([stale], "m1", dies - HOUR), null, "an hour left is not a share");
+});
+
+// The figure itself, because it is a promise about what a reused link is worth:
+// never less than the slack the bucket's own lifecycle rule runs with.
+test("the reuse floor is a day, and a day is less than the TTL", () => {
+  assert.strictEqual(MIN_REUSE_MS, 86400000);
+  assert.ok(MIN_REUSE_MS < SHARE_TTL_MS, "a floor at or above the TTL would reuse nothing, ever");
+  assert.strictEqual(remainingMs(record(), CREATED), SHARE_TTL_MS);
+  assert.strictEqual(remainingMs(record(), CREATED + SHARE_TTL_MS + HOUR), -HOUR, "gone reads negative");
+});
+
+test("the newest UNEXPIRED share wins, not simply the newest", () => {
+  const found = reusableShare(
+    [
+      record({ objectId: "A".repeat(22), createdAt: CREATED - 3 * HOUR }),
+      record({ objectId: "C".repeat(22), createdAt: CREATED - SHARE_TTL_MS - HOUR })
+    ],
+    "m1",
+    CREATED
+  );
+  assert.strictEqual(found.objectId, "A".repeat(22), "the expired newer record must be skipped");
+});
+
+test("shares for other matches are never reused for this one", () => {
+  const found = reusableShare(
+    [record({ objectId: "C".repeat(22), matchId: "m2", createdAt: CREATED + HOUR }), record()],
+    "m1",
+    CREATED + 2 * HOUR
+  );
+  assert.strictEqual(found.objectId, "A".repeat(22));
+});
+
+/* A record that cannot rebuild a link is not a share to reuse - reusing it
+ * would produce a link that decrypts to nothing, and it would do so instead of
+ * the upload that would have worked. readShareList already drops these; this
+ * asserts the reuse path is behind that filter rather than beside it. */
+test("a record that could never produce a link is not reused", () => {
+  const broken = [
+    record({ key: "" }),
+    record({ key: "B".repeat(42) }),
+    record({ objectId: "A".repeat(21) }),
+    record({ createdAt: 0 }),
+    null,
+    "nonsense"
+  ];
+  assert.strictEqual(reusableShare(broken, "m1", CREATED), null);
+});
+
+test("an unreadable shares key or a missing match id reuses nothing", () => {
+  for (const bad of [undefined, null, {}, "shares", 7]) {
+    assert.strictEqual(reusableShare(bad, "m1", CREATED), null, String(bad));
+  }
+  for (const bad of [undefined, null, ""]) {
+    assert.strictEqual(reusableShare([record()], bad, CREATED), null, String(bad));
+  }
+});
+
+/* ---- reuse, unless forced ----------------------------------------------
+ *
+ * Two buttons produce a share link - the replay modal's "copy a link to this
+ * moment" and the match row's "Create share link" - and both take this
+ * decision. It is a decision and not a lookup because of the escape hatch: a
+ * forced upload must not be talked out of itself by a share that happens to be
+ * live.
+ */
+
+test("a live share is reused, and its record comes back to rebuild the link from", () => {
+  const plan = planShare([record()], "m1", CREATED + HOUR, { forceNew: false });
+  assert.strictEqual(plan.action, "reuse");
+  assert.strictEqual(plan.record.objectId, "A".repeat(22));
+});
+
+test("nothing live means an upload, and no record to pretend otherwise with", () => {
+  assert.deepStrictEqual(planShare([], "m1", CREATED, { forceNew: false }), {
+    action: "upload",
+    record: null
+  });
+  // Expired, and one an hour short of the reuse floor: both are uploads.
+  const stale = record({ createdAt: CREATED });
+  assert.strictEqual(planShare([stale], "m1", CREATED + SHARE_TTL_MS).action, "upload");
+  assert.strictEqual(planShare([stale], "m1", CREATED + SHARE_TTL_MS - HOUR).action, "upload");
+});
+
+/* The escape hatch. Someone about to publish a link wants the full seven days,
+ * not the two left on a share made five days ago, and there is no other way to
+ * get them: a share cannot be extended, re-uploaded in place, or revoked. */
+test("forcing uploads even when a share with days left exists", () => {
+  const plan = planShare([record()], "m1", CREATED + HOUR, { forceNew: true });
+  assert.deepStrictEqual(plan, { action: "upload", record: null });
+});
+
+// Skipping the lookup rather than overriding its answer is the point: a share
+// landing between the press and the read must not turn a forced upload into a
+// reuse of the very share the presser was refusing.
+test("forcing ignores a share that landed a moment ago", () => {
+  const justLanded = [record({ objectId: "C".repeat(22), createdAt: CREATED + HOUR })];
+  assert.strictEqual(planShare(justLanded, "m1", CREATED + HOUR, { forceNew: true }).action, "upload");
+});
+
+test("no options at all reads as not forced", () => {
+  assert.strictEqual(planShare([record()], "m1", CREATED + HOUR).action, "reuse");
+  assert.strictEqual(planShare([record()], "m1", CREATED + HOUR, {}).action, "reuse");
+});
+
+/* The sentence a reused link is handed over with. It is asserted rather than
+ * left to the two panels because it carries the one fact the presser cannot
+ * otherwise learn: they got what is left of a week, not a fresh one. */
+test("a reused link says it is reused and when it dies", () => {
+  const now = CREATED + 5 * 86400000;
+  const text = reuseNotice(record(), now);
+  assert.match(text, /Reusing the share already made for this match/);
+  assert.match(text, /no second upload/);
+  assert.ok(text.includes(expiryText(record(), now)), "the remaining life must be spelled out");
+  assert.match(text, /in 2 days/);
 });
 
 // The outcomes need different reactions from the reader: the link works, the

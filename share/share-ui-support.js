@@ -222,6 +222,31 @@
   }
 
   /**
+   * How much life a share must have left before it is handed over again instead
+   * of uploading the replay afresh.
+   *
+   * The same asymmetry `isPrunable` reasons about, pointing the other way. There
+   * the question is "might this object still be alive?" and the answer keeps a
+   * record two days past its TTL. Here it is "will this link still work when it
+   * is opened?", and unexpired is not a good enough answer: a record made 6d23h
+   * ago is unexpired, and reusing it hands someone a link that dies within the
+   * hour, for a share they believe they just made. Nothing can re-share or
+   * revoke afterwards, and the sharer finds out only when the recipient says the
+   * link is dead.
+   *
+   * A day is the natural figure - it is the slack the bucket's own lifecycle
+   * rule runs with, so it is the shortest remaining life this side can honestly
+   * describe. Below it the answer is an upload: 3.5 MB and about 600 ms buys
+   * seven days instead of minutes, which is the trade every time.
+   */
+  const MIN_REUSE_MS = 86400000;
+
+  /** How long a share has left, in ms; negative once it has gone. */
+  function remainingMs(record, now) {
+    return expiresAt(record) - Number(now);
+  }
+
+  /**
    * The `shares` array with the certainly-dead records dropped, for writing
    * back. Anything undatable is kept rather than discarded: this decides what
    * to delete, and "I can't read this record" is not evidence that its object
@@ -291,6 +316,100 @@
   }
 
   /**
+   * The share to rebuild a link from instead of uploading the replay again, or
+   * null when there is nothing usable.
+   *
+   * This is the whole decision behind "copy a link to this moment" in the
+   * replay modal. Uploading again would cost about 600 ms of blocked main
+   * thread and a 3.5 MB PUT to produce a link the browser could have assembled
+   * from a record it already holds - and it would leave a second copy on the
+   * endpoint that nothing can delete before its own TTL elapses. So an
+   * unexpired share for this match is reused, always.
+   *
+   * Three things this has to get right, none of them obvious from a lookup:
+   *
+   *   Records are keyed by object id, not by match id. A match can have been
+   *   shared several times, so this is a search, not a get, and the NEWEST
+   *   unexpired one wins - it has the most days left on it.
+   *
+   *   Expiry is the record's own createdAt plus the fixed TTL, and a record has
+   *   to clear it by `MIN_REUSE_MS` rather than merely clear it. An expired
+   *   record cannot be reused however recently it was made - the object behind
+   *   it is gone or going - and one about to expire is barely better, because
+   *   the link is handed over to be opened later.
+   *
+   *   The link is rebuilt against the RECORD's endpoint, not the one in
+   *   Settings - that is the caller's job, but it is why the whole record comes
+   *   back rather than an object id. A share uploaded before the setting
+   *   changed still lives where it was put.
+   *
+   * Pure over the raw stored array and a clock, so which share gets reused is
+   * decidable without chrome.storage, a replay or a network.
+   */
+  function reusableShare(raw, matchId, now) {
+    const wanted = String(matchId == null ? "" : matchId);
+    if (!wanted) return null;
+    // readShareList drops every record that could not produce a link and hands
+    // back what is left newest first, which is the order this wants.
+    for (const record of readShareList(raw)) {
+      if (record.matchId === wanted && remainingMs(record, now) >= MIN_REUSE_MS) return record;
+    }
+    return null;
+  }
+
+  /**
+   * What to say when a link came out of an existing share rather than an upload.
+   *
+   * One sentence in one place because two buttons produce it - the replay
+   * modal's "copy a link to this moment" and the match row's "Create share
+   * link" - and a reader who presses both must not be told two different
+   * things about the same decision.
+   *
+   * What the share has left is said out loud. A reused share carries whatever
+   * remains of its seven days, not seven fresh ones, and the sharer has no
+   * other way to learn that: they pressed a button and got a link, and the
+   * recipient is the one who finds out it died. `reusableShare` refuses
+   * anything with under a day on it, so this is never counting down in hours -
+   * but "in 2 days" and "in 6 days" are different things to be handing
+   * someone, and only one of them is what a fresh share would have given.
+   */
+  function reuseNotice(record, now) {
+    return (
+      "Reusing the share already made for this match — no second upload, and no second copy " +
+      `on the endpoint. It expires ${expiryText(record, now)}.`
+    );
+  }
+
+  /**
+   * Whether pressing a share button should hand back a share that already
+   * exists or upload the replay again.
+   *
+   *   { action: "reuse", record }   rebuild the link from `record`
+   *   { action: "upload", record: null }   run the pipeline
+   *
+   * `options.forceNew` is the escape hatch behind "Create a new link anyway",
+   * and it is the whole reason this is a decision rather than a lookup. Reuse
+   * is right almost always - it costs a base64 decode instead of 600 ms of
+   * blocked main thread, a 3.5 MB PUT and a second undeletable object - but it
+   * hands over a link with whatever is left of the original seven days.
+   * Someone who wants the full week for a link they are about to publish has
+   * no way to get it otherwise: there is no revocation, no re-upload of an
+   * existing share, and no way to extend one.
+   *
+   * Forcing deliberately skips the lookup rather than overriding its answer, so
+   * a share landing a moment earlier cannot turn a forced upload into a reuse
+   * of the very share the presser was trying not to reuse.
+   *
+   * Pure over the raw stored array, a clock and the flag, so "reuse, unless
+   * forced" is decidable - and asserted - without a DOM or a click.
+   */
+  function planShare(raw, matchId, now, options) {
+    if (options && options.forceNew) return { action: "upload", record: null };
+    const record = reusableShare(raw, matchId, now);
+    return record ? { action: "reuse", record } : { action: "upload", record: null };
+  }
+
+  /**
    * What a re-check learned. Four outcomes, deliberately not two: "couldn't
    * reach the endpoint" is not "expired", and reporting it as expired would
    * tell someone their share was gone when it is still being served.
@@ -354,6 +473,7 @@
     SHARE_TTL_DAYS,
     SHARE_TTL_MS,
     PRUNE_GRACE_MS,
+    MIN_REUSE_MS,
     MESSAGES,
     RECHECK_MESSAGES,
     RECHECK_LABELS,
@@ -364,11 +484,15 @@
     hasShareMagic,
     shareRecord,
     expiresAt,
+    remainingMs,
     isExpired,
     isPrunable,
     pruneShares,
     expiryText,
     readShareList,
+    reusableShare,
+    reuseNotice,
+    planShare,
     describeRecheck
   };
 

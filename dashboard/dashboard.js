@@ -54,7 +54,7 @@
       render();
       refreshBackupUI();
       refreshVisualSettingsUI();
-      refreshShareSettingsUI();
+      loadShareEndpoint();
       refreshShares();
       dropLegacyReplays();
     });
@@ -574,6 +574,12 @@
    * 7-day lifecycle rule removes it. So the Share button opens a panel that says
    * all of that first, and the upload is a second, deliberate click.
    *
+   * That second click does not always upload. A live share for this match is
+   * handed back instead - see `startRowShare` - because a second upload leaves a
+   * second undeletable copy of the same replay on the endpoint for the same
+   * seven days. The panel says when a link is reused and offers a forced upload
+   * for someone who wants a full week rather than what is left of one.
+   *
    * Building a share blocks the main thread for ~600 ms on the worst replay
    * measured - JSON.stringify 224 ms plus deflate 273 ms, with crypto at 3 ms -
    * and peaks near 380 MB. Every phase therefore paints before it begins, and
@@ -593,6 +599,9 @@
   const shareState = new Map();
   const shareOpen = new Set();
   let shareBusy = null; // matchId of the share currently running, or null
+  // The promise that share settles with, so a second caller asking for the same
+  // match waits on the share already running instead of being told nothing.
+  let shareRunning = null;
 
   const SHARE_PHASES = {
     preparing: "Reading the replay…",
@@ -680,14 +689,30 @@
     let body;
     if (s.link) {
       const expires = new Date(s.createdAt + SHARE.SHARE_TTL_MS);
+      /* The error has to render here too, not only in the no-link branch below.
+       * "Create a new link anyway" is offered while a link is on screen, and the
+       * refusals it can hit - another match already uploading, or a broken stored
+       * endpoint - set an error without clearing the link, so this branch is the
+       * one that paints. Without this the button just re-enables itself and
+       * nothing else happens, however many times it is pressed. Clearing the link
+       * instead would throw away the very thing the user is looking at. */
       body = `
+        ${s.error ? `<p class="share-error">${esc(s.error)}</p>` : ""}
         ${shareLinkRowHtml(s.link, matchId, {
           label: "this match",
           field: "sharelink",
           copy: "sharecopy",
           copyText: "Copy link",
         })}
-        <p class="share-note">Uploaded and verified. Expires ${esc(expires.toLocaleDateString())}.</p>`;
+        ${
+          s.reuse
+            ? `<p class="share-note">${esc(SHARE.reuseNotice(s.reuse, Date.now()))}</p>
+        <button class="rp-btn share-again" data-sharenew="${esc(matchId)}"
+                title="Upload this replay again for a full ${SHARE.SHARE_TTL_DAYS} days. The copy already on the endpoint stays there until it expires.">Create a new link anyway</button>`
+            : `<p class="share-note">Uploaded and verified. Expires ${esc(
+                expires.toLocaleDateString()
+              )}.</p>`
+        }`;
     } else if (s.phase && s.phase !== "idle") {
       body = `<p class="share-progress">${esc(SHARE_PHASES[s.phase] || "Working…")}</p>`;
     } else {
@@ -712,11 +737,18 @@
     // a collapsed panel without reopening it.
     box.hidden = !shareOpen.has(matchId);
     box.innerHTML = shareBoxInner(matchId);
+    // The toggle says what the panel is doing. It used to be enough for the
+    // click handler to keep the two in step, because a share could only ever
+    // start from inside an already-open panel; a share started from the replay
+    // modal opens this one from somewhere the toggle cannot see.
+    const toggle = document.querySelector(`[data-share="${CSS.escape(matchId)}"]`);
+    if (toggle) toggle.textContent = shareOpen.has(matchId) ? "hide" : "share a link";
   }
 
   function setShare(matchId, patch) {
     shareState.set(matchId, Object.assign({}, shareState.get(matchId), patch));
     paintShare(matchId);
+    paintMomentPanel(matchId);
   }
 
   // The only endpoints that legitimately cannot offer https, and the only ones
@@ -881,9 +913,13 @@
       createdAt: Date.now(),
     });
     await rememberShare(record);
+    // The record comes back as well as the link: the replay modal rebuilds its
+    // own link from it with a timestamp attached, rather than splicing one onto
+    // the end of a string somebody else assembled.
     return {
       link: window.RAShareHosts.buildLink({ endpoint, objectId, keyBytes }),
       createdAt: record.createdAt,
+      record,
     };
   }
 
@@ -920,35 +956,61 @@
     );
   }
 
+  /* Resolves with what runShare produced, or null if nothing was uploaded -
+   * refused or failed. Never rejects: every failure has already been turned into
+   * a message in the panel by the time this settles, and a second caller
+   * re-reporting it would say the same thing twice. The replay modal awaits it;
+   * the row's own button ignores it.
+   *
+   * Asking for a share of THIS match while that same share is in flight hands
+   * back the promise it is already running on, rather than a null the caller
+   * would read as a failure: the modal's panel would paint "could not be
+   * prepared" over an upload that was seconds from succeeding. That is reachable
+   * by starting a share from the row's panel and then opening the modal. */
   function beginShare(matchId) {
     // Every message this raises is shown inside the panel, so the panel has to
     // be open for any of them to be read. It always is - the button that gets
     // here lives in it - but nothing else guarantees that.
     shareOpen.add(matchId);
     if (shareBusy) {
-      if (shareBusy !== matchId) {
-        setShare(matchId, {
-          phase: "idle",
-          error: "Another replay is being shared right now. Wait for that one to finish.",
-          retry: true,
-        });
-      }
-      return;
+      // The `||` is for the one path where shareBusy is set and the promise is
+      // not: a throw between the two assignments below. Unreachable today, and a
+      // caller crashing on `null.then` is not the way to find out otherwise.
+      if (shareBusy === matchId) return shareRunning || Promise.resolve(null);
+      setShare(matchId, {
+        phase: "idle",
+        error: "Another replay is being shared right now. Wait for that one to finish.",
+        retry: true,
+      });
+      return Promise.resolve(null);
     }
     const endpoint = shareEndpoint;
     const problem = endpointProblem(endpoint);
     if (problem) {
       setShare(matchId, { phase: "idle", error: problem, retry: true });
-      return;
+      return Promise.resolve(null);
     }
     shareBusy = matchId;
-    setShare(matchId, { phase: "preparing", link: null, error: null, retry: false });
-    runShare(matchId, endpoint)
+    // `reuse` goes with the link it described: what follows is an upload, and a
+    // stale reuse notice under a freshly uploaded link would say the opposite of
+    // what happened. Cleared here rather than on completion because every share
+    // passes through this phase, including a failing one.
+    setShare(matchId, { phase: "preparing", link: null, reuse: null, error: null, retry: false });
+    shareRunning = runShare(matchId, endpoint)
       .then(
-        ({ link, createdAt }) => setShare(matchId, { phase: "done", link, createdAt, error: null }),
+        (made) => {
+          setShare(matchId, {
+            phase: "done",
+            link: made.link,
+            createdAt: made.createdAt,
+            error: null,
+          });
+          return made;
+        },
         (err) => {
           console.warn("[RA-Tracker] sharing failed:", err);
           setShare(matchId, Object.assign({ phase: "idle", link: null }, shareFailure(err)));
+          return null;
         }
       )
       // finally, not then: a throw inside either settle handler above would
@@ -956,7 +1018,46 @@
       // match until the page is reloaded.
       .finally(() => {
         shareBusy = null;
+        shareRunning = null;
       });
+    return shareRunning;
+  }
+
+  /* The match row's "Create share link", and its "Create a new link anyway".
+   *
+   * The reuse decision lives here rather than inside `beginShare` because
+   * `beginShare` is also what the replay modal's moment path calls, and that
+   * path has already made the decision itself - it has a timestamp to splice
+   * into the link and a panel of its own to paint into, neither of which this
+   * side knows about. A check inside `beginShare` would run second, on a
+   * question already answered, and would have to be told to keep quiet for one
+   * of its two callers. One decision per button, taken by the button.
+   *
+   * The storage read happens on the click, not when the panel was opened, which
+   * is what makes this the check at the moment of upload: the panel can sit open
+   * for as long as it likes, and a share landing from the modal in the meantime
+   * is found here. `forceNew` is the one case that skips the lookup, because
+   * finding a share is exactly what the presser is refusing.
+   *
+   * Consent is not asked again: the disclosure is rendered above this button
+   * every time the panel is painted, so it is on screen for both the reuse and
+   * the forced upload. */
+  async function startRowShare(matchId, options) {
+    const plan = SHARE.planShare(await readStoredShares(), matchId, Date.now(), options);
+    if (plan.action === "reuse") {
+      // No upload and no record: a second record for the same object would be a
+      // duplicate row in the shares panel claiming to be a second share.
+      setShare(matchId, {
+        phase: "idle",
+        link: shareLinkOf(plan.record),
+        createdAt: plan.record.createdAt,
+        reuse: plan.record,
+        error: null,
+        retry: false,
+      });
+      return;
+    }
+    beginShare(matchId);
   }
 
   /* What to show for a failed share. Three sources, and only the middle one may
@@ -976,32 +1077,178 @@
     return { error: SHARE.MESSAGES.unprepared, retry: false };
   }
 
-  /* The field is selected either way, so a blocked clipboard still leaves the
-   * link ready for a manual copy rather than leaving the user with nothing.
-   * The button says what happened and then goes back to whatever it said. */
-  function copyLink(link, field, button) {
-    if (field) {
-      field.focus();
-      field.select();
-    }
-    const label = button.textContent;
-    const settle = (text) => {
-      button.textContent = text;
-      setTimeout(() => {
-        if (button.isConnected) button.textContent = label;
-      }, 1500);
-    };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(link).then(() => settle("Copied"), () => settle("Press Ctrl+C"));
-      return;
-    }
-    settle("Press Ctrl+C");
-  }
-
+  /* share/clipboard.js rather than a local copy: the standalone viewer hands
+   * over links from a button too, and the two surfaces have drifted on smaller
+   * things than this. Handing it the field selects it either way, so a blocked
+   * clipboard leaves the link ready for a manual copy rather than leaving the
+   * user with nothing. */
   function copyShareLink(matchId, button) {
     const s = shareState.get(matchId);
     if (!s || !s.link) return;
-    copyLink(s.link, document.querySelector(`[data-sharelink="${CSS.escape(matchId)}"]`), button);
+    window.RAClipboard.copyToButton(s.link, button, {
+      field: document.querySelector(`[data-sharelink="${CSS.escape(matchId)}"]`),
+    });
+  }
+
+  // ---- share a link to this moment --------------------------------------
+
+  /* The replay modal's "Copy link to this moment". The viewer's version of this
+   * is a string and a clipboard write, because the replay it is watching is
+   * already on the endpoint. A local replay has no URL at all, so the first
+   * moment shared from a match may have to run the entire pipeline - re-strip,
+   * compress, encrypt, upload, verify - which blocks the main thread for about
+   * 600 ms and sends about 3.5 MB.
+   *
+   * So it must not run every time, and it does not: an unexpired share for this
+   * match is reused, and reuse costs a base64 decode. Which record that is, and
+   * whether there is one at all, is `reusableShare` in share/share-ui-support.js
+   * where it is pure and tested. What is here is the storage read, the
+   * disclosure and the paint.
+   *
+   * Reuse deliberately does NOT re-check the endpoint first. The record says the
+   * object has days left, and spending a round trip to confirm that would undo
+   * the point of reusing; the shares panel has an explicit Re-check for the
+   * question "is it still there". */
+
+  // The modal panel following a share's phases, if one is open. The row's own
+  // panel is behind the modal and repaints as usual - the point of this is that
+  // the thing covering it says the same thing.
+  let momentFollow = null;
+
+  function paintMomentPanel(matchId) {
+    if (!momentFollow || momentFollow.matchId !== matchId) return;
+    if (!momentFollow.panel.isConnected) {
+      momentFollow = null;
+      return;
+    }
+    const s = shareState.get(matchId) || {};
+    if (!s.phase || s.phase === "idle") return;
+    momentFollow.panel.innerHTML = `<p class="share-progress">${esc(
+      SHARE_PHASES[s.phase] || "Working…"
+    )}</p>`;
+  }
+
+  /* A failed read is an empty list: there is nothing to reuse that we can see,
+   * and an upload is the right answer to that. lastError is consumed the way
+   * rememberShare consumes it - left unchecked, chrome logs a warning about an
+   * error this already handles. */
+  function readStoredShares() {
+    return new Promise((resolve) =>
+      chrome.storage.local.get({ shares: [] }, (data) => {
+        void chrome.runtime.lastError;
+        resolve((data && data.shares) || []);
+      })
+    );
+  }
+
+  function closeMomentPanel(panel) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+  }
+
+  /* The finished link, offered with its own Copy button rather than only pushed
+   * at the clipboard.
+   *
+   * After an upload the click that started it is seconds past counting as a user
+   * gesture and `writeText` would be refused - leaving the link in a fallback
+   * dialog, for a share the user did everything right to create. One fresh click
+   * on a button beside the link is a better ending, and it is the same read-only
+   * field and Copy pairing the row's own panel ends with. The reuse path shows
+   * the same thing for the same reason: its clipboard write can be refused too,
+   * and a panel that has already closed leaves a prompt over the replay as the
+   * only place the link exists. */
+  function showMomentLink(panel, link, note) {
+    panel.hidden = false;
+    panel.innerHTML = `
+      <div class="share-link-row">
+        <input class="share-link vr-share-link" type="text" readonly spellcheck="false"
+               aria-label="Share link opening at this moment" value="${esc(link)}" />
+        <button class="rp-btn vr-share-copy">Copy link</button>
+      </div>
+      <p class="share-note">${esc(note)}</p>`;
+    const field = panel.querySelector(".vr-share-link");
+    const copy = panel.querySelector(".vr-share-copy");
+    copy.addEventListener("click", () => window.RAClipboard.copyToButton(link, copy, { field }));
+    field.focus();
+    field.select();
+    return field;
+  }
+
+  /* An existing share, handed over instead of uploading a second copy of the
+   * same replay. Nothing is uploaded and no record is written: a second record
+   * for the same object would be a duplicate row in the shares panel claiming to
+   * be a second share.
+   *
+   * What it has left is said out loud, in the wording the match row's own reuse
+   * uses - `SHARE.reuseNotice`, so the two buttons cannot drift into describing
+   * the same decision differently. */
+  function offerReusedLink(panel, button, record, atSeconds) {
+    const link = shareLinkOf(record, atSeconds);
+    const field = showMomentLink(panel, link, SHARE.reuseNotice(record, Date.now()));
+    window.RAClipboard.copyToButton(link, button, { field });
+  }
+
+  /* Entry point handed to the modal. `atMs` was read at the click, so it names
+   * the moment the user meant even when an upload happens in between. */
+  async function shareMoment({ atMs, button, panel }, match) {
+    const atSeconds = window.RAShareHosts.toLinkSeconds(atMs);
+    const record = SHARE.reusableShare(await readStoredShares(), match.id, Date.now());
+    if (record) return offerReusedLink(panel, button, record, atSeconds);
+    // Nothing live to reuse, so this is a first upload. The disclosure comes
+    // first and the upload is a second, deliberate click - the same two steps
+    // the row's own share panel takes, because the thing being consented to is
+    // the same: a replay carrying an opponent's display name and the match chat
+    // leaves this machine, and it cannot be unshared afterwards.
+    askThenShareMoment(match.id, atSeconds, button, panel);
+  }
+
+  function askThenShareMoment(matchId, atSeconds, button, panel) {
+    panel.hidden = false;
+    panel.innerHTML = `${SHARE_DISCLOSURE}
+      <div class="vr-share-actions">
+        <button class="rp-btn vr-share-go">Create share link</button>
+        <button class="rp-btn vr-share-cancel">Cancel</button>
+      </div>`;
+    panel.querySelector(".vr-share-cancel").addEventListener("click", () => closeMomentPanel(panel));
+    const go = panel.querySelector(".vr-share-go");
+    go.addEventListener("click", async () => {
+      // Disabled synchronously: the re-read below is asynchronous, and a second
+      // click while it is out would start a second upload of the same replay.
+      go.disabled = true;
+      /* The reuse decision was made on the first click, which may be minutes
+       * back - long enough for a share of this match to have landed from the
+       * row's own panel behind the modal. Uploading now would put a second 3.5 MB
+       * object on the endpoint and write a second record, both undeletable for
+       * seven days, which is exactly what reuse exists to prevent. */
+      const landed = SHARE.reusableShare(await readStoredShares(), matchId, Date.now());
+      // The panel's own buttons go with its content, so a Cancel or a closed
+      // modal during the read detaches this one.
+      if (!go.isConnected) return;
+      if (landed) return offerReusedLink(panel, button, landed, atSeconds);
+
+      button.disabled = true;
+      momentFollow = { matchId, panel };
+      panel.innerHTML = `<p class="share-progress">${esc(SHARE_PHASES.preparing)}</p>`;
+      beginShare(matchId).then((made) => {
+        if (momentFollow && momentFollow.panel === panel) momentFollow = null;
+        button.disabled = false;
+        if (!panel.isConnected) return; // the modal was closed while it ran
+        if (!made) {
+          // beginShare has already turned the failure into a message; showing
+          // it here as well is what makes the modal a complete surface rather
+          // than one that needs the row behind it read too.
+          const s = shareState.get(matchId) || {};
+          panel.innerHTML = `<p class="share-error">${esc(s.error || SHARE.MESSAGES.unprepared)}</p>`;
+          return;
+        }
+        showMomentLink(
+          panel,
+          shareLinkOf(made.record, atSeconds),
+          "Uploaded and verified. Later moments from this match reuse it — no second upload, " +
+            "and no second copy on the endpoint."
+        );
+      });
+    });
   }
 
   // ---- shares list ------------------------------------------------------
@@ -1039,11 +1286,17 @@
     });
   }
 
-  function shareLinkOf(record) {
+  /* The link a record rebuilds to. `atSeconds` is optional and omitted from the
+   * link when absent, so the shares list keeps producing exactly the link it
+   * always did; only "copy a link to this moment" passes one. Always the
+   * record's own endpoint, never the one in Settings - a share uploaded before
+   * that setting changed still lives where it was put. */
+  function shareLinkOf(record, atSeconds) {
     return window.RAShareHosts.buildLink({
       endpoint: record.endpoint,
       objectId: record.objectId,
       keyBytes: window.RAShareHosts.fromBase64Url(record.key),
+      atSeconds,
     });
   }
 
@@ -1204,21 +1457,16 @@
       : window.RAShareConfig.DEFAULT_SHARE_ENDPOINT;
   };
 
-  function refreshShareSettingsUI() {
+  /* There is no Settings field for this. The stored value is still honoured, so
+   * a self-hoster can point the extension at their own instance without editing
+   * code — see share/worker/README.md — but it is set through storage rather
+   * than through a box that every other user would have to scroll past and
+   * wonder about. */
+  function loadShareEndpoint() {
     getSettings((s) => {
       shareEndpoint = cleanEndpoint(s.shareEndpoint);
-      $("#shareEndpoint").value = shareEndpoint;
     });
   }
-
-  $("#shareEndpoint").addEventListener("change", (e) => {
-    const next = cleanEndpoint(e.target.value);
-    e.target.value = next; // show what was actually stored
-    getSettings((s) => {
-      s.shareEndpoint = next;
-      setSettings(s, refreshShareSettingsUI);
-    });
-  });
 
   // ---- events ----------------------------------------------------------
 
@@ -1310,7 +1558,9 @@
           alert("The replay for this match could not be read.");
           return;
         }
-        window.RATrackerVisualReplay.openModal(m, payload);
+        window.RATrackerVisualReplay.openModal(m, payload, {
+          shareMoment: (request) => shareMoment(request, m),
+        });
       });
       return;
     }
@@ -1332,7 +1582,17 @@
     }
     const shareGoId = e.target?.dataset?.sharego;
     if (shareGoId) {
-      beginShare(shareGoId);
+      // Disabled synchronously: the shares read below is asynchronous, and the
+      // panel does not repaint until it comes back. Every outcome repaints from
+      // shareState, which is what puts the button back or replaces it.
+      e.target.disabled = true;
+      startRowShare(shareGoId, { forceNew: false });
+      return;
+    }
+    const shareNewId = e.target?.dataset?.sharenew;
+    if (shareNewId) {
+      e.target.disabled = true;
+      startRowShare(shareNewId, { forceNew: true });
       return;
     }
     const shareCopyId = e.target?.dataset?.sharecopy;
@@ -1346,11 +1606,9 @@
     if (listCopyId) {
       const record = shares.find((r) => r.objectId === listCopyId);
       if (record) {
-        copyLink(
-          shareLinkOf(record),
-          document.querySelector(`[data-sharelistlink="${CSS.escape(listCopyId)}"]`),
-          e.target
-        );
+        window.RAClipboard.copyToButton(shareLinkOf(record), e.target, {
+          field: document.querySelector(`[data-sharelistlink="${CSS.escape(listCopyId)}"]`),
+        });
       }
       return;
     }
@@ -1732,9 +1990,11 @@
   // The recorder reads visualReplay* out of this same object at match start,
   // and the service worker reads the retention count out of it at every gc.
   // shareEndpoint is a public URL, not a secret - see share/config.js. It is a
-  // setting so a self-hoster can point the extension at their own instance
-  // without editing code. There is deliberately no TTL setting: expiry is a
-  // bucket-wide lifecycle rule, not a property of a share.
+  // setting, but has no Settings field: a self-hoster can still point the
+  // extension at their own instance without editing code by writing it to
+  // storage, and everyone else is spared a box they would never touch. There is
+  // deliberately no TTL setting: expiry is a bucket-wide lifecycle rule, not a
+  // property of a share.
   const defaultSettings = {
     autoBackup: false, lastBackup: 0, bannerDismissed: 0,
     visualReplayEnabled: true, visualReplayKeepMatches: 25, visualReplayMaxMatchMb: 512,

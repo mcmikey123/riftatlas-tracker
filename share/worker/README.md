@@ -4,7 +4,7 @@ Serves shared replays: stores encrypted replay blobs in R2 and serves the viewer
 decrypts and plays them. One origin for both, so CORS never applies.
 
 **Deploying your own instance is a first-class path.** Nothing here is specific to any one
-account, and the extension can be pointed at your instance from Settings without a code change.
+account, and the extension can be pointed at your instance without editing or rebuilding it.
 
 ## What it does
 
@@ -116,7 +116,20 @@ the only thing protecting your card.
 
 ### 10. Point the extension at it
 
-Copy your `*.workers.dev` hostname into the extension's Settings → Share endpoint.
+The endpoint is a stored setting with no field in the Settings UI — it is a public URL, not a
+secret, and a box that every user would scroll past to reach the settings they actually change is
+a poor trade for the few who self-host. Set it from the dashboard page's devtools console:
+
+```js
+chrome.storage.local.get({ settings: {} }, ({ settings }) => {
+  settings.shareEndpoint = "https://your-worker.your-subdomain.workers.dev";
+  chrome.storage.local.set({ settings }, () => location.reload());
+});
+```
+
+Setting it to an empty string restores the built-in default. Verify with
+`chrome.storage.local.get("settings", console.log)` — then share a replay and confirm the link
+points at your hostname.
 
 ## Local development
 

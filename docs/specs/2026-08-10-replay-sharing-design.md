@@ -179,6 +179,22 @@ https://<endpoint>/#1.<object-id>.<key>
 
 ~107 characters, clickable everywhere.
 
+An **optional fourth field** carries a playback position in whole seconds — `#1.<id>.<key>.<s>` —
+and the replay opens there. It stays under version `1`, accepting three parts or four, because the
+viewer parses links with the very same `share/hosts.js` that builds them: `sync-assets.sh` copies
+that file into the Worker's assets, so there are not two implementations that can disagree about
+the format, and a version number only earns its keep when there are. Minting `2` would relabel a
+stale cached viewer's failure from "malformed" to "newer format" without making the link work,
+while leaving two live formats to handle and burning the version reserved for a second backend.
+
+It is a fragment field rather than `?t=` for the reason the key is: a querystring is sent to
+Cloudflare. The practical reason weighs more, though — `https://host/#1.id.key?t=5` is what people
+produce by hand, and there the `?t=5` is swallowed into the key and surfaces as "this link is
+incomplete or was altered". A fourth fragment field cannot be got wrong that way. Whole seconds,
+because sub-second precision is noise on a half-hour replay. Read leniently and clamped on arrival:
+a negative, non-numeric or absent field means no timestamp, and one past the end of the recording
+lands on the last frame rather than failing — see `startPosition` in `replay/replay-timeline.js`.
+
 **The leading character is a format version, not a host id.** The viewer is served by the same
 Worker that stores the object, so its own origin already identifies the backend — nothing in the
 link needs to say where to look. Host ids stay internal to `share/hosts.js`, where they select an

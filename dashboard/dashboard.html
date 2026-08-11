@@ -63,9 +63,6 @@
   <label title="A safeguard, not a target — you should not normally need to touch it. If one match's recording somehow runs past this, capture stops there and the replay is marked truncated rather than being recorded at lower fidelity. Leave blank for no ceiling at all.">Stop a runaway recording at (MB, blank = no limit)
     <input type="number" id="visualCeiling" step="1" placeholder="no limit" />
   </label>
-  <label title="Where a shared replay is uploaded. Leave this alone unless you run your own instance. Blank restores the default.">Share endpoint
-    <input type="url" id="shareEndpoint" placeholder="https://…" spellcheck="false" />
-  </label>
 </section>
 
 <section class="tiles">
@@ -176,6 +173,7 @@
 <script src="../share/hosts.js"></script>
 <script src="../share/share-ui-support.js"></script>
 <script src="../share/repaint.js"></script>
+<script src="../share/clipboard.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>

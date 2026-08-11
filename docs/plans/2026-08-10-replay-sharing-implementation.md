@@ -925,7 +925,8 @@ Create `share/worker/README.md` covering, with no contributor-specific values an
 8. Add a per-IP rate limit rule on `PUT /u` in the dashboard.
 9. **Stay on the Workers Free plan** — link to ADR 0001 and explain that the 100k req/day hard
    stop is the only spend ceiling Cloudflare offers.
-10. Point the extension at the result: Settings → Share endpoint.
+10. Point the extension at the result. (The Settings field this originally described was
+    later removed; the endpoint is now set through storage — see `share/worker/README.md`.)
 
 ```bash
 chmod +x share/worker/sync-assets.sh
@@ -1279,7 +1280,8 @@ Found during the visual-replay work. A session touching the viewer will meet som
 - Nothing in the repo identifies or authenticates any Cloudflare account; `audit-public` is clean
   over the diff **and the history**.
 - `share/worker/README.md` gets the repo owner from a clean checkout to his own instance, and the
-  extension points at it from Settings without a code change.
+  extension points at it without a code change (through storage; the Settings field was
+  later removed).
 - Shares expire on their own after 7 days; the UI says plainly that they cannot be revoked early.
 - The share dialog states the encryption property accurately and does not imply the link is
   access-controlled.
