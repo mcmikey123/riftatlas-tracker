@@ -1,14 +1,47 @@
+/* Dark only. There is no light mode and no prefers-color-scheme branch: the
+   dashboard is one surface with one palette, and a second one would have to be
+   designed, not derived. */
 :root {
+  /* Surfaces. Depth comes from these four steps plus a 1px border - never from
+     a gradient, and never from a shadow except on the two overlays. */
   --bg: #0d1626;
   --surface: #16233b;
   --surface-2: #1d2d4a;
-  --border: rgba(134, 168, 246, 0.28);
+  --surface-sunk: #131f34;  /* table headers, footers, sub-rows, sunk blocks */
+
+  /* Ink */
   --ink: #edf3ff;
   --ink-2: #a9bcdd;
   --ink-3: #7e93b8;
-  --win: #62c99c;      /* status: good */
-  --loss: #e08a8a;     /* status: serious */
-  --accent: #86a8f6;   /* single sequential hue for winrate bars */
+  --ink-off: #3f4f6d;       /* disabled text and controls, incl. archive mode */
+
+  /* Lines */
+  --border: rgba(134, 168, 246, 0.28);
+  --rule: rgba(134, 168, 246, 0.12);   /* row separators */
+
+  /* Status. Each one names a state, and the same colour means the same thing
+     everywhere: --win is a win and a healthy replay, --loss is a loss and a
+     dead one, --draw is a drawn game and a hand-typed value. */
+  --win: #62c99c;       /* win, replay state 'complete' */
+  --loss: #e08a8a;      /* loss, replay state 'error', danger */
+  --draw: #c9b47a;      /* draw, deckSource 'manual', series accents */
+  --truncated: #d9a54c; /* replay state 'truncated' */
+  --unknown: #7e93b8;   /* unknown result, assumed deck source */
+  --accent: #86a8f6;    /* win-rate hue, deckSource 'fingerprint', selection */
+
+  /* Win-rate ramp: one hue, four steps. Never red/green - a 40% deck is a deck
+     with a 40% win rate, not a bad deck, and colouring it like a failure state
+     makes the table an opinion instead of a reading. */
+  --rate-1: #4a63a0;
+  --rate-2: #5f7fc9;
+  --rate-3: #7396e5;
+  --rate-4: #86a8f6;
+
+  /* System stacks only: remote fonts are forbidden by the extension CSP. Mono
+     is not decoration - it marks every number, id, timestamp, byte count and
+     file name, so columns of data line up and read as data. */
+  --font-ui: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
 body {
@@ -16,7 +49,7 @@ body {
   padding: 24px clamp(16px, 4vw, 48px) 48px;
   background: var(--bg);
   color: var(--ink);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.5 var(--font-ui);
 }
 .banner {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -89,7 +122,8 @@ tbody tr:hover { background: rgba(134, 168, 246, 0.06); }
 .pct { width: 44px; text-align: right; color: var(--ink-2); }
 .result-win { color: var(--win); font-weight: 600; }
 .result-loss { color: var(--loss); font-weight: 600; }
-.result-draw, .result-unknown { color: #ffcf8a; font-weight: 600; }
+.result-draw { color: var(--draw); font-weight: 600; }
+.result-unknown { color: var(--unknown); font-weight: 600; }
 .src-manual { color: var(--ink-3); font-size: 12px; }
 .hint { color: var(--ink-3); font-size: 12px; margin: 0 0 8px; }
 
@@ -242,7 +276,7 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
   border: 1px solid rgba(134, 168, 246, 0.3); color: var(--ink-2);
 }
 .vd-complete { border-color: rgba(98, 201, 156, 0.5); background: rgba(98, 201, 156, 0.14); color: var(--win); }
-.vd-truncated { border-color: rgba(240, 190, 110, 0.5); background: rgba(240, 190, 110, 0.14); color: #ffcf8a; }
+.vd-truncated { border-color: rgba(217, 165, 76, 0.5); background: rgba(217, 165, 76, 0.14); color: var(--truncated); }
 .vd-error { border-color: rgba(224, 138, 138, 0.55); background: rgba(224, 138, 138, 0.16); color: var(--loss); }
 .vd-recording { border-color: rgba(134, 168, 246, 0.5); background: rgba(134, 168, 246, 0.14); color: var(--accent); }
 
@@ -316,7 +350,7 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
   flex: 1 1 280px; min-width: 0;
   background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; font-size: 11.5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .share-link:focus { outline: none; border-color: var(--accent); }
 
@@ -339,6 +373,6 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 /* Nothing was learned either way, so both read as a caution rather than as an
    answer - one for silence, one for an answer that wasn't the share. */
 .sh-unreachable,
-.sh-unexpected { border-color: rgba(240, 190, 110, 0.5); background: rgba(240, 190, 110, 0.14); color: #ffcf8a; }
+.sh-unexpected { border-color: rgba(217, 165, 76, 0.5); background: rgba(217, 165, 76, 0.14); color: var(--truncated); }
 .sh-expired { border-color: rgba(134, 168, 246, 0.3); background: rgba(134, 168, 246, 0.1); color: var(--ink-3); }
 .sh-forget { margin-left: 6px; }
