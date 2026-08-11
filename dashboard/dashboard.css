@@ -391,7 +391,179 @@ tbody tr:hover { background: rgba(134, 168, 246, 0.06); }
 .src-manual { color: var(--ink-3); font-size: 12px; }
 .hint { color: var(--ink-3); font-size: 12px; margin: 0 0 8px; }
 
-/* --- expandable match detail --- */
+/* ============================ Matches ============================ */
+/* A grid rather than a table: twelve cells carrying the thirteen fields the
+   old table had, and the expanded row has to span the full width without
+   breaking the column alignment of the rows around it. */
+.table-lead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.lead-count { font-size: 13px; color: var(--ink-2); }
+.lead-note { margin-left: auto; font-size: 12px; color: var(--ink-3); }
+.link {
+  background: transparent; border: 0; padding: 0; font-size: 12px;
+  color: var(--accent); text-decoration: underline; cursor: pointer;
+}
+.link:hover { background: transparent; color: var(--ink); }
+
+.mtable { display: flex; flex-direction: column; min-width: 0; }
+.mhead, .mrow {
+  display: grid; grid-template-columns: var(--mgrid); gap: 10px;
+  align-items: center; padding: 0 14px;
+}
+.mhead {
+  background: var(--surface-sunk); border-bottom: 1px solid var(--border);
+  padding-top: 9px; padding-bottom: 9px;
+}
+.mhead .cell, .msort {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-3); text-align: left;
+}
+.msort {
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+  font-family: var(--font-mono);
+}
+.msort:hover { background: transparent; color: var(--ink-2); }
+.msort.on { color: var(--accent); }
+
+.mrow { padding-top: 9px; padding-bottom: 9px; border-top: 1px solid var(--rule); }
+.mrow:hover { background: rgba(134, 168, 246, 0.05); }
+.mrow.on { background: var(--surface-2); }
+/* A selected row reads as picked without competing with the hover state. */
+.mrow.picked { background: #1a2942; }
+.cell { min-width: 0; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.cell .d1, .cell .d2 { display: block; }
+.cell-date, .cell-matchup, .cell-mode, .cell-source { flex-direction: column; align-items: flex-start; gap: 1px; }
+.cell .d2 { font: 11px var(--font-mono); color: var(--ink-3); }
+.cell-matchup .d2 { font-family: var(--font-ui); }
+.cell-mode .d1 { color: var(--ink-2); }
+.cell .vs { color: var(--ink-3); }
+.cell.num { justify-content: flex-end; font: 13px var(--font-mono); }
+.cell.num.dim { color: var(--ink-2); }
+.cell-source { font: 11px var(--font-mono); color: var(--ink-3); }
+.src-live { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
+.note-dot { color: var(--accent); font-size: 9px; }
+.cell-pick input[type="checkbox"] {
+  appearance: none; width: 14px; height: 14px; border-radius: 4px; margin: 0;
+  background: var(--bg); border: 1px solid rgba(134, 168, 246, 0.5); cursor: pointer;
+}
+.cell-pick input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.expander { cursor: pointer; user-select: none; color: var(--ink-3); justify-content: center; }
+.expander:hover { color: var(--ink); }
+.expander.on { color: var(--accent); }
+.row-more {
+  background: transparent; border: 0; color: var(--ink-3); padding: 2px 6px; border-radius: 6px;
+}
+.row-more:hover { background: var(--surface-2); color: var(--ink); }
+
+/* Deck chip. The dot replaces a tooltip; the full sentence lives in the
+   expanded row, where there is room for it. */
+.deck-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 4px 8px; border-radius: 6px; font-size: 12px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.deck-chip-empty {
+  background: transparent; border-style: dashed; border-color: rgba(134, 168, 246, 0.3);
+  color: var(--ink-3); font-style: italic;
+}
+.deck-inline {
+  flex: 1; min-width: 0; background: transparent; border: 0; color: inherit;
+  font: inherit; font-size: 12px; padding: 0; cursor: pointer;
+}
+.deck-inline:focus { outline: none; }
+.cell-more { position: relative; justify-content: flex-end; overflow: visible; }
+.row-menu { top: calc(100% + 2px); min-width: 150px; }
+
+/* Result chip. Win, loss and draw each get their own hue; unknown stays grey,
+   because "we could not read it" is not a result. */
+.chip {
+  display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 6px;
+  font-size: 12px; border: 1px solid var(--border); background: transparent;
+  color: var(--ink-2); font-family: inherit; cursor: pointer;
+}
+.chip-win { background: rgba(98, 201, 156, 0.14); border-color: rgba(98, 201, 156, 0.4); color: var(--win); }
+.chip-loss { background: rgba(224, 138, 138, 0.14); border-color: rgba(224, 138, 138, 0.4); color: var(--loss); }
+.chip-draw { background: rgba(201, 180, 122, 0.14); border-color: rgba(201, 180, 122, 0.4); color: var(--draw); }
+.chip-unknown { border-color: var(--border); color: var(--ink-3); }
+.chip-live { border-style: dashed; color: var(--ink-3); cursor: default; }
+
+/* Series badge. A match in no series gets a flat dash, so the column reads as
+   "not in one" rather than as an empty cell nothing rendered into. */
+.series-badge {
+  font: 11px var(--font-mono); color: var(--draw); padding: 3px 7px;
+  border: 1px solid rgba(201, 180, 122, 0.45); border-radius: 5px; white-space: nowrap;
+}
+.series-unordered { border-style: dashed; }
+.series-decider { color: var(--accent); border-color: rgba(134, 168, 246, 0.5); }
+.series-none { color: var(--ink-off); }
+body.read-only .series-badge { color: var(--ink-off); border-color: rgba(134, 168, 246, 0.16); }
+
+.mempty { padding: 24px 14px; color: var(--ink-3); font-size: 13px; }
+.mfoot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; background: var(--surface-sunk); border-top: 1px solid var(--border);
+}
+.mfoot-range { font-size: 12px; color: var(--ink-3); }
+.mfoot-pages { display: flex; align-items: center; gap: 4px; }
+.pgbtn { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+.pgbtn:disabled { color: var(--ink-off); border-color: rgba(134, 168, 246, 0.16); background: transparent; cursor: default; }
+.pgnum { font-family: var(--font-mono); }
+.pgnum.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.pggap { color: var(--ink-3); padding: 0 2px; }
+
+.sel-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; border-radius: 9px;
+  background: var(--surface-2); border: 1px solid rgba(134, 168, 246, 0.45);
+}
+.sel-count { font-size: 13px; font-weight: 550; }
+.sel-end { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.sel-note { font-size: 12px; color: var(--ink-2); }
+
+.deck-legend { display: flex; gap: 16px; flex-wrap: wrap; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+
+/* --- expanded match detail --- */
+/* Two panes, collapsing to one under 900px. The game log sits under the
+   metrics it is evidence for, not in the other column. */
+.mdetail {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunk);
+}
+.mdetail-col { padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.mdetail-col + .mdetail-col { border-left: 1px solid rgba(134, 168, 246, 0.2); }
+@media (max-width: 900px) {
+  .mdetail { grid-template-columns: 1fr; }
+  .mdetail-col + .mdetail-col { border-left: 0; border-top: 1px solid rgba(134, 168, 246, 0.2); }
+}
+.block-label {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3);
+}
+.verdict-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+/* Colour reads posture, not quality: Aggressive and Passive are both readings,
+   not scores, so neither is green and neither is red. */
+.verdict-badge {
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 5px 10px; border-radius: 5px; color: var(--bg); white-space: nowrap;
+}
+.verdict-aggressive { background: #e8a06a; }
+.verdict-passive { background: #7fb0e6; }
+.verdict-balanced { background: var(--win); }
+.verdict-reactive { background: #c99ce0; }
+/* No read is grey, and the coaching sentence is omitted rather than invented. */
+.verdict-no-read { background: var(--ink-3); }
+.verdict-detail { font-size: 13px; color: var(--ink-2); flex: 1 1 220px; }
+.deck-source { margin: 0; font-size: 12px; color: var(--ink-3); }
+.notes-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.log-head { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.log-count { font: 11px var(--font-mono); color: var(--ink-3); }
+.log-cap { font-size: 11px; color: var(--ink-3); padding-top: 6px; }
+.replay-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.live-result { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hint-inline { font-size: 12px; color: var(--ink-3); }
+
+/* --- expandable match detail (legacy table view) --- */
 .match-row { cursor: default; }
 .expander {
   cursor: pointer; user-select: none; color: var(--ink-2);
@@ -421,10 +593,24 @@ tbody tr:hover { background: rgba(134, 168, 246, 0.06); }
 .verdict-reactive { color: #c99ce0; }
 .verdict-no-read { color: var(--ink-3); }
 .verdict-detail { margin: 0 0 12px; color: var(--ink-2); font-size: 13px; max-width: 62ch; }
-table.metrics { margin-top: 4px; }
-table.metrics th, table.metrics td { padding: 5px 10px; font-size: 12.5px; }
+table.metrics {
+  margin-top: 4px; border: 1px solid var(--border); border-radius: 9px;
+  overflow: hidden; background: transparent;
+}
+/* --surface, not --surface-sunk: the detail pane is already sunk, and a header
+   the same colour as its surroundings stops being a header. */
+table.metrics th { background: var(--surface); }
+table.metrics th, table.metrics td { padding: 8px 14px; font-size: 12.5px; }
 table.metrics td:first-child { color: var(--ink-2); }
-table.metrics td:not(:first-child) { text-align: right; width: 90px; }
+table.metrics td:not(:first-child) {
+  text-align: right; width: 60px; font-family: var(--font-mono); color: var(--ink);
+}
+table.metrics td:last-child { color: var(--ink-2); }
+table.metrics th:not(:first-child) { text-align: right; }
+.coverage {
+  color: var(--ink-3); font-size: 12px; margin: 8px 0 0; padding: 8px 12px;
+  background: var(--surface); border: 1px solid rgba(134, 168, 246, 0.16); border-radius: 8px;
+}
 .coverage { color: var(--ink-3); font-size: 11.5px; margin: 8px 0 0; }
 textarea.notes {
   width: 100%; resize: vertical; background: var(--surface-2); color: var(--ink);

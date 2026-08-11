@@ -287,21 +287,6 @@
    * - the common case is "one of these again" - with one entry that prompts
    * for a new name, so a custom name is always one click away.
    */
-  function deckSelect(m, cls) {
-    const current = (m.deckName || "").trim();
-    const opts = deckNames()
-      .map(
-        (d) =>
-          `<option value="${esc(d)}" ${d === current ? "selected" : ""}>${esc(d)}</option>`
-      )
-      .join("");
-    return `<select class="deck-select ${cls}" data-deck="${m.id}" title="${esc(deckTitle(m))}"
-              ${readOnly() ? "disabled" : ""}>
-        <option value="" ${current ? "" : "selected"}>— unlabelled —</option>
-        ${opts}
-        <option value="${NEW_DECK}">＋ New deck name…</option>
-      </select>`;
-  }
 
   function fillSelect(sel, values) {
     if (!sel) return;
@@ -347,7 +332,7 @@
     renderAgg($("#vsTable tbody"), rows, (m) => champ(m.opponentChampion || m.opponentLegend));
     renderAgg($("#deckTable tbody"), rows, deckOf);
     renderAgg($("#myTable tbody"), rows, (m) => champ(m.myChampion || m.myLegend));
-    renderHistory(filtered(true));
+    ensureVisualIds();
     renderVisualPanel();
     renderSharesPanel();
     renderArchiveBanner();
@@ -371,6 +356,29 @@
     archiveName: () => (archive ? archive.name : ""),
     readOnly,
     onRender: null, // main.js sets this
+
+    /* What the ported views still need from this file. Each of these goes when
+     * the subsystem behind it is ported: hasVisual and shareBoxInner belong to
+     * the share flow, which is the largest thing still living here.
+     *
+     * The views render markup carrying the SAME data-* attributes this file
+     * already listens for, and the listeners are document-level - so a row
+     * drawn by a module is driven by the handlers below without either side
+     * knowing about the other. */
+    hasVisual: (id) => hasVisual(id),
+    shareOpenHas: (id) => shareOpen.has(id),
+    shareBoxInner: (id) => shareBoxInner(id),
+    deckNames,
+    deckTitle,
+    // The log is loaded lazily and cached. Returns null when it has not been
+    // fetched yet, and starts fetching - the caller re-renders when it lands.
+    logFor: (id) => {
+      if (logCache.has(id)) return logCache.get(id);
+      getLog(id, () => render());
+      return null;
+    },
+    analyse: (m) => analyse(m),
+    render: () => render(),
   };
   window.RATrackerLegacy = bridge;
 
@@ -449,125 +457,6 @@
         : "");
   }
 
-  const COLSPAN = 13;
-
-  function renderHistory(rows) {
-    ensureVisualIds();
-    const tbody = $("#historyTable tbody");
-    if (!tbody) return;
-    tbody.innerHTML = "";
-    if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="${COLSPAN}" class="empty">No matches recorded yet. Play a match on play.riftatlas.com with the extension installed.</td></tr>`;
-      return;
-    }
-    for (const m of rows) {
-      const tr = document.createElement("tr");
-      tr.className = "match-row";
-      const d = m.startedAt ? new Date(m.startedAt) : null;
-      const open = expanded.has(m.id);
-      tr.innerHTML = `
-        <td class="expander" data-toggle="${m.id}" title="Show game summary">${open ? "▾" : "▸"}</td>
-        <td>${d ? d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–"}</td>
-        <td>${esc(m.mode || "–")}</td>
-        <td>${esc(m.roomCode || "–")}</td>
-        <td>${esc(m.myChampion || m.myLegend || "–")}</td>
-        <td class="deck-cell">${deckSelect(m, "deck-inline")}</td>
-        <td>${esc(m.opponentName || "–")}</td>
-        <td>${esc(m.opponentChampion || m.opponentLegend || "–")}</td>
-        <td>${
-          m.myScore == null && m.opponentScore == null
-            ? "–"
-            : `${m.myScore ?? 0}–${m.opponentScore ?? 0}`
-        }</td>
-        <td>${fmtDuration(m.durationMs)}</td>
-        <td>
-          <select data-id="${m.id}" class="result-edit result-${m.result || "unknown"}" ${readOnly() ? "disabled" : ""}>
-            ${["win", "loss", "draw", "unknown"]
-              .map((r) => `<option value="${r}" ${(m.result || "unknown") === r ? "selected" : ""}>${r}</option>`)
-              .join("")}
-          </select>
-        </td>
-        <td class="src-manual">${m.endedAt ? esc(m.resultSource || "") : "in game"}${
-          m.notes ? ' <span class="note-dot" title="Has notes">•</span>' : ""
-        }</td>
-        <td>${readOnly() ? "" : `<button class="row-del" data-del="${m.id}" title="Delete match">✕</button>`}</td>`;
-      tbody.appendChild(tr);
-      if (open) tbody.appendChild(detailRow(m));
-    }
-  }
-
-  function detailRow(m) {
-    const tr = document.createElement("tr");
-    tr.className = "detail-row";
-    const td = document.createElement("td");
-    td.colSpan = COLSPAN;
-
-    if (!logCache.has(m.id)) {
-      td.innerHTML = '<p class="coverage">Loading game log…</p>';
-      tr.appendChild(td);
-      getLog(m.id, () => render());
-      return tr;
-    }
-
-    const withLog = Object.assign({}, m, { log: logCache.get(m.id) });
-    const a = analyse(withLog);
-    const metrics = a.hasLog
-      ? `
-      <table class="metrics">
-        <thead><tr><th></th><th>You</th><th>Opponent</th></tr></thead>
-        <tbody>
-          <tr><td>Units committed to battlefields</td><td>${a.self.commit}</td><td>${a.opponent.commit}</td></tr>
-          <tr><td>Battlefields conquered</td><td>${a.self.conquer}</td><td>${a.opponent.conquer}</td></tr>
-          <tr><td>Points scored (from log)</td><td>${a.self.points}</td><td>${a.opponent.points}</td></tr>
-          <tr><td>Cards sent to trash</td><td>${a.self.trash}</td><td>${a.opponent.trash}</td></tr>
-          <tr><td>Showdown actions</td><td>${a.self.showdown}</td><td>${a.opponent.showdown}</td></tr>
-          <tr><td>Focus passed</td><td>${a.self.passFocus}</td><td>${a.opponent.passFocus}</td></tr>
-          <tr><td>Total logged actions</td><td>${a.self.total}</td><td>${a.opponent.total}</td></tr>
-        </tbody>
-      </table>
-      <p class="coverage">Based on ${a.lines} log line${a.lines === 1 ? "" : "s"}${
-          a.unmatched ? ` &middot; ${a.unmatched} line${a.unmatched === 1 ? "" : "s"} not recognised by the parser` : ""
-        }. Turns: ${m.turns || "?"}.</p>`
-      : `<p class="coverage">No game log was captured for this match.</p>`;
-
-    td.innerHTML = `
-      <div class="detail-grid">
-        <div class="detail-col">
-          <h3>Game summary</h3>
-          <p class="verdict verdict-${a.verdict.toLowerCase().replace(/\s+/g, "-")}">${esc(a.verdict)}</p>
-          <p class="verdict-detail">${esc(a.detail)}</p>
-          ${metrics}
-        </div>
-        <div class="detail-col">
-          <h3>Deck</h3>
-          <div class="deck-row">
-            ${deckSelect(m, "deck-wide")}
-            ${readOnly() ? "" : `<button class="deck-apply" data-deckapply="${m.id}" title="Give every unlabelled match with this champion the same deck name">Apply to unlabelled ${esc(champ(m.myChampion || m.myLegend))} games</button>`}
-          </div>
-          <h3>Notes</h3>
-          <textarea class="notes" data-notes="${m.id}" rows="6" ${readOnly() ? "readonly" : ""} placeholder="What happened? What would you do differently?">${esc(m.notes || "")}</textarea>
-          <span class="save-state" data-savestate="${m.id}"></span>
-          ${
-            hasVisual(m.id)
-              ? `<h3 class="log-head">Replay <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">open full screen</button>
-                   <button class="log-toggle" data-share="${m.id}" title="Turn this replay into an encrypted link anyone can open">${shareOpen.has(m.id) ? "hide" : "share a link"}</button></h3>
-                 <div class="share-box" data-sharebox="${m.id}" ${shareOpen.has(m.id) ? "" : "hidden"}>${shareBoxInner(m.id)}</div>`
-              : ""
-          }
-          <h3 class="log-head">Game log <button class="log-toggle" data-log="${m.id}">show</button></h3>
-          <div class="log-box" data-logbox="${m.id}" hidden>${
-            (logCache.get(m.id) || [])
-              .map(
-                (e) =>
-                  `<div class="log-line log-${e.actor}"><span class="log-t">${esc(e.t)}</span>${esc(e.text)}</div>`
-              )
-              .join("") || '<div class="log-line">No log captured.</div>'
-          }</div>
-        </div>
-      </div>`;
-    tr.appendChild(td);
-    return tr;
-  }
 
   const esc = window.RATrackerFormat.esc;
 

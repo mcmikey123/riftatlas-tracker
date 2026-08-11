@@ -48,6 +48,10 @@ export const state = {
   // Checked rows in Matches, for grouping a series by hand.
   selection: new Set(),
 
+  // Which row's ⋯ menu is open. One at a time - two open menus in a table is
+  // never what was meant by the second click.
+  openRowMenu: null,
+
   /* matchId -> { phase, link, createdAt, reuse, error, retry }.
    * ONE entry per match, read by both the row's panel and the replay modal, so
    * a share begun in the row shows the same phase when the modal opens over it. */

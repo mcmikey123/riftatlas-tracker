@@ -13,6 +13,7 @@
  */
 import { state, subscribe, emit, resetPaging } from "./state.js";
 import { mountShell, paintShell, VIEWS } from "./shell.js";
+import { renderMatches, mountMatches } from "./view-matches.js";
 
 const STORE = window.RATrackerStorage;
 const SERIES = window.RATrackerSeries;
@@ -58,8 +59,39 @@ function counts() {
   };
 }
 
+/* The filter row is static DOM shared by every view, and legacy.js reads it
+ * straight off the elements. Rather than two sources of truth, the values are
+ * copied into state on each render - one direction, from the controls the user
+ * touched to the state the views read. */
+function syncFilters() {
+  const read = (id) => {
+    const el = $(id);
+    return el ? el.value : "";
+  };
+  state.filters.champion = read("#fMyChampion");
+  state.filters.deck = read("#fDeck");
+  state.filters.mode = read("#fMode");
+  const unknown = $("#fUnknown");
+  state.filters.countUnknown = !!(unknown && unknown.checked);
+}
+
 function render() {
+  syncFilters();
   paintShell(counts());
+
+  const all = LEGACY.matches() || [];
+  /* Series are derived, so the badge in Matches reads the same computation the
+   * Series view will - not a stored field. */
+  const withSeries = SERIES.detect(all, {
+    enabled: settings.seriesDetect !== false,
+    windowMinutes: settings.seriesWindowMinutes,
+    format: settings.seriesFormatDefault,
+  }).matches;
+
+  /* Unknown results are excluded from the STATS by the filter checkbox, but the
+   * history has always listed them regardless - a match whose result was never
+   * read is exactly the one you came here to fix. */
+  renderMatches($("[data-matches]"), withSeries, state.readOnly);
 }
 
 // ---- the filter row ----------------------------------------------------
@@ -124,6 +156,7 @@ function mountFilters() {
 function boot() {
   mountShell();
   mountFilters();
+  mountMatches();
   subscribe(render);
 
   /* legacy.js renders on its own schedule - on load, on every storage change,
