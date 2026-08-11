@@ -959,23 +959,27 @@ input[type="number"]:focus { outline: none; border-color: var(--accent); }
 }
 .vd-open:hover { background: transparent; color: var(--ink); text-decoration: underline; }
 
-/* The Replays row's share toggle, beside the label that opens the replay. A
-   quiet control: sharing is a deliberate, one-way act and this is a
-   diagnostics table, so it should not compete with the numbers next to it. */
-.vd-share {
-  background: transparent; border: 0; padding: 0 0 0 10px;
-  color: var(--accent); font: inherit; font-size: 12px; cursor: pointer;
+/* Icon controls on a diagnostics row. Words here read as prose in a table of
+   numbers, so both are marks: share sits with the name it acts on, delete at
+   the far end where a row's own destructive control belongs and where it
+   cannot be hit while aiming for anything else. Both are icon-only and both
+   carry an aria-label. */
+.vd-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin-left: 6px; vertical-align: middle;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--ink-3); cursor: pointer; font-size: 12px; line-height: 1;
 }
-.vd-share:hover { background: transparent; color: var(--ink); text-decoration: underline; }
+.vd-icon:hover { background: var(--surface-2); color: var(--ink); }
+.vd-icon.on { color: var(--accent); }
+.vd-del { color: var(--ink-3); }
+.vd-del:hover { background: rgba(224, 138, 138, 0.12); color: var(--loss); }
 /* Full width beneath its row, so opening a panel cannot drag the numeric
    columns out of line with the rows above and below it. */
 .vd-share-row > td { background: var(--surface-sunk); padding: 0 14px 12px; }
 .vd-share-row .share-box { margin-top: 0; }
 
-/* Deleting one recording. Danger-coloured but quiet: it is one row's control
-   in a diagnostics table, not the page's destructive action. */
-.vd-del {
-  background: transparent; border: 0; padding: 0 0 0 10px;
-  color: var(--loss); font: inherit; font-size: 12px; cursor: pointer;
-}
-.vd-del:hover { background: transparent; text-decoration: underline; }
+/* The delete column. Right-aligned and narrow: it is the row's own control,
+   not a data cell, and it should not widen with the table. */
+#visualTable td.vd-actions { text-align: right; width: 36px; white-space: nowrap; }
+#visualTable th:last-child { width: 36px; }

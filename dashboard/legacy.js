@@ -549,6 +549,16 @@
    * and an `error` recording is unplayable by definition - the legend on this
    * view says exactly that. Those stay as plain text rather than becoming a
    * button that opens a modal only to apologise. */
+  /* No approved glyph exists for "share", and an emoji renders differently on
+   * every platform - so an inline SVG, shipped in the repo, which is what the
+   * design asks for when a character will not do. currentColor so it follows
+   * the button's own hover state. */
+  const SHARE_MARK =
+    '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+    'd="M6.5 9.5a3 3 0 0 0 4.2 0l2.1-2.1a3 3 0 0 0-4.2-4.2l-1 1M9.5 6.5a3 3 0 0 0-4.2 0l-2.1 2.1' +
+    'a3 3 0 0 0 4.2 4.2l1-1"/></svg>';
+
   const playable = (record) => (Number(record.chunkCount) || 0) > 0 && record.state !== "error";
 
   function visualRow(record) {
@@ -560,14 +570,10 @@
           playable(record)
             ? `<button class="vd-open" data-visual="${id}"
                        title="Play this replay">${label}</button>
-               <button class="vd-share" data-share="${id}"
-                       title="Turn this replay into an encrypted link anyone can open">${
-                 open ? "hide" : "share a link"
-               }</button>
-               <button class="vd-del" data-visualdel="${id}"
-                       title="Delete this recording. The match itself is kept.">delete</button>`
-            : `${label}<button class="vd-del" data-visualdel="${id}"
-                       title="Delete this recording. The match itself is kept.">delete</button>`
+               <button class="vd-icon ${open ? "on" : ""}" data-share="${id}"
+                       aria-label="Share a link to this replay"
+                       title="Turn this replay into an encrypted link anyone can open">${SHARE_MARK}</button>`
+            : label
         }</td>
         <td>${fmtBytes(record.compressedBytes)}</td>
         <td>${fmtCount(record.chunkCount)}</td>
@@ -576,13 +582,16 @@
         <td>${fmtMs(statOf(record, "captureP50Ms"))}</td>
         <td>${fmtMs(statOf(record, "captureMaxMs"))}</td>
         ${visualStateCell(record)}
+        <td class="vd-actions"><button class="vd-icon vd-del" data-visualdel="${id}"
+              aria-label="Delete this recording"
+              title="Delete this recording. The match itself is kept.">✕</button></td>
       </tr>${
         // The share panel is one component with one state per match id, so the
         // copy here and the copy in the expanded match row show the same phase.
         // It sits in its own full-width row rather than in the first cell,
         // which would drag the numeric columns out of line.
         open
-          ? `<tr class="vd-share-row"><td colspan="8">
+          ? `<tr class="vd-share-row"><td colspan="9">
                <div class="share-box" data-sharebox="${id}">${shareBoxInner(record.matchId)}</div>
              </td></tr>`
           : ""
@@ -614,17 +623,17 @@
         <td>${fmtBytes(bytes)}</td>
         <td>${chunks}</td>
         <td>${fmtCount(sumStat(records, "keyframes"))}</td>
-        <td colspan="4"></td>
+        <td colspan="5"></td>
       </tr>
       <tr class="vd-total">
         <td>+ shared stylesheets · ${fmtCount(visualAssets.count)}</td>
         <td>${fmtBytes(visualAssets.bytes)}</td>
-        <td colspan="6" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
+        <td colspan="7" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
       </tr>
       <tr class="vd-total">
         <td>On disk now · retained replays + shared stylesheets</td>
         <td>${fmtBytes(bytes + (Number(visualAssets.bytes) || 0))}</td>
-        <td colspan="6" class="vd-note">
+        <td colspan="7" class="vd-note">
           ${fmtBytes(mean)} per match on average &mdash; keeping the newest ${keepMatches}
           works out at roughly ${fmtBytes(mean * keepMatches)} once that many have been played
         </td>
