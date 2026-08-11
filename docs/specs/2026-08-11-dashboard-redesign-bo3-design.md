@@ -51,7 +51,7 @@ this design does about each.
 | 2 | "seven header buttons become three" | six buttons + 2 hidden file inputs | Six. |
 | 3 | Matches grid is 10 columns | the same document adds a Series column and a 26px selection checkbox | 12 columns; grid restated below. |
 | 4 | replay states `ok` / `truncated` / `error` | `complete` / `truncated` / `error` / `recording` | Use the code's names; the legend gains `recording`. |
-| 5 | a live match has "no result select" (README, and again in panel 1j) | the select is editable today | **Keep the control.** Removing it drops a control, which this round forbids. |
+| 5 | a live match has "no result select" (README, and again in panel 1j) | the select is rendered unconditionally (`dashboard.js:378`) — but an edit to it is silently reverted within ~3s by `content.js`'s dirty-save, which replaces the record wholesale | **Keep the control, and fix it.** The handoff is right that it should not be a plain editable select; it is wrong that the answer is to remove it. Rendered as the handoff's dashed *in progress* chip, with the editor available and its write routed so `content.js` does not revert it. Reported as a pre-existing bug, not a behaviour being defended. |
 | 6 | aggregate tables truncate to 5 rows with "see all" | every row renders | Ship "see all", but default the cap high enough that nothing is hidden on a normal history; the link expands in place. |
 | 7 | replay modal is a fixed 1180px dialog | the modal is deliberately full-viewport so the stage gets every pixel (`dashboard.css:161-201`) | **Code wins.** Restyle the chrome, keep the sizing. |
 | 8 | "bump `schemaVersion`" | `schemaVersion: 3` exists at `content.js:598` and is **read nowhere**; bumping means editing `content.js`, which is out of scope | Do not bump. The handoff's own reasoning — absent means "not in a series" — is why no migration is needed either way. |
@@ -87,15 +87,22 @@ question: *can this be tested without a DOM?*
 |---|---|
 | `dashboard/series.js` | the detection rule, grouping matches into series, series records and series statistics, suggestion scanning |
 | `dashboard/table.js` | sort, search, date-range and pagination over an already-filtered array |
+| `dashboard/format.js` | *existing.* Gains the pure formatters — `champ`, `deckOf`, `fmtDuration`, `fmtBytes`, `fmtCount`, `fmtMs` |
+
+The formatters go into the existing `format.js` rather than a new `fmt.js`.
+Two modules with near-identical names and overlapping purpose would be a
+standing invitation to import the wrong one, `fmtDuration` and the existing
+`fmtClock` are two spellings of the same idea, and `fmtDuration` is used by the
+CSV export — putting it in the untestable tier for no reason would be a loss.
 
 **Tier 2 — DOM. ES modules, loaded as `<script type="module" src="main.js">`. Not unit tested,** per the project's standing rule that browser and network code gets no unit tests and must instead stay small and obviously correct.
 
 | Module | Holds |
 |---|---|
 | `state.js` | one exported state object plus `subscribe`/`emit`; replaces the scattered module-level Maps |
-| `storage.js` | every `chrome.storage` and `chrome.runtime` call |
-| `fmt.js` | `champ`, `deckOf`, `fmtDuration`, `fmtBytes`, `fmtCount`, `fmtMs`, date/time |
+| `storage.js` | every `chrome.storage` and `chrome.runtime` call, and **the only module permitted to write** |
 | `dialog.js` | the one dialog component |
+| `toast.js` | one-line acknowledgements and inline status |
 | `filters.js` | the global filter row |
 | `shell.js` | header, menus, banner stack, left nav, footer, view switching, delegation root |
 | `view-overview.js` … `view-settings.js` | one per view, six of them |
@@ -161,7 +168,7 @@ Consequences: absent fields mean "not in a series", so no migration runs and
 four columns. Import merges by id as today. Deleting a match leaves its series
 shorter and renumbers the rest. Archive view renders Series read-only.
 
-### Detection runs in the dashboard, not in `content.js`
+### Automatic series are derived, never stored. Only manual ones are written.
 
 The handoff says detection happens "on match end". That is `content.js`, which
 this round leaves unchanged — and `content.js` has **two** finalisers, not one:
@@ -169,18 +176,47 @@ this round leaves unchanged — and `content.js` has **two** finalisers, not one
 it, sets no `resultSource`, stops no recorder and shows no toast. A hook in
 `endMatch` would silently miss every tab-close ending.
 
-So detection is a pure function over the match array, run by the dashboard:
+The obvious alternative — let the dashboard detect and write the fields — is
+worse, and the reason is specific and verified. `content.js` runs a 3-second
+dirty-save (`:986-1005`) that calls `saveMatch` (`:762-780`) whenever the live
+record's JSON changes. `saveMatch` does `matches[idx] = lean`: it replaces the
+stored record **wholesale** with its own in-memory copy. Its reconciliation
+listener (`:1036-1050`) adopts exactly one field back from storage:
 
-- on load, over all matches;
-- on `storage.onChanged` for `matches`, which is how a match finished in the game
-  tab reaches an open dashboard today;
-- on demand from **Re-scan history** in Settings.
+```js
+if (!saved || saved.deckSource !== "manual") return; // only we write the rest
+```
 
-This makes `Re-scan history` and first-run detection the same code path, makes the
-rule unit-testable with no DOM and no `chrome.*`, and keeps `content.js`
-untouched. The cost is that `seriesSource: 'auto'` is written the first time the
-dashboard sees the matches rather than at the moment the match ends — which is
-invisible to the user, because the only surface that reads it is the dashboard.
+So a `seriesId` written onto a live match is erased within three seconds; the
+erasure fires `storage.onChanged`; the dashboard reloads, re-detects and writes
+it again. That is a permanent write-amplification loop for the length of every
+match, and each turn of it rewrites the whole `matches` array in both directions.
+
+So: **automatic grouping is derived at render time and never persisted.** This is
+what the handoff itself describes — "a series *is* the set of matches sharing a
+`seriesId`, grouped at render time the same way the aggregate tables group by
+deck". Only what the user does by hand is written, as four fields with
+`seriesSource: 'manual'`, through the same path `setDeckName` already uses and
+which `content.js` already knows to respect.
+
+Consequences, all of them improvements:
+
+- No write loop, no cross-tab race, and no way for a detection pass to clobber a
+  live match's score or result.
+- Live matches can stay in the detection pass, because nothing is written — so
+  the Series view's **In game** state survives, which excluding them would have
+  cost.
+- Changing the window from 45 to 60 minutes re-groups history immediately, which
+  is the correct reading of "auto is a guess the UI will revise".
+- The handoff's open question — detect over existing history on upgrade, or only
+  forward? — dissolves. There is nothing to migrate.
+- **`Re-scan history` is dropped**, because there is nothing to re-scan: every
+  render is a scan. Its status strip ("42 series detected · 3 you grouped
+  yourself") stays, since those counts are still worth showing. This is a control
+  the handoff invented, not one the current UI has, so no existing feature is
+  lost by removing it.
+- Export JSON and CSV compute the four fields at export time from the same pure
+  function, so a series still survives a backup.
 
 ### The rule
 
@@ -236,13 +272,75 @@ seriesWindowMinutes : 45        // 5..240
 seriesFormatDefault : 'bo3'     // 'bo3' | 'bo5'
 ```
 
+## Writes: one module, one guard
+
+`persist()` carries a `readOnly()` guard, but **six write sites bypass it** and
+call `chrome.storage.local.set({ matches: all })` directly —
+`dashboard.js:1507, 1534, 1647, 1694, 1745, 1774`. Each is protected only by a
+`readOnly()` check at its caller. In archive mode `all` holds the *archive file's*
+matches, so any one of them firing there would overwrite the user's live history
+with a file they were only looking at. Today the callers hold; this round adds a
+Series view full of new mutating controls — a selection bar, `Group as a Bo3`,
+`Set deck for all N…`, `Remove from series`, and per-sub-row result editors — in
+a view that renders in archive mode.
+
+So `storage.js` is the **only** module permitted to write, its `writeMatches()`
+carries the read-only guard, and it **throws** rather than returning quietly, so
+a missing caller-side check surfaces in development instead of silently doing
+nothing. A source-shape test asserts no `storage.local.set({ matches` appears in
+`dashboard/*.js` outside `storage.js` — the repo already has precedent for
+asserting cross-file invariants over source text
+(`test/vendor-contract.test.js`, `test/worker-headers.test.js`).
+
 ## Error handling
 
-The dialog replaces 25 native calls. Native `confirm`/`prompt`/`alert` are
-synchronous; the replacement is not, so every call site converts from
-`if (confirm(...)) { ... }` to a promise or callback continuation. The archive
-flow's `setTimeout(..., 800)` before its confirm exists to let the download start
-before the page blocks, and survives as an await.
+### The native calls are not 25 dialogs
+
+There are 25 `confirm`/`prompt`/`alert` call sites, and the handoff's "nine" is
+right about how many are *dialogs*. They sort into four buckets:
+
+| Bucket | Count | Goes to |
+|---|---|---|
+| Genuine dialogs — 7 confirms, 2 prompts | 9 | `dialog.js` |
+| New deck name | 1 | an **inline field**; the handoff explicitly forbids a dialog here |
+| "The replay for this match could not be read" | 1 | a replay-modal **body state** |
+| One-line acknowledgements and inline errors | 14 | `toast.js` |
+
+The handoff has no toast component and neither did the first draft of this
+design. Routing "Labelled 3 matches" through a focus-trapping modal would be
+worse than what exists today, so `toast.js` is added.
+
+### Async conversion is a re-entrancy hazard
+
+Native `confirm()` blocks the event loop: no `chrome.storage` callback and no
+`storage.onChanged` handler can run while it is open. An in-page `<dialog>`
+blocks nothing, and `load()` reassigns `all` to freshly deserialised objects, so
+every flow that computes a target list *before* a dialog and mutates it *after*
+is racing a reload driven by `content.js`'s 3-second save.
+
+Two rules, both load-bearing:
+
+1. **No `await` between reading a target set and writing it.** Re-resolve the
+   targets by id from the current `all` after the dialog resolves. This covers
+   the deck-apply and bulk-label flows, which today compute `targets`, confirm,
+   and mutate in one synchronous block.
+2. **`storage.onChanged` defers `load()` while a dialog is open**, restoring the
+   property native modals gave for free. The existing guard checks
+   `document.activeElement?.dataset` for `notes` or `deck`; with a modal open the
+   active element is the dialog's own button, so that guard does not fire.
+
+Two specific flows change shape:
+
+- **Archive & clear** builds its bundle, downloads it, then confirms. With a
+  non-blocking dialog the user can sit on that confirmation indefinitely while
+  matches finish in another tab, and pressing OK would then wipe matches that are
+  not in the archive file. The bundle is rebuilt after the confirmation resolves.
+  The `setTimeout(..., 800)` that existed to stop a synchronous modal suppressing
+  the download goes away with the modal that needed it.
+- **The cluster-naming `prompt()` loop** is deleted rather than awaited.
+  `clusters.forEach(async …)` would fire every dialog at once and reach the write
+  with nothing named. The handoff replaces it with the detection report's inline
+  name fields, which is what this builds.
 
 Failure copy is unchanged. Share failures keep their existing taxonomy —
 `ShareUiError` (already carries its message), `ShareUploadError` (status mapped by
