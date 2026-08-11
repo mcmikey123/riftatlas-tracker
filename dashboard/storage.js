@@ -99,11 +99,10 @@
     // there is no share/config.js and no window. In the page the load order is
     // asserted by test/storage-writes.test.js, so the fallback never applies.
     shareEndpoint: root.RAShareConfig ? root.RAShareConfig.DEFAULT_SHARE_ENDPOINT : "",
-    // Series detection. The window is measured from one match ending to the
-    // next starting; the format is what a detected series is called before it
-    // finishes, and changing it on one series does not change this default.
+    // Series detection. There is no window setting: the lobby states the
+    // format, so the gap is consulted only for matches recorded before that
+    // was read, where a fixed 45 minutes is as good an answer as a spinner.
     seriesDetect: true,
-    seriesWindowMinutes: 45,
     /* Only the fallback for matches recorded before content.js started
      * reading the real format off the lobby. There is no setting for it:
      * the site offers Best of 1 and Best of 3, a Bo1 is never a series, so

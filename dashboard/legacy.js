@@ -223,7 +223,6 @@
     if (!SERIES) return matches;
     return SERIES.detect(matches, {
       enabled: seriesSettings.seriesDetect !== false,
-      windowMinutes: seriesSettings.seriesWindowMinutes,
       format: seriesSettings.seriesFormatDefault,
     }).matches;
   }

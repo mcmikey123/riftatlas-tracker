@@ -49,7 +49,7 @@ The extension reads the format straight off the lobby — the **Best of 1 / Best
 
 For Bo3 games, consecutive games against the same opponent are grouped for you, and a series ends when someone takes it — two wins — so the game after that starts a new one. **The clock is not consulted.** A best-of-three played across a long session, or picked up again after a break, is grouped correctly however long the gap; and a change of opponent ends a series outright, because a best-of-three is played against one person.
 
-The **Minutes between games** setting still exists, but it now applies only to matches recorded before the extension started reading the format from the lobby — where there is no format to go on and the gap is the only clue left.
+Matches recorded before the extension started reading the format have no format to go on, so those fall back to a 45-minute gap between games. That is the only place timing is still used, and there is no setting for it — a spinner would be a lot of control for a set of matches that only ever shrinks.
 
 The **Series** view shows one row per series, expandable into its games. Its tiles are the reason it exists: series win rate beside game win rate, how often you recover after losing game one, and how often you reach a decider. Your matches already held all of that; the old dashboard had nowhere to show it.
 

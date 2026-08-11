@@ -184,10 +184,7 @@ export function renderSeries(container, all, readOnly) {
   const stats = S.stats(list);
 
   const settings = state.seriesSettings || {};
-  const suggestions = S.suggestions(all, {
-    windowMinutes: settings.seriesWindowMinutes,
-    dismissed: state.dismissedSuggestions,
-  });
+  const suggestions = S.suggestions(all, { dismissed: state.dismissedSuggestions });
 
   container.innerHTML = `
     ${tiles(stats)}
@@ -230,7 +227,6 @@ export function renderSeries(container, all, readOnly) {
 function editable() {
   return S.detect(LEGACY().matches(), {
     enabled: state.seriesSettings.seriesDetect !== false,
-    windowMinutes: state.seriesSettings.seriesWindowMinutes,
     format: state.seriesSettings.seriesFormatDefault,
   }).matches;
 }

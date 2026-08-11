@@ -319,24 +319,13 @@
                   then on.</span>
               </span>
             </label>
-            <label class="setting setting-number" data-legacy-window hidden>
-              <input type="number" id="sWindow" step="1" min="5" max="240" data-mutates />
-              <span class="setting-text">
-                <span class="setting-name">Minutes between games (older matches only)</span>
-                <span class="setting-copy">5&ndash;240, measured from one match ending to the next
-                  starting. This applies <b>only to matches recorded before the extension started
-                  reading the format from the lobby</b>, where there is no format to go on and the
-                  gap is the only clue left. Games that know their own format ignore it entirely, so
-                  a series played over a long session is grouped correctly however long the break
-                  between games. <b data-legacy-count></b></span>
-              </span>
-            </label>
             <div class="setting-strip">
               <span class="backup-state" data-series-status></span>
             </div>
             <p class="setting-copy">Detected series are worked out from your matches each time this page
-              draws them, and are never written to your records &mdash; so changing the window regroups your
-              history immediately, and only the groupings you make by hand are stored.</p>
+              draws them and are never written to your records, so only the groupings you make by hand are
+              stored. Matches recorded before the extension started reading the format fall back to a
+              45-minute gap between games, which is the one case the timing rule is still used for.</p>
           </div>
         </div>
 

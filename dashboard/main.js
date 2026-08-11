@@ -81,7 +81,6 @@ function counts() {
    * save for the live match. */
   const detected = SERIES.detect(all, {
     enabled: settings.seriesDetect !== false,
-    windowMinutes: settings.seriesWindowMinutes,
     format: settings.seriesFormatDefault,
   }).matches;
 
@@ -125,7 +124,6 @@ function render() {
    * Series view will - not a stored field. */
   const withSeries = SERIES.detect(all, {
     enabled: settings.seriesDetect !== false,
-    windowMinutes: settings.seriesWindowMinutes,
     format: settings.seriesFormatDefault,
   }).matches;
 
@@ -201,57 +199,27 @@ function mountSettings() {
   });
 
   const detect = $("#sDetect");
-  const window_ = $("#sWindow");
 
   if (detect) {
     detect.addEventListener("change", () =>
       STORE.patchSettings({ seriesDetect: detect.checked })
     );
   }
-  if (window_) {
-    window_.addEventListener("change", () => {
-      // Clamped rather than rejected: the input's own min/max only constrain
-      // its spinner, not what can be typed or pasted into it.
-      const n = SERIES.clampWindow(window_.value);
-      window_.value = n;
-      STORE.patchSettings({ seriesWindowMinutes: n });
-    });
-  }
 }
 
 /** Settings controls this module owns, painted from whatever storage holds. */
 function paintSettings() {
   const detect = $("#sDetect");
-  const window_ = $("#sWindow");
   if (detect) detect.checked = settings.seriesDetect !== false;
-  if (window_ && document.activeElement !== window_) {
-    window_.value = SERIES.clampWindow(settings.seriesWindowMinutes);
-  }
 
   const all = LEGACY.matches() || [];
 
-  /* The gap rule only applies to matches recorded before content.js began
-   * reading the format off the lobby. On a fresh install that is none of them,
-   * and for everyone else it is a set that only shrinks - so the control
-   * appears while it can still change something and goes away once it cannot,
-   * rather than sitting there permanently inert. */
-  const formatless = all.filter((m) => m && !m.matchFormat).length;
-  const windowRow = $("[data-legacy-window]");
-  if (windowRow) windowRow.hidden = formatless === 0;
-  const windowNote = $("[data-legacy-count]");
-  if (windowNote) {
-    windowNote.textContent =
-      formatless === 1
-        ? "1 match was recorded before the format was read from the lobby."
-        : `${formatless} matches were recorded before the format was read from the lobby.`;
-  }
 
   const status = $("[data-series-status]");
   if (!status) return;
   const grouped = SERIES.group(
     SERIES.detect(all, {
       enabled: settings.seriesDetect !== false,
-      windowMinutes: settings.seriesWindowMinutes,
       format: settings.seriesFormatDefault,
     }).matches
   );
