@@ -15,6 +15,46 @@ import { state, subscribe, emit, resetPaging } from "./state.js";
 import { mountShell, paintShell, VIEWS } from "./shell.js";
 import { renderMatches, mountMatches } from "./view-matches.js";
 import { renderSeries, mountSeries } from "./view-series.js";
+import * as dialog from "./dialog.js";
+import { toast } from "./toast.js";
+
+/* legacy.js is a classic script and cannot import a module, so the two
+ * components it needs are published on window for it. This is the only bridge
+ * that goes module -> classic, and it disappears with legacy.js.
+ *
+ * Timing is safe: modules are deferred, so this runs after legacy.js's
+ * top-level code - but everything over there that opens a dialog does so from
+ * an event handler, which cannot fire before the page is interactive.
+ *
+ * The wrapper is what makes the deferred reload work. A dialog no longer
+ * blocks the event loop the way confirm() did, so a storage change arriving
+ * while one is open would reload the match array out from under the decision
+ * being made - and legacy.js reassigns `all` to fresh objects, so a target list
+ * captured before the dialog would then be mutating orphans. legacy.js parks
+ * the reload while a dialog is up; this is what releases it afterwards. */
+let deferredReload = null;
+
+const flushDeferred = () => {
+  if (dialog.isOpen() || !deferredReload) return;
+  const run = deferredReload;
+  deferredReload = null;
+  run();
+};
+
+const wrap = (fn) => (...args) => fn(...args).finally(flushDeferred);
+
+window.RATrackerDialog = {
+  isOpen: dialog.isOpen,
+  open: wrap(dialog.open),
+  confirm: wrap(dialog.confirm),
+  alert: wrap(dialog.alert),
+  textPrompt: wrap(dialog.textPrompt),
+  /** legacy.js hands its reload here instead of running it under a dialog. */
+  defer(run) {
+    deferredReload = run;
+  },
+};
+window.RATrackerToast = toast;
 
 const STORE = window.RATrackerStorage;
 const SERIES = window.RATrackerSeries;

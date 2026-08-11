@@ -861,3 +861,87 @@ footer { margin-top: 36px; color: var(--ink-3); font-size: 12px; }
 .sh-unexpected { border-color: rgba(217, 165, 76, 0.5); background: rgba(217, 165, 76, 0.14); color: var(--truncated); }
 .sh-expired { border-color: rgba(134, 168, 246, 0.3); background: rgba(134, 168, 246, 0.1); color: var(--ink-3); }
 .sh-forget { margin-left: 6px; }
+
+/* --- dialogs ---
+   A native <dialog> opened with showModal(): the focus trap, the inert page
+   behind it, the top layer and Escape are all the platform's, and each is
+   something a hand-rolled overlay gets subtly wrong. The dialog element itself
+   is transparent and unpadded, because it IS the backdrop-click target - a
+   click that lands on it rather than on .ra-dialog-inner came from outside the
+   box. No entrance animation, same as everywhere else. */
+.ra-dialog {
+  padding: 0; border: 0; background: transparent; color: var(--ink);
+  width: min(460px, calc(100vw - 32px));
+}
+.ra-dialog::backdrop { background: rgba(4, 9, 18, 0.72); backdrop-filter: blur(2px); }
+.ra-dialog-inner {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 18px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.ra-dialog-title { font-size: 15px; }
+.ra-dialog-sub { margin: -6px 0 0; font-size: 12px; color: var(--ink-3); }
+/* Scrolls only when a summary is long enough to push the footer off screen;
+   the buttons must never be the thing that scrolls away. */
+.ra-dialog-body { font-size: 13px; color: var(--ink-2); max-height: 52vh; overflow: auto; }
+.ra-dialog-body p { margin: 0 0 8px; }
+.ra-dialog-body p:last-child { margin-bottom: 0; }
+.ra-dialog-body ul { margin: 0; padding-left: 18px; }
+/* What the question is about - the matches about to be relabelled, the file
+   about to replace a history - sunk, so the sentence above stays short. */
+.ra-dialog-summary {
+  margin: 10px 0 0; padding: 8px 12px;
+  background: var(--surface-sunk); border: 1px solid var(--rule); border-radius: 8px;
+  font: 12px/1.6 var(--font-mono); color: var(--ink-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.ra-dialog-field { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ra-dialog-label {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+.ra-dialog-input {
+  background: var(--surface-sunk); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 13px; font-family: inherit; width: 100%;
+}
+.ra-dialog-input:focus { outline: none; border-color: var(--accent); }
+.ra-dialog-input.bad { border-color: var(--loss); }
+.ra-dialog-error { margin: 0; font-size: 12px; color: var(--loss); }
+/* Actions right, note left. Danger is last in the row - JS guarantees the
+   order, this only has to leave room for it. */
+.ra-dialog-foot { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.ra-dialog-note { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-3); }
+.ra-dialog-note[hidden] { display: none; }
+.ra-dialog-actions { display: flex; gap: 8px; margin-left: auto; }
+
+/* --- toasts ---
+   Acknowledgements, not decisions. The container spans a corner of the page and
+   must not eat clicks meant for the table underneath, so it is pointer-events:
+   none and only the toasts themselves take the pointer. Above the replay
+   overlay (z 1000); a dialog outranks both by being in the top layer. */
+.ra-toasts {
+  position: fixed; right: 16px; bottom: 16px; z-index: 1100;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  pointer-events: none;
+}
+.ra-toast {
+  pointer-events: auto;
+  display: flex; align-items: flex-start; gap: 10px;
+  max-width: 380px; padding: 9px 10px 9px 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--ink-3); border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  font-size: 13px; color: var(--ink-2);
+}
+/* The left edge is the only colour: same meanings as everywhere else. */
+.ra-toast-info { border-left-color: var(--accent); }
+.ra-toast-success { border-left-color: var(--win); }
+.ra-toast-error { border-left-color: var(--loss); color: var(--ink); }
+.ra-toast-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ra-toast-close {
+  flex: 0 0 auto; padding: 0 4px; line-height: 1.2; font-size: 15px;
+  background: transparent; border: 0; color: var(--ink-3);
+}
+.ra-toast-close:hover { background: transparent; color: var(--ink); }

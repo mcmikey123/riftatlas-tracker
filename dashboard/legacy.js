@@ -56,6 +56,18 @@
     const el = $(sel);
     if (el) el.innerHTML = s;
   };
+  /* The dialog and toast components are ES modules, published on window by
+   * main.js because a classic script cannot import one. Every call below runs
+   * from an event handler, so they are always present by then - but the
+   * fallbacks keep this file honest if it is ever loaded on its own. */
+  const DIALOG = () => window.RATrackerDialog;
+  const say = (message, kind) => {
+    const t = window.RATrackerToast;
+    if (t) t(message, { kind });
+    else console.info("[RA-Tracker]", message);
+  };
+  const ask = (opts) => DIALOG().confirm(opts);
+
   const hideBackupBanner = () => {
     const el = $("#backupBanner");
     if (el) el.hidden = true;
@@ -1419,28 +1431,31 @@
     // Expired only, which is what the row offers - the wording below is about a
     // share whose time is already up and must never be shown for a live one.
     if (!record || !SHARE.isExpired(record, Date.now())) return;
-    const ok = confirm(
-      "Remove this expired share from the list?\n\n" +
-        "This forgets the local record only. It cannot delete the copy on the endpoint — that " +
-        "expired on its own, and the endpoint deletes it within about a day of expiring.\n\n" +
-        "The record is the only place this share's decryption key is kept, so the link can't be " +
-        "rebuilt afterwards."
-    );
-    if (!ok) return;
-    chrome.storage.local.get({ shares: [] }, (data) => {
-      // Pruned on this write like any other. Everything it removes alongside
-      // the chosen record is a share whose object the endpoint deleted days
-      // ago, so no row disappears that could still have been opened.
-      //
-      // Same non-atomic get-then-set as rememberShare, and the same race with a
-      // second dashboard tab. See the note there.
-      const kept = SHARE.pruneShares(data.shares, Date.now()).filter(
-        (s) => !(s && s.objectId === objectId)
-      );
-      STORE.writeShares(kept, () => {
-        void chrome.runtime.lastError;
-        recheckState.delete(objectId);
-        refreshShares();
+    ask({
+      title: "Remove this expired share from the list?",
+      body:
+        "<p>This forgets the local record only. It cannot delete the copy on the endpoint — that " +
+        "expired on its own, and the endpoint deletes it within about a day of expiring.</p>" +
+        "<p>The record is the only place this share's decryption key is kept, so the link " +
+        "can't be rebuilt afterwards.</p>",
+      confirmLabel: "Clear from list",
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
+      chrome.storage.local.get({ shares: [] }, (data) => {
+        // Pruned on this write like any other. Everything it removes alongside
+        // the chosen record is a share whose object the endpoint deleted days
+        // ago, so no row disappears that could still have been opened.
+        //
+        // Same non-atomic get-then-set as rememberShare, and the same race with
+        // a second dashboard tab. See the note there.
+        const kept = SHARE.pruneShares(data.shares, Date.now()).filter(
+          (s) => !(s && s.objectId === objectId)
+        );
+        STORE.writeShares(kept, () => {
+          recheckState.delete(objectId);
+          refreshShares();
+        });
       });
     });
   }
@@ -1490,11 +1505,26 @@
       const m = all.find((x) => x.id === deckId);
       if (!m) return;
       if (t.value !== NEW_DECK) return setDeckName(m, t.value);
-      const typed = prompt("Name this deck:", m.deckName || "");
-      // Cancelled: put the picker back where it was rather than leaving it
-      // showing the "new name" entry.
-      if (typed === null || !typed.trim()) return render();
-      return setDeckName(m, typed);
+      DIALOG()
+        .textPrompt({
+          title: "Name this deck",
+          body: "<p>A name you type is yours: nothing will overwrite it, even mid-game.</p>",
+          label: "Deck name",
+          value: m.deckName || "",
+          placeholder: "e.g. Hollowmark Aggro",
+          confirmLabel: "Save name",
+          validate: (v) => (v.trim() ? null : "Give the deck a name, or cancel."),
+        })
+        .then((typed) => {
+          // Cancelled: put the picker back where it was rather than leaving it
+          // showing the "new name" entry.
+          if (typed === null || !typed.trim()) return render();
+          // Re-resolved by id: the array may have been replaced while the
+          // dialog was open, and mutating the old object would write nothing.
+          const fresh = all.find((x) => x.id === deckId);
+          if (fresh) setDeckName(fresh, typed);
+        });
+      return;
     }
     if (["fMyChampion", "fMode", "fDeck", "fUnknown"].includes(t.id)) render();
   });
@@ -1563,7 +1593,7 @@
       chrome.runtime.sendMessage({ type: "ra:visual:get", matchId: visualId }, (reply) => {
         const payload = chrome.runtime.lastError || !reply || !reply.ok ? null : reply.replay;
         if (!payload || !payload.events || !payload.events.length) {
-          alert("The replay for this match could not be read.");
+          say("The replay for this match could not be read.", "error");
           return;
         }
         window.RATrackerVisualReplay.openModal(m, payload, {
@@ -1644,25 +1674,54 @@
       const src = all.find((x) => x.id === applyId);
       // The picker commits on change, so the record is already the truth.
       const name = (src?.deckName || "").trim();
-      if (!name) return alert("Give this match a deck name first.");
+      if (!name) return say("Give this match a deck name first.", "error");
       const champion = champ(src.myChampion || src.myLegend);
       const targets = all.filter(
         (m) => champ(m.myChampion || m.myLegend) === champion && !(m.deckName || "").trim()
       );
-      if (!targets.length) return alert(`No unlabelled ${champion} matches to update.`);
-      if (!confirm(`Label ${targets.length} unlabelled ${champion} match${targets.length === 1 ? "" : "es"} as “${name}”?`)) return;
-      targets.forEach((m) => { m.deckName = name; m.deckSource = "manual"; });
-      STORE.writeMatches(all, () => { buildFilterOptions(); render(); });
+      if (!targets.length) return say(`No unlabelled ${champion} matches to update.`);
+      ask({
+        title: `Label ${targets.length} match${targets.length === 1 ? "" : "es"} as “${name}”?`,
+        body: `<p>Every unlabelled ${esc(champion)} match takes this name, and a name applied
+               here is marked manual, so detection will not overwrite it.</p>`,
+        confirmLabel: `Label ${targets.length}`,
+      }).then((ok) => {
+        if (!ok) return;
+        /* Re-resolved AFTER the dialog, by id. A dialog does not block the
+         * event loop the way confirm() did, so the array captured above may
+         * have been replaced by a reload while it was open - and mutating
+         * those orphans would report success having written nothing. */
+        const now = all.filter(
+          (m) => champ(m.myChampion || m.myLegend) === champion && !(m.deckName || "").trim()
+        );
+        if (!now.length) return say("Those matches have already been labelled.");
+        now.forEach((m) => { m.deckName = name; m.deckSource = "manual"; });
+        STORE.writeMatches(all, () => {
+          buildFilterOptions();
+          render();
+          say(`Labelled ${now.length} match${now.length === 1 ? "" : "es"} as “${name}”.`, "success");
+        });
+      });
       return;
     }
     const del = e.target?.dataset?.del;
-    if (del && !readOnly() && confirm("Delete this match record?")) {
-      all = all.filter((x) => x.id !== del);
-      expanded.delete(del);
-      logCache.delete(del);
-      STORE.removeKeys(["deckcards_" + del, "log_" + del]);
-      forgetVisual(del);
-      persist(all, () => { buildFilterOptions(); render(); });
+    if (del && !readOnly()) {
+      ask({
+        title: "Delete this match?",
+        body:
+          "<p>The match record, its game log, its card list and its replay all go. " +
+          "This cannot be undone, and an export taken earlier is the only way back.</p>",
+        confirmLabel: "Delete",
+        danger: true,
+      }).then((ok) => {
+        if (!ok) return;
+        all = all.filter((x) => x.id !== del);
+        expanded.delete(del);
+        logCache.delete(del);
+        STORE.removeKeys(["deckcards_" + del, "log_" + del]);
+        forgetVisual(del);
+        persist(all, () => { buildFilterOptions(); render(); });
+      });
     }
   });
 
@@ -1688,23 +1747,90 @@
         !(m.deckName || "").trim() &&
         (!champFilter || champ(m.myChampion || m.myLegend) === champFilter)
     );
-    if (!targets.length) return alert("Every match already has a deck name.");
+    if (!targets.length) return say("Every match already has a deck name.");
     const scope = champFilter ? `${targets.length} unlabelled ${champFilter} match` : `${targets.length} unlabelled match`;
-    const name = prompt(
-      `Deck name for ${scope}${targets.length === 1 ? "" : "es"}?\n\n` +
-        `Tip: set the "My champion" filter first to label one champion at a time.`,
-      ""
-    );
-    if (name === null) return;
-    const clean = name.trim();
-    if (!clean) return;
-    targets.forEach((m) => { m.deckName = clean; m.deckSource = "manual"; });
+    DIALOG()
+      .textPrompt({
+        title: `Name ${scope}${targets.length === 1 ? "" : "es"}`,
+        sub: champFilter
+          ? `Only ${champFilter} matches, because that is the champion filter you have set.`
+          : "Set the My champion filter first to label one champion at a time.",
+        label: "Deck name",
+        confirmLabel: "Label them",
+        validate: (v) => (v.trim() ? null : "Give the deck a name, or cancel."),
+      })
+      .then((name) => {
+        const clean = (name || "").trim();
+        if (!clean) return;
+        // Re-resolved after the dialog: see the note on the deck-apply path.
+        const now = all.filter(
+          (m) =>
+            !(m.deckName || "").trim() &&
+            (!champFilter || champ(m.myChampion || m.myLegend) === champFilter)
+        );
+        if (!now.length) return say("Those matches have already been labelled.");
+        now.forEach((m) => { m.deckName = clean; m.deckSource = "manual"; });
+        STORE.writeMatches(all, () => {
+          buildFilterOptions();
+          render();
+          say(`Labelled ${now.length} match${now.length === 1 ? "" : "es"} as “${clean}”.`, "success");
+        });
+      });
+  });
+
+  /* Name each detected group, one dialog at a time.
+   *
+   * This was `clusters.forEach(...)` around a native prompt, which worked only
+   * because prompt() blocks. An async callback inside forEach would open every
+   * dialog at once and reach the write with nothing named, so the loop has to
+   * be a real `for ... of` with an await in it.
+   *
+   * An unnamed group is simply left unlabelled - nothing is guessed, which is
+   * the same promise the undecided matches get. */
+  async function nameClusters(clusters, lines) {
+    const ok = await ask({
+      title: `Found ${clusters.length} distinct deck${clusters.length === 1 ? "" : "s"}`,
+      sub: "Grouped by the cards each game actually showed",
+      body:
+        "<p>You will be asked to name each group in turn. Leave one blank to skip it — " +
+        "an unnamed group keeps <em>— unlabelled —</em> rather than being guessed at.</p>" +
+        `<pre class="ra-dialog-summary">${esc(lines)}</pre>`,
+      confirmLabel: "Name them",
+    });
+    if (!ok) return;
+
+    const named = new Map();
+    for (let i = 0; i < clusters.length; i++) {
+      const c = clusters[i];
+      const name = await DIALOG().textPrompt({
+        title: `Group ${i + 1} of ${clusters.length}`,
+        sub: `${c.size} match${c.size === 1 ? "" : "es"} · ${c.cards} distinct cards`,
+        label: "Deck name",
+        placeholder: "Leave blank to skip",
+        confirmLabel: i + 1 === clusters.length ? "Finish" : "Next",
+      });
+      const clean = (name || "").trim();
+      if (clean) named.set(c, clean);
+    }
+    if (!named.size) return;
+
+    let count = 0;
+    for (const [c, clean] of named) {
+      const ids = new Set(c.ids);
+      all.forEach((m) => {
+        if (!ids.has(m.id)) return;
+        m.deckName = clean;
+        m.deckSource = "fingerprint";
+        count++;
+      });
+    }
+    if (!count) return say("Those matches have already been labelled.");
     STORE.writeMatches(all, () => {
       buildFilterOptions();
       render();
-      alert(`Labelled ${targets.length} match${targets.length === 1 ? "" : "es"} as “${clean}”.`);
+      say(`Labelled ${count} match${count === 1 ? "" : "es"}.`, "success");
     });
-  });
+  }
 
   // Recognise decks from the cards actually played.
   on("#autoDeck", "click", () => {
@@ -1718,51 +1844,38 @@
       }
       const withCards = [...prints.values()].filter((s) => s.size >= FP.MIN_CARDS).length;
       if (!withCards) {
-        return alert(
-          "No usable card data yet.\n\nDeck recognition compares the cards you actually played, " +
-            `so it needs matches where at least ${FP.MIN_CARDS} of your own cards were seen on the board.`
-        );
+        return DIALOG().alert({
+          title: "No usable card data yet",
+          body:
+            "<p>Deck recognition compares the cards you actually played, so it needs matches " +
+            `where at least ${FP.MIN_CARDS} of your own cards were seen on the board.</p>` +
+            "<p>Play a few more matches with the extension running and try again.</p>",
+        });
       }
       const { proposals, undecided, labelledCount } = FP.suggestLabels(all, prints);
 
       if (!labelledCount) {
         // Nothing labelled yet: group them instead and let the user name each.
         const clusters = FP.clusterDecks(all, prints);
-        if (!clusters.length) return alert("Not enough card data to group these matches yet.");
+        if (!clusters.length) return say("Not enough card data to group these matches yet.");
         const lines = clusters
           .map((c, i) => `  Group ${i + 1}: ${c.size} match${c.size === 1 ? "" : "es"} (${c.cards} distinct cards)`)
           .join("\n");
-        const ok = confirm(
-          `Found ${clusters.length} distinct deck${clusters.length === 1 ? "" : "s"} by card overlap:\n\n${lines}\n\n` +
-            `Name them now? You'll be asked for each group in turn.`
-        );
-        if (!ok) return;
-        let named = 0;
-        clusters.forEach((c, i) => {
-          const name = prompt(
-            `Name for group ${i + 1} — ${c.size} match${c.size === 1 ? "" : "es"}, ${c.cards} distinct cards:`,
-            ""
-          );
-          const clean = (name || "").trim();
-          if (!clean) return;
-          const ids = new Set(c.ids);
-          all.forEach((m) => { if (ids.has(m.id)) { m.deckName = clean; m.deckSource = "fingerprint"; } });
-          named += c.size;
-        });
-        if (!named) return;
-        STORE.writeMatches(all, () => {
-          buildFilterOptions();
-          render();
-          alert(`Labelled ${named} matches.`);
-        });
+        nameClusters(clusters, lines);
         return;
       }
 
       if (!proposals.length) {
-        return alert(
-          `No confident matches found.\n\n${undecided.length} match${undecided.length === 1 ? "" : "es"} couldn't be placed:\n` +
-            undecided.slice(0, 6).map((u) => `  • ${u.reason}`).join("\n")
-        );
+        return DIALOG().alert({
+          title: "No confident matches found",
+          sub: `${undecided.length} match${undecided.length === 1 ? "" : "es"} could not be placed`,
+          body:
+            "<p>Nothing is guessed: a match that sits between two decks keeps " +
+            "<em>— unlabelled —</em> and can be labelled by hand in Matches.</p>" +
+            "<ul>" +
+            undecided.slice(0, 6).map((u) => `<li>${esc(u.reason)}</li>`).join("") +
+            "</ul>",
+        });
       }
       const byDeck = {};
       proposals.forEach((p) => { byDeck[p.deck] = (byDeck[p.deck] || 0) + 1; });
@@ -1770,18 +1883,36 @@
         .map(([d, n]) => `  ${n} × “${d}”`)
         .join("\n");
       const avg = Math.round((proposals.reduce((a, p) => a + p.score, 0) / proposals.length) * 100);
-      const ok = confirm(
-        `Matched ${proposals.length} unlabelled game${proposals.length === 1 ? "" : "s"} to your named decks ` +
-          `(avg ${avg}% card overlap):\n\n${summary}\n\n` +
-          (undecided.length ? `${undecided.length} left unlabelled (too little data or no clear match).\n\n` : "") +
-          `Apply these labels?`
-      );
-      if (!ok) return;
-      const byId = new Map(proposals.map((p) => [p.match.id, p.deck]));
-      all.forEach((m) => { if (byId.has(m.id)) { m.deckName = byId.get(m.id); m.deckSource = "fingerprint"; } });
-      STORE.writeMatches(all, () => {
-        buildFilterOptions();
-        render();
+      ask({
+        title: "Decks detected from cards played",
+        sub: `${proposals.length} unlabelled game${proposals.length === 1 ? "" : "s"} matched, average ${avg}% card overlap`,
+        body:
+          "<p>Matched against decks you have already named:</p>" +
+          `<pre class="ra-dialog-summary">${esc(summary)}</pre>` +
+          (undecided.length
+            ? `<p>${undecided.length} left alone — too little card data, or no clear winner. ` +
+              "Nothing is guessed: those keep <em>— unlabelled —</em>.</p>"
+            : ""),
+        summary: "Names you typed yourself are never touched.",
+        confirmLabel: `Apply ${proposals.length} label${proposals.length === 1 ? "" : "s"}`,
+      }).then((ok) => {
+        if (!ok) return;
+        const byId = new Map(proposals.map((p) => [p.match.id, p.deck]));
+        // By id, so a reload during the dialog cannot leave this writing to
+        // objects that are no longer in the array being saved.
+        let applied = 0;
+        all.forEach((m) => {
+          if (!byId.has(m.id) || (m.deckName || "").trim()) return;
+          m.deckName = byId.get(m.id);
+          m.deckSource = "fingerprint";
+          applied++;
+        });
+        if (!applied) return say("Those matches have already been labelled.");
+        STORE.writeMatches(all, () => {
+          buildFilterOptions();
+          render();
+          say(`Labelled ${applied} match${applied === 1 ? "" : "es"}.`, "success");
+        });
       });
     });
   });
@@ -1887,10 +2018,10 @@
           setArchive(null);
           logCache.clear();
           load();
-          alert(`Imported ${bundle.matches.length} matches into your live data.`);
+          say(`Imported ${bundle.matches.length} matches into your live data.`, "success");
         });
       } catch (err) {
-        alert("Import failed: " + err.message);
+        say("Import failed: " + err.message, "error");
       }
     });
     e.target.value = "";
@@ -1899,40 +2030,63 @@
   // Archive & clear: download everything, then wipe local storage.
   on("#archiveClear", "click", () => {
     if (readOnly()) return;
-    if (!all.length) return alert("There are no matches to archive.");
+    if (!all.length) return say("There are no matches to archive.");
     buildBundle(true, (bundle) => {
       const json = JSON.stringify(bundle, null, 2);
       const sizeMb = (new Blob([json]).size / 1048576).toFixed(1);
+      const archivedIds = new Set(bundle.matches.map((m) => m.id));
       download(`riftatlas-archive-${stamp()}.json`, json, "application/json");
-      setTimeout(() => {
-        const ok = confirm(
-          `Archive downloaded (${bundle.matches.length} matches, ${sizeMb} MB).\n\n` +
-            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs, card data and share links from the extension.\n\n` +
-            `You can view it again any time with "View archive", or restore it with Import JSON.\n\n` +
-            `The archive does not carry share links: any share still on the endpoint keeps being served until it expires, but the record here is the only copy of the key that opens it.\n\n` +
-            `Press Cancel to keep everything.`
-        );
+      /* The 800ms wait existed because a synchronous modal fired straight after
+       * a programmatic click on a blob URL could suppress the download. The
+       * dialog does not block, so the reason is gone with the modal that
+       * needed it. */
+      ask({
+        title: "Clear everything from the extension?",
+        sub: `Archive downloaded — ${bundle.matches.length} matches, ${sizeMb} MB`,
+        body:
+          "<p>Check it is in your Downloads folder first. This then wipes every match, game " +
+          "log, card list, share record and replay from the extension.</p>" +
+          "<p>You can open the file again any time with <b>View archive</b>, or merge it back " +
+          "with <b>Import JSON</b>.</p>" +
+          "<p>The archive does not carry share links. Any share already uploaded keeps being " +
+          "served until it expires, but the record here is the only copy of the key that " +
+          "opens it.</p>",
+        confirmLabel: "Clear everything",
+        danger: true,
+      }).then((ok) => {
         if (!ok) return;
+        /* Anything that finished while the dialog was open is NOT in the file
+         * that was just written, so clearing it would destroy the only copy.
+         * The wipe is therefore limited to what the archive actually holds. */
+        const stragglers = all.filter((m) => !archivedIds.has(m.id));
         chrome.storage.local.get(null, (data) => {
           // "shares" goes with the rest: each record holds a decryption key,
           // and a wipe that leaves every key a browser ever made behind is not
           // the clean slate the button offers.
           const keys = Object.keys(data || {}).filter(
-            (k) => k === "shares" || k.startsWith("deckcards_") || k.startsWith("log_")
+            (k) =>
+              k === "shares" ||
+              ((k.startsWith("deckcards_") || k.startsWith("log_")) &&
+                archivedIds.has(k.slice(k.indexOf("_") + 1)))
           );
           STORE.removeKeys(keys, () => {
-            all = [];
+            all = stragglers;
             expanded.clear();
             logCache.clear();
             forgetAllVisual();
-            STORE.writeMatches([], () => {
+            STORE.writeMatches(stragglers, () => {
               buildFilterOptions();
               render();
-              alert("Local data cleared. The archive file has everything.");
+              say(
+                stragglers.length
+                  ? `Cleared. ${stragglers.length} match${stragglers.length === 1 ? "" : "es"} finished after the archive was written and ${stragglers.length === 1 ? "was" : "were"} kept.`
+                  : "Local data cleared. The archive file has everything.",
+                "success"
+              );
             });
           });
         });
-      }, 800);
+      });
     });
   });
 
@@ -1960,7 +2114,7 @@
         setText("#viewArchive", "Exit archive");
         load();
       } catch (err) {
-        alert("Could not read archive: " + err.message);
+        say("Could not read archive: " + err.message, "error");
       }
     });
     e.target.value = "";
@@ -1974,11 +2128,19 @@
 
   on("#clearAll", "click", () => {
     if (readOnly()) return;
-    if (confirm(
-      "Delete ALL recorded matches, logs, replays and share links? " +
-        "Any share already uploaded keeps being served until it expires, but the key that opens it is kept only here. " +
-        "Consider using Archive & clear instead, which saves a copy first."
-    )) {
+    ask({
+      title: "Delete everything in this browser?",
+      body:
+        "<p>Every match, game log, card list, share record and replay, with no copy taken.</p>" +
+        "<p>Any share already uploaded keeps being served until it expires, but the key that " +
+        "opens it is kept only here, so clearing this leaves it unopenable rather than " +
+        "deleted.</p>" +
+        "<p>If you might want the data later, use <b>Archive &amp; clear</b> instead, which " +
+        "saves a copy first.</p>",
+      confirmLabel: "Delete everything",
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
       all = [];
       expanded.clear();
       logCache.clear();
@@ -1990,7 +2152,7 @@
         if (keys.length) STORE.removeKeys(keys);
       });
       persist(all, () => { buildFilterOptions(); render(); });
-    }
+    });
   });
 
   // ---- backups ---------------------------------------------------------
@@ -2083,7 +2245,7 @@
     requestBackupPermission((granted) => {
       if (!granted) {
         e.target.checked = false;
-        alert("Downloads permission is needed to save backup files automatically.");
+        say("Downloads permission is needed to save backup files automatically.", "error");
         return;
       }
       getSettings((s) => {
@@ -2205,7 +2367,20 @@
   chrome.storage.onChanged.addListener((changes) => {
     if (archive) return; // never let live writes disturb an archive view
     const busy = document.activeElement?.dataset;
-    if (changes.matches && !busy?.notes && !busy?.deck) load();
+    if (changes.matches && !busy?.notes && !busy?.deck) {
+      /* A dialog no longer blocks the event loop the way confirm() did, so a
+       * reload arriving mid-decision would replace `all` with fresh objects -
+       * and any target list captured before the dialog would then be mutating
+       * records that are no longer in the array being saved. The reload is
+       * parked until the dialog closes, which restores what the native modals
+       * gave for free.
+       *
+       * The activeElement check above cannot cover this: with a modal open the
+       * active element is the dialog's own button, not a notes or deck field. */
+      const dlg = window.RATrackerDialog;
+      if (dlg && dlg.isOpen()) dlg.defer(load);
+      else load();
+    }
     // A share created in the row above writes this key, so the list picks the
     // new link up without a reload.
     if (changes.shares) refreshShares();
