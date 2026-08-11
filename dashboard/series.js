@@ -207,10 +207,21 @@
       // the join test first, then on completion, keeps the two rules separate:
       // one is about whether these are the same sitting, the other about whether
       // the series is already over.
+      /* A one-game run is a series when the lobby said best-of-three: somebody
+       * left after game one, which is a Bo3 that ended early rather than a
+       * stray match. Without this those games vanish from the Series view
+       * entirely, and they are the ones that matter most to "after losing game
+       * one" - a player who lost G1 and quit is the definitive case of not
+       * recovering, and excluding them flatters the figure.
+       *
+       * Only ever with a captured format. A lone match whose format we never
+       * read is exactly the guess this is trying to stop making. */
+      const worthKeeping = (games) => games.length > 1 || games[0].matchFormat === "bo3";
+
       let run = [];
       const runs = [];
       const flush = () => {
-        if (run.length > 1) runs.push(run);
+        if (run.length && worthKeeping(run)) runs.push(run);
         run = [];
       };
       for (let i = 0; i < ordered.length; i++) {
@@ -240,11 +251,11 @@
         for (const g of games) {
           segment.push(g);
           if (isComplete(segment, fmt)) {
-            if (segment.length > 1) assign(segment, fmt, "auto");
+            if (worthKeeping(segment)) assign(segment, fmt, "auto");
             segment = [];
           }
         }
-        if (segment.length > 1) assign(segment, fmt, "auto");
+        if (segment.length && worthKeeping(segment)) assign(segment, fmt, "auto");
       }
     }
 
@@ -495,7 +506,9 @@
   function renumber(matches, seriesId) {
     const out = matches || [];
     const games = out.filter((m) => m && m.seriesId === seriesId).sort(byStartedAt);
-    if (games.length < 2) {
+    // Dissolved on the same rule it was formed by: one game is still a series
+    // when the lobby said Bo3, and is not otherwise.
+    if (!games.length || (games.length === 1 && games[0].matchFormat !== "bo3")) {
       games.forEach(clearSeries);
       return out;
     }

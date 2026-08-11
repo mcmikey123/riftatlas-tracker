@@ -169,8 +169,10 @@ test("a change of opponent ends a Bo3 series even with no gap at all", () => {
             opponentName: "someone-else" }),
   ];
   const out = run(games);
-  assert.equal(byId(out, "g1").seriesId, null);
-  assert.equal(byId(out, "g2").seriesId, null);
+  // Each is its own one-game series - a Bo3 somebody left after game one -
+  // rather than the two being merged into one.
+  assert.notEqual(byId(out, "g1").seriesId, byId(out, "g2").seriesId);
+  assert.ok(byId(out, "g1").seriesId);
 });
 
 test("two Bo3 series against the same opponent are split by completion, not by time", () => {
@@ -206,8 +208,34 @@ test("one Bo1 among Bo3 games breaks the run rather than joining it", () => {
   const games = backToBack(["win", "loss", "win"], { matchFormat: "bo3" });
   games[1].matchFormat = "bo1";
   const out = run(games);
-  assert.equal(byId(out, "g1").seriesId, null);
-  assert.equal(byId(out, "g3").seriesId, null);
+  // The Bo1 is in no series at all; the Bo3s either side are separate
+  // one-game series rather than being joined across it.
+  assert.equal(byId(out, "g2").seriesId, null);
+  assert.notEqual(byId(out, "g1").seriesId, byId(out, "g3").seriesId);
+  assert.ok(byId(out, "g1").seriesId);
+});
+
+test("a Bo3 abandoned after one game is still a series", () => {
+  // Somebody left after game one. The lobby said best-of-three, so this is a
+  // series that ended early, not a stray match - and dropping it would hide
+  // the very games that "after losing game 1" is about.
+  const out = run([match({ id: "solo", result: "loss", matchFormat: "bo3" })]);
+  const s = S.group(out)[0];
+  assert.ok(s, "a lone Bo3 game forms a series");
+  assert.equal(s.games.length, 1);
+  assert.equal(s.result, "unfinished", "one game decides nothing either way");
+  assert.equal(byId(out, "solo").seriesGame, 1);
+});
+
+test("a lone match with no captured format is still not a series", () => {
+  // The guess this whole change exists to stop making.
+  const out = run([match({ id: "solo", result: "loss" })]);
+  assert.equal(byId(out, "solo").seriesId, null);
+});
+
+test("a lone Bo1 is never a series", () => {
+  const out = run([match({ id: "solo", result: "loss", matchFormat: "bo1" })]);
+  assert.equal(byId(out, "solo").seriesId, null);
 });
 
 test("a series takes its format from the games, not from the fallback", () => {
