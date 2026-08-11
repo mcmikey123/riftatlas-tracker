@@ -68,6 +68,10 @@ export const state = {
   // clears - see main.js for why that matters.
   dialogOpen: false,
 
+  // Mirrored from storage so the Series view can describe its own window in
+  // the suggestion strip without re-reading settings on every render.
+  seriesSettings: {},
+
   readOnly: false,
   archiveName: "",
 };

@@ -563,6 +563,41 @@ body.read-only .series-badge { color: var(--ink-off); border-color: rgba(134, 16
 .live-result { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .hint-inline { font-size: 12px; color: var(--ink-3); }
 
+/* ============================ Series ============================ */
+.srow, .grow {
+  display: grid; grid-template-columns: var(--mgrid); gap: 10px;
+  align-items: center; padding: 9px 14px;
+}
+.srow { border-top: 1px solid var(--rule); }
+.srow:hover { background: rgba(134, 168, 246, 0.05); }
+.srow.on { background: var(--surface-2); }
+/* The games are sub-rows in the SAME grid, so expanding a series does not
+   knock the columns out of line with the rows around it. */
+.grow { background: var(--surface-sunk); border-top: 1px solid var(--rule); font-size: 12.5px; }
+.grow .cell { font-size: 12.5px; }
+.cell.dim { color: var(--ink-2); }
+.cell .win { color: var(--win); }
+.cell .loss { color: var(--loss); }
+.decks { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.none { color: var(--ink-off); }
+.ser-result { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+/* The deciding game is what the view sorts on, so it is the one thing in a
+   sub-row that gets the accent. */
+.is-decider .d1 { color: var(--accent); }
+.tile-value.dash { color: var(--ink-3); font-weight: 400; }
+
+.suggestion {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 11px 14px; border-radius: 9px;
+  background: var(--surface-2); border: 1px dashed rgba(134, 168, 246, 0.5);
+}
+.sugg-tag {
+  font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.sugg-text { flex: 1 1 320px; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
+.sugg-actions { display: flex; gap: 8px; }
+
 /* --- expandable match detail (legacy table view) --- */
 .match-row { cursor: default; }
 .expander {

@@ -14,6 +14,7 @@
 import { state, subscribe, emit, resetPaging } from "./state.js";
 import { mountShell, paintShell, VIEWS } from "./shell.js";
 import { renderMatches, mountMatches } from "./view-matches.js";
+import { renderSeries, mountSeries } from "./view-series.js";
 
 const STORE = window.RATrackerStorage;
 const SERIES = window.RATrackerSeries;
@@ -92,6 +93,7 @@ function render() {
    * history has always listed them regardless - a match whose result was never
    * read is exactly the one you came here to fix. */
   renderMatches($("[data-matches]"), withSeries, state.readOnly);
+  renderSeries($("[data-series]"), withSeries, state.readOnly);
 }
 
 // ---- the filter row ----------------------------------------------------
@@ -157,6 +159,7 @@ function boot() {
   mountShell();
   mountFilters();
   mountMatches();
+  mountSeries();
   subscribe(render);
 
   /* legacy.js renders on its own schedule - on load, on every storage change,
@@ -171,6 +174,7 @@ function boot() {
 
   STORE.getSettings((s) => {
     settings = s;
+    state.seriesSettings = s;
     state.view = VIEWS.indexOf(s.view) === -1 ? "overview" : s.view;
     state.dismissedSuggestions = new Set(s.seriesDismissed || []);
     emit();
@@ -182,6 +186,7 @@ function boot() {
     if (!changes.settings) return;
     STORE.getSettings((s) => {
       settings = s;
+      state.seriesSettings = s;
       emit();
     });
   });
