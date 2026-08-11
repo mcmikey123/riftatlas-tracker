@@ -971,3 +971,11 @@ input[type="number"]:focus { outline: none; border-color: var(--accent); }
    columns out of line with the rows above and below it. */
 .vd-share-row > td { background: var(--surface-sunk); padding: 0 14px 12px; }
 .vd-share-row .share-box { margin-top: 0; }
+
+/* Deleting one recording. Danger-coloured but quiet: it is one row's control
+   in a diagnostics table, not the page's destructive action. */
+.vd-del {
+  background: transparent; border: 0; padding: 0 0 0 10px;
+  color: var(--loss); font: inherit; font-size: 12px; cursor: pointer;
+}
+.vd-del:hover { background: transparent; text-decoration: underline; }

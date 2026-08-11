@@ -563,8 +563,11 @@
                <button class="vd-share" data-share="${id}"
                        title="Turn this replay into an encrypted link anyone can open">${
                  open ? "hide" : "share a link"
-               }</button>`
-            : label
+               }</button>
+               <button class="vd-del" data-visualdel="${id}"
+                       title="Delete this recording. The match itself is kept.">delete</button>`
+            : `${label}<button class="vd-del" data-visualdel="${id}"
+                       title="Delete this recording. The match itself is kept.">delete</button>`
         }</td>
         <td>${fmtBytes(record.compressedBytes)}</td>
         <td>${fmtCount(record.chunkCount)}</td>
@@ -1667,6 +1670,49 @@
     // Sharing. The panel is toggled in place rather than through render(), so
     // opening it disturbs nothing else in the row - and a share already running
     // cannot be closed out from under itself.
+    const delReplay = e.target?.closest?.("[data-visualdel]");
+    if (delReplay) {
+      const matchId = delReplay.dataset.visualdel;
+      // A recording being uploaded right now is the one thing that must not be
+      // pulled out from under the pipeline reading it.
+      if (shareBusy === matchId) {
+        say("This replay is being shared right now. Wait for that to finish.", "error");
+        return;
+      }
+      const record = visualRecords.find((r) => r.matchId === matchId);
+      const size = record ? fmtBytes(record.compressedBytes) : null;
+      /* Deleting a RECORDING is not deleting a match, and the wording has to
+       * carry that: the match record, its game log, its result and its card
+       * list all survive, which is exactly what the retention setting already
+       * promises when it drops the oldest replay. */
+      const shared = shares.some((r) => r && r.matchId === matchId);
+      ask({
+        title: "Delete this recording?",
+        sub: size ? `Frees ${size}` : undefined,
+        body:
+          "<p>The match itself is kept &mdash; its record, its game log, its result and its card " +
+          "list are all untouched. Only the video-like replay goes.</p>" +
+          "<p>It cannot be recovered. A replay is never in an export or an archive, so there is " +
+          "nothing to restore it from.</p>" +
+          (shared
+            ? "<p>You have shared this replay. <b>Deleting your copy does not delete the share</b> " +
+              "&mdash; the encrypted copy on the endpoint is served until it expires, and clearing " +
+              "it here would only lose the key that opens it.</p>"
+            : ""),
+        confirmLabel: "Delete recording",
+        danger: true,
+      }).then((ok) => {
+        if (!ok) return;
+        forgetVisual(matchId);
+        shareOpen.delete(matchId);
+        // The Matches view keys its replay buttons off hasVisual(), so it has
+        // to be told as well as the panel this row lives in.
+        render();
+        say("Recording deleted. The match is still here.", "success");
+      });
+      return;
+    }
+
     const shareBtn = e.target?.closest?.("[data-share]");
     if (shareBtn) {
       const shareId = shareBtn.dataset.share;
