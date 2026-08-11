@@ -949,3 +949,12 @@ input[type="number"] {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 input[type="number"]:focus { outline: none; border-color: var(--accent); }
+
+/* The Replays row label, which opens the replay. Styled as text rather than as
+   a button: it is the row's name first and a control second, and a row of
+   buttons down the first column would read as a toolbar. */
+.vd-open {
+  background: transparent; border: 0; padding: 0;
+  color: var(--ink-2); font: inherit; text-align: left; cursor: pointer;
+}
+.vd-open:hover { background: transparent; color: var(--ink); text-decoration: underline; }

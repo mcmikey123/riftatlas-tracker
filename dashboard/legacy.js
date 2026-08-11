@@ -541,9 +541,25 @@
     return `<td><span class="vd-state vd-${esc(state)}" title="${esc(why)}">${esc(state)}</span></td>`;
   }
 
+  /* The match label opens the replay. It is the thing on the row that names a
+   * match, so it is what a reader reaches for - and the modal is already one
+   * click away from Matches, so this is a shortcut rather than a new power.
+   *
+   * Not every row can offer it. A record with no chunks has nothing to play,
+   * and an `error` recording is unplayable by definition - the legend on this
+   * view says exactly that. Those stay as plain text rather than becoming a
+   * button that opens a modal only to apologise. */
+  const playable = (record) => (Number(record.chunkCount) || 0) > 0 && record.state !== "error";
+
   function visualRow(record) {
+    const label = esc(visualLabel(record));
     return `<tr>
-        <td>${esc(visualLabel(record))}</td>
+        <td>${
+          playable(record)
+            ? `<button class="vd-open" data-visual="${esc(record.matchId)}"
+                       title="Play this replay">${label}</button>`
+            : label
+        }</td>
         <td>${fmtBytes(record.compressedBytes)}</td>
         <td>${fmtCount(record.chunkCount)}</td>
         <td>${fmtCount(statOf(record, "keyframes"))}</td>
@@ -1603,7 +1619,8 @@
     /* The expander moved to view-matches.js with the row it opens. This file
      * kept a private `expanded` Set that nothing renders from any more, so a
      * branch here would only fire a second render for the same click. */
-    const visualId = e.target?.dataset?.visual;
+    const visualBtn = e.target?.closest?.("[data-visual]");
+    const visualId = visualBtn && visualBtn.dataset.visual;
     if (visualId) {
       const m = all.find((x) => x.id === visualId) || { id: visualId };
       chrome.runtime.sendMessage({ type: "ra:visual:get", matchId: visualId }, (reply) => {
