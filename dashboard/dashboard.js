@@ -689,7 +689,15 @@
     let body;
     if (s.link) {
       const expires = new Date(s.createdAt + SHARE.SHARE_TTL_MS);
+      /* The error has to render here too, not only in the no-link branch below.
+       * "Create a new link anyway" is offered while a link is on screen, and the
+       * refusals it can hit - another match already uploading, or a broken stored
+       * endpoint - set an error without clearing the link, so this branch is the
+       * one that paints. Without this the button just re-enables itself and
+       * nothing else happens, however many times it is pressed. Clearing the link
+       * instead would throw away the very thing the user is looking at. */
       body = `
+        ${s.error ? `<p class="share-error">${esc(s.error)}</p>` : ""}
         ${shareLinkRowHtml(s.link, matchId, {
           label: "this match",
           field: "sharelink",
