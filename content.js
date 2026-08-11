@@ -29,6 +29,11 @@
   // browsed last week never labels today's match.
   const DECK_MEMORY_MS = 2 * 60 * 60 * 1000;
   const MAX_DECK_NAME = 60; // longer than this and it isn't a deck name
+  // The lobby format runs on the deck picker's clock: it is chosen on the same
+  // screen, in the same breath, and cannot change faster than a click either.
+  const FORMAT_READ_MIN_MS = DECK_READ_MIN_MS;
+  const FORMAT_STAMP_MS = DECK_STAMP_MS;
+  const FORMAT_MEMORY_MS = DECK_MEMORY_MS;
   const MAX_LOG = 500; // cap stored log lines per match
   const CARDS_SAVE_MS = 5000; // how often to flush the card-code accumulator
   // Match-log actor colours (left bar on each log row).

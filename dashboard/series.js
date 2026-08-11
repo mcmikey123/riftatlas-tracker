@@ -9,7 +9,7 @@
  *
  *   seriesId      string | null
  *   seriesGame    1..n   | null
- *   seriesFormat  'bo3' | 'bo5' | null
+ *   seriesFormat  'bo3' | null   (a bo1 match is never in a series)
  *   seriesSource  'auto' | 'manual' | null
  *
  * `seriesSource` follows the convention `deckSource` and `resultSource` already
@@ -29,11 +29,19 @@
 (function (root) {
   "use strict";
 
-  const FORMATS = ["bo3", "bo5"];
+  /* The site offers Best of 1 and Best of 3, and nothing else. Bo5 does not
+   * exist here - the earlier draft had it because the design handoff described
+   * a game rather than this one.
+   *
+   * bo1 is a format but never a series: one game cannot be a best-of-three, and
+   * two Bo1 games against the same opponent are a rematch, not a series. It is
+   * carried as a value precisely so it can say that, because a Bo1 rematch
+   * inside the window is otherwise exactly what the timing rule would group. */
+  const FORMATS = ["bo1", "bo3"];
   // How many games a format runs to, and how many wins takes it. A series stops
   // growing at either bound - a 2-0 Bo3 is over, and so is a 1-1-1 one.
-  const FORMAT_LENGTH = { bo3: 3, bo5: 5 };
-  const WINS_NEEDED = { bo3: 2, bo5: 3 };
+  const FORMAT_LENGTH = { bo1: 1, bo3: 3 };
+  const WINS_NEEDED = { bo1: 1, bo3: 2 };
 
   const DEFAULT_WINDOW_MINUTES = 45;
   const WINDOW_MIN = 5;
@@ -85,6 +93,11 @@
    * which makes the condition structural rather than something to re-check.
    */
   function joins(prev, cur, windowMs) {
+    /* The queue said one game. That is a fact from the site, and it outranks
+     * every inference the timing rule can make: two Bo1 games against the same
+     * opponent a few minutes apart are a rematch, which is the single most
+     * likely thing this rule would otherwise get wrong. */
+    if (prev.matchFormat === "bo1" || cur.matchFormat === "bo1") return false;
     const who = text(prev.opponentName);
     // Two matches against nobody-in-particular are not evidence of a rematch.
     if (!who || who !== text(cur.opponentName)) return false;
@@ -154,7 +167,11 @@
   function detect(matches, opts) {
     const options = opts || {};
     const windowMs = clampWindow(options.windowMinutes) * MINUTE_MS;
-    const format = normFormat(options.format);
+    /* Only ever the fallback now. content.js reads the real format off the
+     * lobby and stores it on the match, so this applies to records written
+     * before that existed - and since bo1 never forms a series, every series
+     * that does form is a Bo3. */
+    const fallback = normFormat(options.format);
     const enabled = options.enabled !== false;
 
     const ordered = (matches || [])
@@ -199,15 +216,18 @@
         // One sitting can hold more than one series: a completed Bo3 followed by
         // another game against the same opponent inside the window starts a
         // second series rather than becoming a four-game first one.
+        // The format the games themselves report, falling back only for
+        // records written before content.js captured it.
+        const fmt = normFormat(games[0].matchFormat || fallback);
         let segment = [];
         for (const g of games) {
           segment.push(g);
-          if (isComplete(segment, format)) {
-            if (segment.length > 1) assign(segment, format, "auto");
+          if (isComplete(segment, fmt)) {
+            if (segment.length > 1) assign(segment, fmt, "auto");
             segment = [];
           }
         }
-        if (segment.length > 1) assign(segment, format, "auto");
+        if (segment.length > 1) assign(segment, fmt, "auto");
       }
     }
 

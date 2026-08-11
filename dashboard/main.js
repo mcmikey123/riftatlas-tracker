@@ -184,14 +184,6 @@ function mountFilters() {
     });
   }
 
-  const format = $("#fFormat");
-  if (format) {
-    format.addEventListener("change", () => {
-      state.filters.format = format.value;
-      resetPaging();
-      emit();
-    });
-  }
 }
 
 // ---- Settings ----------------------------------------------------------
@@ -210,7 +202,6 @@ function mountSettings() {
 
   const detect = $("#sDetect");
   const window_ = $("#sWindow");
-  const fmt = $("#sFormat");
 
   if (detect) {
     detect.addEventListener("change", () =>
@@ -226,23 +217,16 @@ function mountSettings() {
       STORE.patchSettings({ seriesWindowMinutes: n });
     });
   }
-  if (fmt) {
-    fmt.addEventListener("change", () =>
-      STORE.patchSettings({ seriesFormatDefault: SERIES.normFormat(fmt.value) })
-    );
-  }
 }
 
 /** Settings controls this module owns, painted from whatever storage holds. */
 function paintSettings() {
   const detect = $("#sDetect");
   const window_ = $("#sWindow");
-  const fmt = $("#sFormat");
   if (detect) detect.checked = settings.seriesDetect !== false;
   if (window_ && document.activeElement !== window_) {
     window_.value = SERIES.clampWindow(settings.seriesWindowMinutes);
   }
-  if (fmt) fmt.value = SERIES.normFormat(settings.seriesFormatDefault);
 
   const status = $("[data-series-status]");
   if (!status) return;

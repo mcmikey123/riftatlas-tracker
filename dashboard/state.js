@@ -27,7 +27,6 @@ export const state = {
     champion: "",
     deck: "",
     mode: "",
-    format: "",
     dateRange: { preset: "all", from: null, to: null },
     countUnknown: false,
   },

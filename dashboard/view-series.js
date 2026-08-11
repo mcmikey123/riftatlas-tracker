@@ -24,9 +24,9 @@ const LEGACY = () => window.RATrackerLegacy;
 
 export const GRID = "30px 126px 1fr 78px 96px 104px 190px 72px 36px";
 
-/* Four results, not two. "Unfinished" is a real outcome - a 1-1 Bo3, or a Bo5
- * somebody walked away from - and "in game" means a live match belongs to it,
- * so its total length is not a number yet. */
+/* Four results, not two. "Unfinished" is a real outcome - a 1-1 Bo3 somebody
+ * walked away from - and "in game" means a live match belongs to it, so its
+ * total length is not a number yet. */
 const RESULT_LABEL = {
   win: "Series win",
   loss: "Series loss",
@@ -58,7 +58,6 @@ export function visibleSeries(all) {
     list = list.filter((s) => s.games.some((m) => ((m.deckName || "").trim() || "Unlabelled") === f.deck));
   }
   if (f.mode) list = list.filter((s) => s.mode === f.mode);
-  if (f.format) list = list.filter((s) => s.format === f.format);
 
   list = T.inRange(list, f.dateRange, "startedAt");
   list = T.search(list, t.search, ["opponentName", "mode", (s) => s.decks.join(" ")]);
@@ -143,13 +142,7 @@ function seriesRow(s, readOnly) {
     <span class="cell"><span class="ser-result"><span class="dot dot-${RESULT_DOT[s.result]}"></span>${esc(RESULT_LABEL[s.result])}</span></span>
     <span class="cell dim decks">${esc(s.decks.join(", "))}</span>
     <span class="cell num dim">${s.totalMs === null ? "—" : esc(fmtDuration(s.totalMs))}</span>
-    <span class="cell cell-more"><button class="row-more" data-sermenu="${esc(s.id)}" aria-label="Series actions">⋯</button>${
-      state.openRowMenu === "ser:" + s.id
-        ? `<div class="menu-list menu-right row-menu">
-             <button class="menu-item" data-serformat="${esc(s.id)}|${s.format === "bo3" ? "bo5" : "bo3"}" ${readOnly ? "disabled" : ""}>Change to ${s.format === "bo3" ? "Bo5" : "Bo3"}</button>
-           </div>`
-        : ""
-    }</span>
+    <span class="cell"></span>
   </div>`;
 }
 
@@ -232,8 +225,8 @@ export function renderSeries(container, all, readOnly) {
  * An edit aimed at a DERIVED series therefore has nothing to match on, so the
  * fields are materialised first, the edit runs against those, and stripAuto
  * puts everything the edit did not claim back to being derived. Without this,
- * "Remove from series" and "Change to Bo5" silently did nothing on every
- * automatically detected series - which is almost all of them. */
+ * "Remove from series" silently did nothing on every automatically detected
+ * series - which is almost all of them. */
 function editable() {
   return S.detect(LEGACY().matches(), {
     enabled: state.seriesSettings.seriesDetect !== false,
@@ -303,23 +296,7 @@ export function mountSeries() {
       return;
     }
 
-    const menu = e.target.closest?.("[data-sermenu]");
-    if (menu) {
-      const key = "ser:" + menu.dataset.sermenu;
-      state.openRowMenu = state.openRowMenu === key ? null : key;
-      emit();
-      return;
-    }
 
-    const format = e.target.closest?.("[data-serformat]");
-    if (format) {
-      const [id, next] = format.dataset.serformat.split("|");
-      persist(S.stripAuto(S.setFormat(editable(), id, next)), () => {
-        state.openRowMenu = null;
-        emit();
-      });
-      return;
-    }
 
     const suggGroup = e.target.closest?.("[data-sugg-group]");
     if (suggGroup) {

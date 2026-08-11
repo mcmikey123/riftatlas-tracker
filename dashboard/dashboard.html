@@ -117,9 +117,6 @@
       <label class="filter"><span>Mode</span>
         <select id="fMode"><option value="">All</option></select>
       </label>
-      <label class="filter filter-series" hidden><span>Format</span>
-        <select id="fFormat"><option value="">All</option><option value="bo3">Bo3</option><option value="bo5">Bo5</option></select>
-      </label>
       <label class="filter"><span>Dates</span>
         <select id="fDates">
           <option value="all">All time</option>
@@ -325,18 +322,9 @@
               <span class="setting-text">
                 <span class="setting-name">Minutes between games</span>
                 <span class="setting-copy">5&ndash;240, measured from one match ending to the next starting.
-                  Longer catches slow opponents; shorter avoids sweeping up an unrelated rematch.</span>
-              </span>
-            </label>
-            <label class="setting setting-number">
-              <select id="sFormat" data-mutates>
-                <option value="bo3">Best of 3</option>
-                <option value="bo5">Best of 5</option>
-              </select>
-              <span class="setting-text">
-                <span class="setting-name">Assume this format</span>
-                <span class="setting-copy">What a detected series is called before it finishes. Change it on
-                  any individual series without changing this default.</span>
+                  Longer catches slow opponents; shorter avoids sweeping up an unrelated rematch.
+                  A Best of 1 game is never grouped whatever the gap, because the lobby already
+                  said it was a single game.</span>
               </span>
             </label>
             <div class="setting-strip">

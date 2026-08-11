@@ -148,11 +148,36 @@ test("a Bo3 that goes the distance holds all three games", () => {
   assert.equal(byId(out, "g3").seriesGame, 3);
 });
 
-test("a Bo5 needs three wins, so 2-0 keeps growing", () => {
-  const out = run(backToBack(["win", "win", "loss"]), { format: "bo5" });
-  const ids = new Set(["g1", "g2", "g3"].map((id) => byId(out, id).seriesId));
-  assert.equal(ids.size, 1);
-  assert.equal(byId(out, "g1").seriesFormat, "bo5");
+test("a Best of 1 match never joins a series, however close the games are", () => {
+  // The lobby already said it was one game. Two Bo1 games against the same
+  // opponent minutes apart are a rematch, and that is the single most likely
+  // thing the timing rule would otherwise get wrong.
+  const games = backToBack(["win", "loss"], { matchFormat: "bo1" });
+  const out = run(games);
+  assert.equal(byId(out, "g1").seriesId, null);
+  assert.equal(byId(out, "g2").seriesId, null);
+});
+
+test("one Bo1 among Bo3 games breaks the run rather than joining it", () => {
+  const games = backToBack(["win", "loss", "win"], { matchFormat: "bo3" });
+  games[1].matchFormat = "bo1";
+  const out = run(games);
+  assert.equal(byId(out, "g1").seriesId, null);
+  assert.equal(byId(out, "g3").seriesId, null);
+});
+
+test("a series takes its format from the games, not from the fallback", () => {
+  const games = backToBack(["win", "loss"], { matchFormat: "bo3" });
+  // The fallback is what old records without a captured format get; a record
+  // that carries one must not be overridden by it.
+  const out = run(games, { format: "bo3" });
+  assert.equal(byId(out, "g1").seriesFormat, "bo3");
+});
+
+test("records with no captured format still group, using the fallback", () => {
+  const out = run(backToBack(["win", "loss"]));
+  assert.equal(byId(out, "g1").seriesFormat, "bo3");
+  assert.ok(byId(out, "g1").seriesId);
 });
 
 test("draws and unknowns take the series nowhere but still occupy a game", () => {
@@ -168,12 +193,12 @@ test("a manual grouping is never revised by a later detection pass", () => {
   const games = backToBack(["win", "loss"]);
   games[0].seriesId = "s_mine";
   games[0].seriesGame = 1;
-  games[0].seriesFormat = "bo5";
+  games[0].seriesFormat = "bo3";
   games[0].seriesSource = "manual";
   const out = run(games);
   const g1 = byId(out, "g1");
   assert.equal(g1.seriesId, "s_mine");
-  assert.equal(g1.seriesFormat, "bo5");
+  assert.equal(g1.seriesFormat, "bo3");
   assert.equal(g1.seriesSource, "manual");
 });
 
@@ -370,12 +395,12 @@ test("grouping by hand numbers the games from their timestamps and marks them ma
     match({ id: "a", startedAt: at(60), endedAt: at(80) }),
     match({ id: "b", startedAt: at(0), endedAt: at(20) }),
   ];
-  const { matches, seriesId } = S.groupManually(games, ["a", "b"], "bo5");
+  const { matches, seriesId } = S.groupManually(games, ["a", "b"], "bo3");
   assert.ok(seriesId);
   assert.equal(byId(matches, "b").seriesGame, 1, "earliest match is game 1, whatever order was passed");
   assert.equal(byId(matches, "a").seriesGame, 2);
   assert.equal(byId(matches, "a").seriesSource, "manual");
-  assert.equal(byId(matches, "a").seriesFormat, "bo5");
+  assert.equal(byId(matches, "a").seriesFormat, "bo3");
 });
 
 test("grouping fewer than two matches does nothing", () => {
@@ -432,23 +457,23 @@ test("stripAuto leaves only what was grouped by hand", () => {
 });
 
 test("stripAuto keeps a hand-made series, and the edit that made it", () => {
+  // The path the Series view takes: materialise the derived fields, edit them,
+  // then strip everything the edit did not claim as the user's.
   const out = run(backToBack(["win", "loss"]));
   const id = byId(out, "g1").seriesId;
-  const stripped = S.stripAuto(S.setFormat(out, id, "bo5"));
+  const stripped = S.stripAuto(S.setFormat(out, id, "bo3"));
   assert.equal(byId(stripped, "g1").seriesId, id, "the edited series was stripped along with the rest");
-  assert.equal(byId(stripped, "g1").seriesFormat, "bo5");
+  assert.equal(byId(stripped, "g1").seriesSource, "manual");
   assert.equal(byId(stripped, "g2").seriesSource, "manual");
 });
 
-test("changing one series' format makes it manual, so the default stops applying", () => {
+test("setting a series' format marks it manual, so detection stops revising it", () => {
   const out = run(backToBack(["win", "loss"]));
   const id = byId(out, "g1").seriesId;
-  const after = S.setFormat(out, id, "bo5");
-  assert.equal(byId(after, "g1").seriesFormat, "bo5");
+  const after = S.setFormat(out, id, "bo3");
   assert.equal(byId(after, "g1").seriesSource, "manual");
-  // And a later pass leaves it alone.
   const rescanned = run(after);
-  assert.equal(byId(rescanned, "g1").seriesFormat, "bo5");
+  assert.equal(byId(rescanned, "g1").seriesSource, "manual");
 });
 
 // ---- bounds ------------------------------------------------------------
@@ -462,9 +487,12 @@ test("the window is clamped to 5..240 and survives nonsense", () => {
 });
 
 test("an unknown format falls back to bo3 rather than throwing", () => {
+  // Bo5 does not exist on this site - only Best of 1 and Best of 3 - so it is
+  // an unknown value like any other now.
   assert.equal(S.normFormat("bo7"), "bo3");
+  assert.equal(S.normFormat("bo5"), "bo3");
   assert.equal(S.normFormat(undefined), "bo3");
-  assert.equal(S.normFormat("bo5"), "bo5");
+  assert.equal(S.normFormat("bo1"), "bo1");
 });
 
 test("records with no id are ignored rather than crashing the pass", () => {

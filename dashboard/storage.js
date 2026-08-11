@@ -104,6 +104,10 @@
     // finishes, and changing it on one series does not change this default.
     seriesDetect: true,
     seriesWindowMinutes: 45,
+    /* Only the fallback for matches recorded before content.js started
+     * reading the real format off the lobby. There is no setting for it:
+     * the site offers Best of 1 and Best of 3, a Bo1 is never a series, so
+     * every series that exists is a Bo3. */
     seriesFormatDefault: "bo3",
     // Which view was open, so a reload comes back to it.
     view: "overview",

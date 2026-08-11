@@ -387,8 +387,7 @@ function emptyState(term, total) {
 function selectionBar(n) {
   return `<div class="sel-bar">
     <span class="sel-count">${n} selected</span>
-    <button class="btn btn-sm btn-primary" data-groupseries="bo3" ${n < 2 ? "disabled" : ""}>Group as a Bo3 series</button>
-    <button class="btn btn-sm" data-groupseries="bo5" ${n < 2 ? "disabled" : ""}>Group as a Bo5 series</button>
+    <button class="btn btn-sm btn-primary" data-groupseries="bo3" ${n < 2 ? "disabled" : ""}>Group as a series</button>
     <span class="sel-end">
       <span class="sel-note">Game order is taken from the timestamps.</span>
       <button class="btn btn-sm btn-quiet" data-clearselection>Clear selection</button>
@@ -450,7 +449,6 @@ export function mountMatches() {
       state.filters.champion = "";
       state.filters.deck = "";
       state.filters.mode = "";
-      state.filters.format = "";
       state.filters.dateRange = { preset: "all", from: null, to: null };
       /* One search field feeds both tables, so clearing it here has to clear
        * both copies. Leaving the Series one set hides most of that view behind
@@ -461,7 +459,7 @@ export function mountMatches() {
       resetPaging();
       // The filter row is static DOM this view does not own, so its controls
       // are put back by hand rather than by a re-render.
-      for (const [id, value] of [["#fMyChampion", ""], ["#fDeck", ""], ["#fMode", ""], ["#fFormat", ""], ["#fDates", "all"], ["#fSearch", ""]]) {
+      for (const [id, value] of [["#fMyChampion", ""], ["#fDeck", ""], ["#fMode", ""], ["#fDates", "all"], ["#fSearch", ""]]) {
         const el = document.querySelector(id);
         if (el) el.value = value;
       }
