@@ -54,7 +54,7 @@
       render();
       refreshBackupUI();
       refreshVisualSettingsUI();
-      refreshShareSettingsUI();
+      loadShareEndpoint();
       refreshShares();
       dropLegacyReplays();
     });
@@ -1449,21 +1449,16 @@
       : window.RAShareConfig.DEFAULT_SHARE_ENDPOINT;
   };
 
-  function refreshShareSettingsUI() {
+  /* There is no Settings field for this. The stored value is still honoured, so
+   * a self-hoster can point the extension at their own instance without editing
+   * code — see share/worker/README.md — but it is set through storage rather
+   * than through a box that every other user would have to scroll past and
+   * wonder about. */
+  function loadShareEndpoint() {
     getSettings((s) => {
       shareEndpoint = cleanEndpoint(s.shareEndpoint);
-      $("#shareEndpoint").value = shareEndpoint;
     });
   }
-
-  $("#shareEndpoint").addEventListener("change", (e) => {
-    const next = cleanEndpoint(e.target.value);
-    e.target.value = next; // show what was actually stored
-    getSettings((s) => {
-      s.shareEndpoint = next;
-      setSettings(s, refreshShareSettingsUI);
-    });
-  });
 
   // ---- events ----------------------------------------------------------
 
@@ -1987,9 +1982,11 @@
   // The recorder reads visualReplay* out of this same object at match start,
   // and the service worker reads the retention count out of it at every gc.
   // shareEndpoint is a public URL, not a secret - see share/config.js. It is a
-  // setting so a self-hoster can point the extension at their own instance
-  // without editing code. There is deliberately no TTL setting: expiry is a
-  // bucket-wide lifecycle rule, not a property of a share.
+  // setting, but has no Settings field: a self-hoster can still point the
+  // extension at their own instance without editing code by writing it to
+  // storage, and everyone else is spared a box they would never touch. There is
+  // deliberately no TTL setting: expiry is a bucket-wide lifecycle rule, not a
+  // property of a share.
   const defaultSettings = {
     autoBackup: false, lastBackup: 0, bannerDismissed: 0,
     visualReplayEnabled: true, visualReplayKeepMatches: 25, visualReplayMaxMatchMb: 512,
