@@ -140,12 +140,13 @@
    * one thing `prefers-reduced-motion` is a standing answer to — so the
    * preference wins, in the dashboard modal and in the share viewer alike, and
    * the play button is right there either way.
+   *
+   * `opensAtMoment` is true when the caller was told exactly where to start — a
+   * share link carrying a timestamp. Those open paused: the point of sending one
+   * is "look at this", and playing on from it walks off the thing being pointed
+   * at before the recipient has seen it. Not the same as "starts at zero": a link
+   * may deliberately name second 0, which is still a named moment.
    */
-  // `opensAtMoment` is true when the caller was told exactly where to start — a share
-  // link carrying a timestamp. Those open paused: the point of sending one is "look at
-  // this", and playing on from it walks off the thing being pointed at before the
-  // recipient has seen it. Note this is not the same as "starts at zero": a link may
-  // deliberately name second 0, which is still a named moment.
   function shouldAutoplay(requested, reducedMotion, opensAtMoment) {
     return !!requested && !reducedMotion && !opensAtMoment;
   }

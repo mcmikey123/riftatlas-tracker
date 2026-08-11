@@ -94,8 +94,10 @@
    * names a moment is the reason it exists. It is clamped to the recording, and
    * it suppresses autoplay: someone sent that link to say "look at this", and
    * playing on from it walks off the thing being pointed at. Passing `0` still
-   * counts as naming a moment; omit `startAtMs` entirely to mean "no moment
-   * given". It can only ever suppress autoplay, never grant it, so a timestamped
+   * counts as naming a moment; pass `null` or omit `startAtMs` entirely to mean
+   * "no moment given" — the share viewer passes an explicit `null` for a link
+   * without a timestamp, and the dashboard omits it. It can only ever suppress
+   * autoplay, never grant it, so a timestamped
    * link is still no way around `prefers-reduced-motion`.
    */
   function create(options) {

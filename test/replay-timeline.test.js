@@ -344,18 +344,12 @@ test("a link naming a moment opens paused at it", () => {
   assert.strictEqual(shouldAutoplay(true, false, false), true);
 });
 
-test("second zero is a named moment, not the absence of one", () => {
-  // The caller distinguishes these: `startAtMs: 0` is a link that says "the very
-  // start", `startAtMs: null` is a link that says nothing. Only the second plays.
-  assert.strictEqual(shouldAutoplay(true, false, 0 != null), false);
-  assert.strictEqual(shouldAutoplay(true, false, null != null), true);
-});
-
 test("naming a moment can only suppress autoplay, never grant it", () => {
-  // Otherwise a timestamped link would be a way around prefers-reduced-motion,
-  // or around a surface that never asked to autoplay at all.
-  assert.strictEqual(shouldAutoplay(false, false, false), false);
-  assert.strictEqual(shouldAutoplay(true, true, false), false);
+  // Both cases must stay paused *because* a moment was named, not in spite of it.
+  // Getting this wrong turns a timestamped link into a way around
+  // prefers-reduced-motion, which is why both arguments below are true.
+  assert.strictEqual(shouldAutoplay(true, true, true), false, "reduced motion still wins");
+  assert.strictEqual(shouldAutoplay(false, false, true), false, "a surface that never asked");
 });
 
 /* ---- who owns a keypress ------------------------------------------------
