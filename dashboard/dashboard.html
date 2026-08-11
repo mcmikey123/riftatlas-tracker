@@ -307,6 +307,92 @@
             </label>
           </div>
         </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Series detection</h2></div>
+          <div class="card-body">
+            <label class="setting">
+              <input type="checkbox" id="sDetect" data-mutates />
+              <span class="setting-text">
+                <span class="setting-name">Group back-to-back matches into a series</span>
+                <span class="setting-copy">Matches against the same opponent, in the same mode, played back
+                  to back inside the window below, are grouped as a best-of series automatically.
+                  Anything you group or ungroup yourself is left alone from then on.</span>
+              </span>
+            </label>
+            <label class="setting setting-number">
+              <input type="number" id="sWindow" step="1" min="5" max="240" data-mutates />
+              <span class="setting-text">
+                <span class="setting-name">Minutes between games</span>
+                <span class="setting-copy">5&ndash;240, measured from one match ending to the next starting.
+                  Longer catches slow opponents; shorter avoids sweeping up an unrelated rematch.</span>
+              </span>
+            </label>
+            <label class="setting setting-number">
+              <select id="sFormat" data-mutates>
+                <option value="bo3">Best of 3</option>
+                <option value="bo5">Best of 5</option>
+              </select>
+              <span class="setting-text">
+                <span class="setting-name">Assume this format</span>
+                <span class="setting-copy">What a detected series is called before it finishes. Change it on
+                  any individual series without changing this default.</span>
+              </span>
+            </label>
+            <div class="setting-strip">
+              <span class="backup-state" data-series-status></span>
+            </div>
+            <p class="setting-copy">Detected series are worked out from your matches each time this page
+              draws them, and are never written to your records &mdash; so changing the window regroups your
+              history immediately, and only the groupings you make by hand are stored.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Your data</h2></div>
+          <div class="card-body">
+            <div class="btn-row">
+              <button class="btn btn-sm" data-proxy="exportJson">Export JSON</button>
+              <button class="btn btn-sm" data-proxy="exportCsv">Export CSV</button>
+              <button class="btn btn-sm" data-proxy="importJson" data-mutates>Import JSON</button>
+            </div>
+            <p class="setting-copy">JSON carries matches, game logs and card codes and is what an import
+              reads &mdash; it merges by match id, so importing the same file twice is safe. CSV is
+              flattened for a spreadsheet and includes the analysis columns.
+              <b>Replays are in neither, and never come back from an import.</b></p>
+            <hr class="card-rule" />
+            <div class="btn-row">
+              <button class="btn btn-sm" data-proxy="archiveClear" data-mutates>Archive &amp; clear</button>
+              <button class="btn btn-sm" data-proxy="viewArchive">View an archive file</button>
+            </div>
+            <p class="setting-copy">Archive &amp; clear downloads everything first, then asks once more,
+              then wipes matches, logs, card lists, share records and replays. Viewing an archive is
+              read-only &mdash; your live data stays where it is and every control that changes something
+              is disabled until you exit.</p>
+          </div>
+        </div>
+
+        <div class="card card-danger">
+          <div class="card-head"><h2>Clear everything</h2></div>
+          <div class="card-body">
+            <p class="setting-copy">Deletes every match, log, card list, share record and replay in this
+              browser, with no copy taken. If you might want the data later, use <b>Archive &amp; clear</b>
+              instead.</p>
+            <div class="btn-row">
+              <button class="btn btn-sm btn-danger" data-proxy="clearAll" data-mutates>Clear all data</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Where your data lives</h2></div>
+          <div class="card-body">
+            <p class="setting-copy">Match records and settings are in this browser's extension storage;
+              replays are in its own database. Nothing is uploaded anywhere, with one exception: a replay
+              you explicitly choose to share, which is encrypted in this browser first.
+              <button class="link" data-goto="shares">Shared links</button> lists every share you have made.</p>
+          </div>
+        </div>
       </div>
     </section>
 

@@ -134,6 +134,7 @@ function render() {
    * read is exactly the one you came here to fix. */
   renderMatches($("[data-matches]"), withSeries, state.readOnly);
   renderSeries($("[data-series]"), withSeries, state.readOnly);
+  paintSettings();
 }
 
 // ---- the filter row ----------------------------------------------------
@@ -193,6 +194,70 @@ function mountFilters() {
   }
 }
 
+// ---- Settings ----------------------------------------------------------
+
+/* The data controls appear both in the header and in Settings on purpose: the
+ * header for speed, Settings with the explanation beside them. Rather than two
+ * sets of handlers that could drift, the ones in Settings forward the click to
+ * the header button that already owns the behaviour. */
+function mountSettings() {
+  document.addEventListener("click", (e) => {
+    const proxy = e.target.closest?.("[data-proxy]");
+    if (!proxy || proxy.disabled) return;
+    const target = document.getElementById(proxy.dataset.proxy);
+    if (target) target.click();
+  });
+
+  const detect = $("#sDetect");
+  const window_ = $("#sWindow");
+  const fmt = $("#sFormat");
+
+  if (detect) {
+    detect.addEventListener("change", () =>
+      STORE.patchSettings({ seriesDetect: detect.checked })
+    );
+  }
+  if (window_) {
+    window_.addEventListener("change", () => {
+      // Clamped rather than rejected: the input's own min/max only constrain
+      // its spinner, not what can be typed or pasted into it.
+      const n = SERIES.clampWindow(window_.value);
+      window_.value = n;
+      STORE.patchSettings({ seriesWindowMinutes: n });
+    });
+  }
+  if (fmt) {
+    fmt.addEventListener("change", () =>
+      STORE.patchSettings({ seriesFormatDefault: SERIES.normFormat(fmt.value) })
+    );
+  }
+}
+
+/** Settings controls this module owns, painted from whatever storage holds. */
+function paintSettings() {
+  const detect = $("#sDetect");
+  const window_ = $("#sWindow");
+  const fmt = $("#sFormat");
+  if (detect) detect.checked = settings.seriesDetect !== false;
+  if (window_ && document.activeElement !== window_) {
+    window_.value = SERIES.clampWindow(settings.seriesWindowMinutes);
+  }
+  if (fmt) fmt.value = SERIES.normFormat(settings.seriesFormatDefault);
+
+  const status = $("[data-series-status]");
+  if (!status) return;
+  const all = LEGACY.matches() || [];
+  const grouped = SERIES.group(
+    SERIES.detect(all, {
+      enabled: settings.seriesDetect !== false,
+      windowMinutes: settings.seriesWindowMinutes,
+      format: settings.seriesFormatDefault,
+    }).matches
+  );
+  const byHand = grouped.filter((s) => s.source === "manual").length;
+  status.textContent = `${grouped.length} series · ${byHand} you grouped yourself`;
+}
+
 // ---- boot --------------------------------------------------------------
 
 function boot() {
@@ -200,6 +265,7 @@ function boot() {
   mountFilters();
   mountMatches();
   mountSeries();
+  mountSettings();
   subscribe(render);
 
   /* legacy.js renders on its own schedule - on load, on every storage change,
