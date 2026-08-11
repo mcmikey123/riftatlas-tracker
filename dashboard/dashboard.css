@@ -966,10 +966,15 @@ input[type="number"]:focus { outline: none; border-color: var(--accent); }
    carry an aria-label. */
 .vd-icon {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; margin-left: 6px; vertical-align: middle;
+  /* padding:0 is load-bearing. The generic button rule sets 7px 12px, and with
+     box-sizing:border-box a 22px-wide button then has NEGATIVE content width -
+     which collapses an SVG to nothing while letting a text glyph overflow and
+     still show. That is why the share mark was invisible and the ✕ was not. */
+  width: 22px; height: 22px; padding: 0; margin-left: 6px; vertical-align: middle;
   background: transparent; border: 0; border-radius: 6px;
   color: var(--ink-3); cursor: pointer; font-size: 12px; line-height: 1;
 }
+.vd-icon svg { flex: 0 0 auto; display: block; }
 .vd-icon:hover { background: var(--surface-2); color: var(--ink); }
 .vd-icon.on { color: var(--accent); }
 .vd-del { color: var(--ink-3); }
