@@ -29,6 +29,11 @@
   // browsed last week never labels today's match.
   const DECK_MEMORY_MS = 2 * 60 * 60 * 1000;
   const MAX_DECK_NAME = 60; // longer than this and it isn't a deck name
+  // The lobby format runs on the deck picker's clock: it is chosen on the same
+  // screen, in the same breath, and cannot change faster than a click either.
+  const FORMAT_READ_MIN_MS = DECK_READ_MIN_MS;
+  const FORMAT_STAMP_MS = DECK_STAMP_MS;
+  const FORMAT_MEMORY_MS = DECK_MEMORY_MS;
   const MAX_LOG = 500; // cap stored log lines per match
   const CARDS_SAVE_MS = 5000; // how often to flush the card-code accumulator
   // Match-log actor colours (left bar on each log row).
@@ -530,6 +535,101 @@
     return null;
   }
 
+  // ---------- match format ----------
+  // Bo1 or Bo3 is stated in the lobby and gone by the time the board mounts -
+  // the same problem the deck picker has, solved the same way: read it while
+  // it is on screen, remember it, and use the memory when the match begins.
+  //
+  // Two selectors because there are two lobbies. Whoever HOSTS picks the
+  // format on a two-button group, where the chosen button carries
+  // aria-pressed="true". Whoever JOINS a hosted Bo3 never sees those buttons -
+  // they get a one-line summary whose title spells the format out
+  // ("1v1 · Constructed · Best of 3 · Standard").
+  //
+  // Neither path matches on class names. This site's classes are generated
+  // utilities with literal colour values baked in ("border-[rgba(116,239,255,
+  // 0.42)]") and are rewritten every restyle; aria-pressed and title describe
+  // behaviour rather than styling, so they survive one.
+  const FORMAT_RE = /Best of\s+(\d+)/i;
+
+  /**
+   * The format the lobby is showing, or null if it isn't saying.
+   * Only Bo1 and Bo3 exist. A number we don't recognise means the read went
+   * somewhere unexpected, and null is safer than inventing a format for it.
+   */
+  function readMatchFormat(root) {
+    const scope = root || document;
+    let hit = null;
+    // Host path: the pressed button of the format toggle.
+    for (const btn of scope.querySelectorAll('button[aria-pressed="true"]')) {
+      hit = FORMAT_RE.exec(cleanText(btn));
+      if (hit) break;
+    }
+    // Join path. Sweeping every [title] in the document is safe here: this
+    // summary line only ever describes the one game being hosted or joined,
+    // never a row of a browsable list, so there is nothing else to hit.
+    if (!hit) {
+      for (const el of scope.querySelectorAll("[title]")) {
+        hit = FORMAT_RE.exec(el.getAttribute("title") || "");
+        if (hit) break;
+      }
+    }
+    if (!hit) return null;
+    if (hit[1] === "1") return "bo1";
+    if (hit[1] === "3") return "bo3";
+    return null;
+  }
+
+  // Last format seen in the lobby, with the last time we saw it. Mirrored into
+  // its own storage key for the same reasons `activeDeck` has one: the lobby
+  // unmounts the moment the board mounts, the game may be opened in a fresh
+  // tab between hosting and playing, and a write here must not clobber a
+  // settings write happening in the dashboard at the same moment.
+  let activeFormat = null;
+  let formatReadAt = 0;
+  let formatSavedAt = 0;
+
+  const formatIsUsable = () =>
+    !!activeFormat && Date.now() - (activeFormat.at || 0) < FORMAT_MEMORY_MS;
+
+  /** Poll the lobby. Cheap enough to run on a timer whatever page we're on. */
+  function watchMatchFormat() {
+    // Mutation-driven calls can arrive every frame on this site; the format
+    // cannot change faster than a click, so a floor costs us nothing.
+    const now = Date.now();
+    if (now - formatReadAt < FORMAT_READ_MIN_MS) return;
+    formatReadAt = now;
+
+    const found = readMatchFormat();
+    if (!found) return;
+    const changed = !activeFormat || activeFormat.format !== found;
+    // Always restamp: `at` means "last seen on screen", so a lobby sat in
+    // while waiting for an opponent doesn't age out from under the player.
+    activeFormat = { format: found, at: now };
+    if (changed) console.info("[RA-Tracker] lobby format:", found);
+    // Persist on change, and refresh the stored stamp now and then while the
+    // lobby sits on screen - otherwise storage would record when the format
+    // last CHANGED, and a long wait in the lobby would look stale to the next
+    // page load.
+    if (!changed && now - formatSavedAt < FORMAT_STAMP_MS) return;
+    formatSavedAt = now;
+    try {
+      chrome.storage.local.set({ activeFormat });
+    } catch (_) {}
+  }
+
+  /** Restore the lobby format across reloads / a newly opened game tab. */
+  function loadActiveFormat() {
+    try {
+      chrome.storage.local.get({ activeFormat: null }, (d) => {
+        // Anything read live from the page beats what storage remembers.
+        if (d && d.activeFormat && d.activeFormat.format && !activeFormat) {
+          activeFormat = d.activeFormat;
+        }
+      });
+    } catch (_) {}
+  }
+
   // ---------- match lifecycle ----------
 
   function startMatch(root) {
@@ -594,6 +694,7 @@
       notes: "",
       deckName: "",
       deckSource: null, // 'picker' | 'board' | 'url' | 'last' | 'manual' | …
+      matchFormat: null, // 'bo1' | 'bo3' | null when the lobby never said
       log: [], // [{t, actor: self|opponent|system, text}]
       schemaVersion: 3,
     };
@@ -622,6 +723,16 @@
       } catch (_) {}
     }
     pendingDeckCands = [];
+
+    // Format: the lobby is normally already gone by the time the board mounts,
+    // so the live read is the bonus case and the remembered one does the real
+    // work. Left null when neither can answer - the dashboard would rather be
+    // told nothing than be told a format that was never on screen.
+    const fmt =
+      readMatchFormat() || (formatIsUsable() ? activeFormat.format : null);
+    currentMatch.matchFormat = fmt;
+    if (fmt) console.info("[RA-Tracker] match format:", fmt);
+
     // Persist immediately - and if the page was reloaded mid-game, adopt the
     // earlier open record for this room instead of creating a duplicate.
     // A match must never exist only in memory.
@@ -927,9 +1038,12 @@
     const root = getRoot();
     const phase = root?.dataset.roomPhase || null;
 
-    // Catch a deck change as it renders rather than on the next poll tick.
-    // Self-throttled, so the mutation firehose on this site costs nothing.
-    if (!currentMatch) watchDeckPicker();
+    // Catch a deck or format change as it renders rather than on the next poll
+    // tick. Both are self-throttled, so the mutation firehose costs nothing.
+    if (!currentMatch) {
+      watchDeckPicker();
+      watchMatchFormat();
+    }
 
     if (root && phase === "in_game") {
       if (!currentMatch) startMatch(root);
@@ -1018,19 +1132,22 @@
         persistLogFor(m, true);
       }
     });
-    // The deck picker lives on the site's own pages, which produce none of the
-    // board mutations we filter for, so it gets a standing poll of its own
-    // rather than riding on the observer. One id lookup per tick when it isn't
-    // on screen, which is most of the time.
+    // The deck picker and the lobby live on the site's own pages, which produce
+    // none of the board mutations we filter for, so they get a standing poll of
+    // their own rather than riding on the observer. A couple of selector
+    // lookups per tick when neither is on screen, which is most of the time.
     loadActiveDeck();
+    loadActiveFormat();
     watchDeckPicker();
+    watchMatchFormat();
     setInterval(() => {
-      // Not while a match is live: the deck for this game is already decided,
-      // and letting the picker drift now would only let a deck the player
-      // glanced at overwrite the one they actually played.
+      // Not while a match is live: the deck and format for this game are
+      // already decided, and letting either drift now would only let something
+      // the player glanced at overwrite what they actually played.
       if (isOrphaned() || currentMatch) return;
       try {
         watchDeckPicker();
+        watchMatchFormat();
       } catch (_) {}
     }, DECK_POLL_MS);
     // A deck name typed in the dashboard while the game is still running would

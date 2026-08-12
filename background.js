@@ -1,7 +1,7 @@
-// Opens the dashboard when the toolbar icon is clicked.
-chrome.action.onClicked.addListener(() => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("dashboard/dashboard.html") });
-});
+/* The toolbar icon opens popup/popup.html. There is no action.onClicked
+ * listener here because Chrome does not fire that event at all once an action
+ * has a default_popup - the popup's own "Open dashboard" button is what opens
+ * the dashboard tab now. */
 
 /* Visual replay storage.
  *

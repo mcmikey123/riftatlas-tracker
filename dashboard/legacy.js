@@ -11,9 +11,68 @@
   // When viewing an archive file we render from memory and never write.
   let archive = null; // { name, matches, deckCards }
 
+  const STORE = window.RATrackerStorage;
+  const SERIES = window.RATrackerSeries;
   const analyse = (m) => window.RATrackerAnalysis.analyse(m);
   const $ = (s) => document.querySelector(s);
   const readOnly = () => archive !== null;
+
+  /* Opening or closing an archive is the one thing that decides whether the
+   * array in memory is this browser's history or a file's. The writer refuses
+   * every match write while it is a file's, so the two must never disagree -
+   * hence one setter rather than four assignments. */
+  function setArchive(next) {
+    archive = next;
+    STORE.setReadOnly(next !== null);
+  }
+
+  /* THIS FILE IS BEING DRAINED. The redesign replaces its markup one view at a
+   * time, so from here on every element this file reaches for may already be
+   * gone - and a bare `$("#x").addEventListener(...)` on a missing element
+   * throws during the initial run, which aborts the whole IIFE and takes
+   * `load()` and the storage listener at the bottom with it. Not degraded:
+   * dead, silently, for every feature still living here.
+   *
+   * So nothing below dereferences a query result directly. Each helper is a
+   * no-op when its element has already been ported, which is what lets each
+   * phase of the port ship on its own. */
+  const on = (sel, type, fn) => {
+    const el = $(sel);
+    if (el) el.addEventListener(type, fn);
+    return el;
+  };
+  const val = (sel) => {
+    const el = $(sel);
+    return el ? el.value : "";
+  };
+  const isChecked = (sel) => {
+    const el = $(sel);
+    return !!(el && el.checked);
+  };
+  const setText = (sel, s) => {
+    const el = $(sel);
+    if (el) el.textContent = s;
+  };
+  const setHtml = (sel, s) => {
+    const el = $(sel);
+    if (el) el.innerHTML = s;
+  };
+  /* The dialog and toast components are ES modules, published on window by
+   * main.js because a classic script cannot import one. Every call below runs
+   * from an event handler, so they are always present by then - but the
+   * fallbacks keep this file honest if it is ever loaded on its own. */
+  const DIALOG = () => window.RATrackerDialog;
+  const say = (message, kind) => {
+    const t = window.RATrackerToast;
+    if (t) t(message, { kind });
+    else console.info("[RA-Tracker]", message);
+  };
+  const ask = (opts) => DIALOG().confirm(opts);
+
+  const hideBackupBanner = () => {
+    const el = $("#backupBanner");
+    if (el) el.hidden = true;
+  };
 
   // ---- data access -----------------------------------------------------
 
@@ -43,10 +102,10 @@
         });
         clean.forEach((m) => delete m.log);
         writes.matches = clean;
-        chrome.storage.local.set(writes);
+        STORE.writeKeys(writes);
         console.info("[RA-Tracker] migrated %d inline logs to separate keys", inline.length);
       } else if (clean.length !== raw.length) {
-        chrome.storage.local.set({ matches: clean });
+        STORE.writeMatches(clean);
       }
       clean.forEach((m) => delete m.log);
       all = clean.sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
@@ -71,7 +130,7 @@
     chrome.storage.local.get(null, (data) => {
       const keys = Object.keys(data || {}).filter((k) => k.startsWith("replay_"));
       if (!keys.length) return;
-      chrome.storage.local.remove(keys, () =>
+      STORE.removeKeys(keys, () =>
         console.info("[RA-Tracker] removed %d obsolete snapshot replays", keys.length)
       );
     });
@@ -79,7 +138,7 @@
 
   function persist(matches, then) {
     if (readOnly()) return;
-    chrome.storage.local.set({ matches }, then || render);
+    STORE.writeMatches(matches, then || render);
   }
 
   function getLog(id, cb) {
@@ -156,6 +215,18 @@
   const BUNDLE_VERSION = 2;
 
   /** Full portable bundle: matches with logs inline, optionally card codes. */
+  /* The match array with its series fields filled in. Reads the same settings
+   * the dashboard renders with, so an export describes the series the user was
+   * actually looking at. */
+  function withSeries(matches) {
+    const SERIES = window.RATrackerSeries;
+    if (!SERIES) return matches;
+    return SERIES.detect(matches, {
+      enabled: seriesSettings.seriesDetect !== false,
+      format: seriesSettings.seriesFormatDefault,
+    }).matches;
+  }
+
   function buildBundle(includeCards, cb) {
     if (archive) {
       return cb({
@@ -167,7 +238,13 @@
       });
     }
     chrome.storage.local.get(null, (data) => {
-      const matches = all.map((m) =>
+      /* Automatic series are worked out at render time and never written, so
+       * an export has to compute them too - otherwise a backup carries only
+       * the groupings made by hand and every detected series is lost on
+       * import. The manual ones are already on the records and pass through
+       * detect() untouched. */
+      const decorated = withSeries(all);
+      const matches = decorated.map((m) =>
         Object.assign({}, m, { log: ((data["log_" + m.id] || {}).log) || [] })
       );
       const deckCards = {};
@@ -241,23 +318,9 @@
    * - the common case is "one of these again" - with one entry that prompts
    * for a new name, so a custom name is always one click away.
    */
-  function deckSelect(m, cls) {
-    const current = (m.deckName || "").trim();
-    const opts = deckNames()
-      .map(
-        (d) =>
-          `<option value="${esc(d)}" ${d === current ? "selected" : ""}>${esc(d)}</option>`
-      )
-      .join("");
-    return `<select class="deck-select ${cls}" data-deck="${m.id}" title="${esc(deckTitle(m))}"
-              ${readOnly() ? "disabled" : ""}>
-        <option value="" ${current ? "" : "selected"}>— unlabelled —</option>
-        ${opts}
-        <option value="${NEW_DECK}">＋ New deck name…</option>
-      </select>`;
-  }
 
   function fillSelect(sel, values) {
+    if (!sel) return;
     const current = sel.value;
     sel.length = 1;
     values.sort().forEach((v) => sel.add(new Option(v, v)));
@@ -265,10 +328,10 @@
   }
 
   function filtered(includeUnknownAnyway) {
-    const mc = $("#fMyChampion").value;
-    const mode = $("#fMode").value;
-    const deck = $("#fDeck").value;
-    const inclUnknown = includeUnknownAnyway || $("#fUnknown").checked;
+    const mc = val("#fMyChampion");
+    const mode = val("#fMode");
+    const deck = val("#fDeck");
+    const inclUnknown = includeUnknownAnyway || isChecked("#fUnknown");
     return all.filter((m) => {
       if (mc && champ(m.myChampion || m.myLegend) !== mc) return false;
       if (deck && deckOf(m) !== deck) return false;
@@ -283,37 +346,104 @@
     const wins = rows.filter((m) => m.result === "win").length;
     const losses = rows.filter((m) => m.result === "loss").length;
     const decided = wins + losses;
-    $("#tGames").textContent = rows.length;
-    $("#tWins").textContent = wins;
-    $("#tLosses").textContent = losses;
-    $("#tWinrate").textContent = decided ? Math.round((wins / decided) * 100) + "%" : "–";
+    setText("#tGames", rows.length);
+    setText("#tWins", wins);
+    setText("#tLosses", losses);
+    setText("#tWinrate", decided ? Math.round((wins / decided) * 100) + "%" : "–");
+    // 57% of 207 and 57% of 7 are not the same claim, so the tile carries its
+    // own denominator.
+    setText("#tDecided", decided ? `of ${decided} decided` : "");
 
     const durations = rows.map((m) => m.durationMs).filter((d) => Number.isFinite(d) && d > 0);
-    $("#tDuration").textContent = durations.length
-      ? fmtDuration(durations.reduce((a, b) => a + b, 0) / durations.length)
-      : "–";
+    setText(
+      "#tDuration",
+      durations.length ? fmtDuration(durations.reduce((a, b) => a + b, 0) / durations.length) : "–"
+    );
 
     renderAgg($("#vsTable tbody"), rows, (m) => champ(m.opponentChampion || m.opponentLegend));
     renderAgg($("#deckTable tbody"), rows, deckOf);
     renderAgg($("#myTable tbody"), rows, (m) => champ(m.myChampion || m.myLegend));
-    renderHistory(filtered(true));
+    ensureVisualIds();
     renderVisualPanel();
     renderSharesPanel();
     renderArchiveBanner();
+    if (bridge.onRender) bridge.onRender();
   }
+
+  /* The bridge to the module half, for as long as this file still owns data the
+   * shell needs to describe: the match array behind the nav counts, the replay
+   * figures behind the capture card, and whether an archive is open.
+   *
+   * Deliberately getters rather than a snapshot - `all` is reassigned wholesale
+   * by load(), so anything holding the array itself would be reading a
+   * discarded one within a second of an archive being opened. Every entry here
+   * disappears as its view is ported. */
+  const bridge = {
+    matches: () => all,
+    visualRecords: () => visualRecords,
+    visualAssets: () => visualAssets,
+    keepMatches: () => keepMatches,
+    shares: () => shares,
+    archiveName: () => (archive ? archive.name : ""),
+    readOnly,
+    onRender: null, // main.js sets this
+
+    /* What the ported views still need from this file. Each of these goes when
+     * the subsystem behind it is ported: hasVisual and shareBoxInner belong to
+     * the share flow, which is the largest thing still living here.
+     *
+     * The views render markup carrying the SAME data-* attributes this file
+     * already listens for, and the listeners are document-level - so a row
+     * drawn by a module is driven by the handlers below without either side
+     * knowing about the other. */
+    hasVisual: (id) => hasVisual(id),
+    shareOpenHas: (id) => shareOpen.has(id),
+    shareBoxInner: (id) => shareBoxInner(id),
+    deckNames,
+    deckTitle,
+    // The log is loaded lazily and cached. Returns null when it has not been
+    // fetched yet, and starts fetching - the caller re-renders when it lands.
+    logFor: (id) => {
+      if (logCache.has(id)) return logCache.get(id);
+      getLog(id, () => render());
+      return null;
+    },
+    analyse: (m) => analyse(m),
+    render: () => render(),
+  };
+  window.RATrackerLegacy = bridge;
 
   function renderArchiveBanner() {
     const b = $("#archiveBanner");
     if (!b) return;
     b.hidden = !archive;
     if (archive) {
-      $("#archiveBannerText").textContent = `Viewing archive “${archive.name}” — ${archive.matches.length} matches, read-only. Your live data is untouched.`;
-      $("#backupBanner").hidden = true; // not about the archive you're viewing
+      setText(
+        "#archiveBannerText",
+        `Viewing archive “${archive.name}” — ${archive.matches.length} matches, read-only. Your live data is untouched.`
+      );
+      const nag = $("#backupBanner");
+      if (nag) nag.hidden = true; // not about the archive you're viewing
     }
     document.body.classList.toggle("read-only", readOnly());
   }
 
+  /* How many rows an aggregate table shows before it offers "see all".
+   *
+   * Nothing is hidden silently: the footer states the true total and expanding
+   * is one click, in place. The cap exists because a long tail of one-game
+   * opponents pushes the rows that carry weight off the screen. */
+  const AGG_LIMIT = 8;
+  const aggExpanded = new Set();
+
+  /* Four steps of one hue. The break points are quarters of the range rather
+   * than anything about good or bad: this encodes magnitude, not judgement. */
+  const rateStep = (rate) => (rate >= 0.75 ? 4 : rate >= 0.5 ? 3 : rate >= 0.25 ? 2 : 1);
+
   function renderAgg(tbody, rows, keyFn) {
+    if (!tbody) return;
+    const table = tbody.closest("table");
+    const key = table ? table.id : "";
     const agg = new Map();
     for (const m of rows) {
       const k = keyFn(m);
@@ -323,145 +453,41 @@
       if (m.result === "loss") a.l++;
       agg.set(k, a);
     }
-    tbody.innerHTML = "";
     if (!agg.size) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No matches recorded yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No matches recorded yet.</td></tr>';
       return;
     }
-    [...agg.entries()]
-      .sort((a, b) => b[1].games - a[1].games)
-      .forEach(([name, a]) => {
-        const decided = a.w + a.l;
-        const rate = decided ? a.w / decided : null;
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${esc(name)}</td><td>${a.games}</td><td>${a.w}</td><td>${a.l}</td>
-          <td><div class="bar-wrap"><div class="bar-track"><div class="bar" style="width:${
-            rate === null ? 0 : Math.round(rate * 100)
-          }%"></div></div><span class="pct">${rate === null ? "–" : Math.round(rate * 100) + "%"}</span></div></td>
-          <td></td>`;
-        tbody.appendChild(tr);
-      });
+
+    const all = [...agg.entries()].sort((a, b) => b[1].games - a[1].games);
+    const open = aggExpanded.has(key);
+    const shown = open ? all : all.slice(0, AGG_LIMIT);
+
+    tbody.innerHTML =
+      shown
+        .map(([name, a]) => {
+          const decided = a.w + a.l;
+          const rate = decided ? a.w / decided : null;
+          const pct = rate === null ? 0 : Math.round(rate * 100);
+          // An unnamed deck is a hint, not a deck whose name is "Unlabelled".
+          const unlabelled = name === "Unlabelled";
+          const label = unlabelled ? "— unlabelled —" : esc(name);
+          return `<tr>
+          <td class="${unlabelled ? "unlabelled" : ""}">${label}</td>
+          <td>${a.games}</td><td>${a.w}</td><td>${a.l}</td>
+          <td><div class="bar-wrap"><div class="bar-track">${
+            // No decided results: an empty track and a dash. A zero-width bar
+            // at 0% would read as "lost them all".
+            rate === null ? "" : `<div class="bar rate-${rateStep(rate)}" style="width:${pct}%"></div>`
+          }</div><span class="pct">${rate === null ? "–" : pct + "%"}</span></div></td>
+        </tr>`;
+        })
+        .join("") +
+      (all.length > AGG_LIMIT
+        ? `<tr><td colspan="5" class="agg-more">Showing ${shown.length} of ${all.length}
+             <button data-aggmore="${esc(key)}">${open ? "show fewer" : "see all"}</button></td></tr>`
+        : "");
   }
 
-  const COLSPAN = 13;
-
-  function renderHistory(rows) {
-    ensureVisualIds();
-    const tbody = $("#historyTable tbody");
-    tbody.innerHTML = "";
-    if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="${COLSPAN}" class="empty">No matches recorded yet. Play a match on play.riftatlas.com with the extension installed.</td></tr>`;
-      return;
-    }
-    for (const m of rows) {
-      const tr = document.createElement("tr");
-      tr.className = "match-row";
-      const d = m.startedAt ? new Date(m.startedAt) : null;
-      const open = expanded.has(m.id);
-      tr.innerHTML = `
-        <td class="expander" data-toggle="${m.id}" title="Show game summary">${open ? "▾" : "▸"}</td>
-        <td>${d ? d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–"}</td>
-        <td>${esc(m.mode || "–")}</td>
-        <td>${esc(m.roomCode || "–")}</td>
-        <td>${esc(m.myChampion || m.myLegend || "–")}</td>
-        <td class="deck-cell">${deckSelect(m, "deck-inline")}</td>
-        <td>${esc(m.opponentName || "–")}</td>
-        <td>${esc(m.opponentChampion || m.opponentLegend || "–")}</td>
-        <td>${
-          m.myScore == null && m.opponentScore == null
-            ? "–"
-            : `${m.myScore ?? 0}–${m.opponentScore ?? 0}`
-        }</td>
-        <td>${fmtDuration(m.durationMs)}</td>
-        <td>
-          <select data-id="${m.id}" class="result-edit result-${m.result || "unknown"}" ${readOnly() ? "disabled" : ""}>
-            ${["win", "loss", "draw", "unknown"]
-              .map((r) => `<option value="${r}" ${(m.result || "unknown") === r ? "selected" : ""}>${r}</option>`)
-              .join("")}
-          </select>
-        </td>
-        <td class="src-manual">${m.endedAt ? esc(m.resultSource || "") : "in game"}${
-          m.notes ? ' <span class="note-dot" title="Has notes">•</span>' : ""
-        }</td>
-        <td>${readOnly() ? "" : `<button class="row-del" data-del="${m.id}" title="Delete match">✕</button>`}</td>`;
-      tbody.appendChild(tr);
-      if (open) tbody.appendChild(detailRow(m));
-    }
-  }
-
-  function detailRow(m) {
-    const tr = document.createElement("tr");
-    tr.className = "detail-row";
-    const td = document.createElement("td");
-    td.colSpan = COLSPAN;
-
-    if (!logCache.has(m.id)) {
-      td.innerHTML = '<p class="coverage">Loading game log…</p>';
-      tr.appendChild(td);
-      getLog(m.id, () => render());
-      return tr;
-    }
-
-    const withLog = Object.assign({}, m, { log: logCache.get(m.id) });
-    const a = analyse(withLog);
-    const metrics = a.hasLog
-      ? `
-      <table class="metrics">
-        <thead><tr><th></th><th>You</th><th>Opponent</th></tr></thead>
-        <tbody>
-          <tr><td>Units committed to battlefields</td><td>${a.self.commit}</td><td>${a.opponent.commit}</td></tr>
-          <tr><td>Battlefields conquered</td><td>${a.self.conquer}</td><td>${a.opponent.conquer}</td></tr>
-          <tr><td>Points scored (from log)</td><td>${a.self.points}</td><td>${a.opponent.points}</td></tr>
-          <tr><td>Cards sent to trash</td><td>${a.self.trash}</td><td>${a.opponent.trash}</td></tr>
-          <tr><td>Showdown actions</td><td>${a.self.showdown}</td><td>${a.opponent.showdown}</td></tr>
-          <tr><td>Focus passed</td><td>${a.self.passFocus}</td><td>${a.opponent.passFocus}</td></tr>
-          <tr><td>Total logged actions</td><td>${a.self.total}</td><td>${a.opponent.total}</td></tr>
-        </tbody>
-      </table>
-      <p class="coverage">Based on ${a.lines} log line${a.lines === 1 ? "" : "s"}${
-          a.unmatched ? ` &middot; ${a.unmatched} line${a.unmatched === 1 ? "" : "s"} not recognised by the parser` : ""
-        }. Turns: ${m.turns || "?"}.</p>`
-      : `<p class="coverage">No game log was captured for this match.</p>`;
-
-    td.innerHTML = `
-      <div class="detail-grid">
-        <div class="detail-col">
-          <h3>Game summary</h3>
-          <p class="verdict verdict-${a.verdict.toLowerCase().replace(/\s+/g, "-")}">${esc(a.verdict)}</p>
-          <p class="verdict-detail">${esc(a.detail)}</p>
-          ${metrics}
-        </div>
-        <div class="detail-col">
-          <h3>Deck</h3>
-          <div class="deck-row">
-            ${deckSelect(m, "deck-wide")}
-            ${readOnly() ? "" : `<button class="deck-apply" data-deckapply="${m.id}" title="Give every unlabelled match with this champion the same deck name">Apply to unlabelled ${esc(champ(m.myChampion || m.myLegend))} games</button>`}
-          </div>
-          <h3>Notes</h3>
-          <textarea class="notes" data-notes="${m.id}" rows="6" ${readOnly() ? "readonly" : ""} placeholder="What happened? What would you do differently?">${esc(m.notes || "")}</textarea>
-          <span class="save-state" data-savestate="${m.id}"></span>
-          ${
-            hasVisual(m.id)
-              ? `<h3 class="log-head">Replay <button class="log-toggle" data-visual="${m.id}" title="Play the match back exactly as the site rendered it">open full screen</button>
-                   <button class="log-toggle" data-share="${m.id}" title="Turn this replay into an encrypted link anyone can open">${shareOpen.has(m.id) ? "hide" : "share a link"}</button></h3>
-                 <div class="share-box" data-sharebox="${m.id}" ${shareOpen.has(m.id) ? "" : "hidden"}>${shareBoxInner(m.id)}</div>`
-              : ""
-          }
-          <h3 class="log-head">Game log <button class="log-toggle" data-log="${m.id}">show</button></h3>
-          <div class="log-box" data-logbox="${m.id}" hidden>${
-            (logCache.get(m.id) || [])
-              .map(
-                (e) =>
-                  `<div class="log-line log-${e.actor}"><span class="log-t">${esc(e.t)}</span>${esc(e.text)}</div>`
-              )
-              .join("") || '<div class="log-line">No log captured.</div>'
-          }</div>
-        </div>
-      </div>`;
-    tr.appendChild(td);
-    return tr;
-  }
 
   const esc = window.RATrackerFormat.esc;
 
@@ -514,9 +540,40 @@
     return `<td><span class="vd-state vd-${esc(state)}" title="${esc(why)}">${esc(state)}</span></td>`;
   }
 
+  /* The match label opens the replay. It is the thing on the row that names a
+   * match, so it is what a reader reaches for - and the modal is already one
+   * click away from Matches, so this is a shortcut rather than a new power.
+   *
+   * Not every row can offer it. A record with no chunks has nothing to play,
+   * and an `error` recording is unplayable by definition - the legend on this
+   * view says exactly that. Those stay as plain text rather than becoming a
+   * button that opens a modal only to apologise. */
+  /* No approved glyph exists for "share", and an emoji renders differently on
+   * every platform - so an inline SVG, shipped in the repo, which is what the
+   * design asks for when a character will not do. currentColor so it follows
+   * the button's own hover state. */
+  const SHARE_MARK =
+    '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+    'd="M6.5 9.5a3 3 0 0 0 4.2 0l2.1-2.1a3 3 0 0 0-4.2-4.2l-1 1M9.5 6.5a3 3 0 0 0-4.2 0l-2.1 2.1' +
+    'a3 3 0 0 0 4.2 4.2l1-1"/></svg>';
+
+  const playable = (record) => (Number(record.chunkCount) || 0) > 0 && record.state !== "error";
+
   function visualRow(record) {
+    const label = esc(visualLabel(record));
+    const id = esc(record.matchId);
+    const open = shareOpen.has(record.matchId);
     return `<tr>
-        <td>${esc(visualLabel(record))}</td>
+        <td>${
+          playable(record)
+            ? `<button class="vd-open" data-visual="${id}"
+                       title="Play this replay">${label}</button>
+               <button class="vd-icon ${open ? "on" : ""}" data-share="${id}"
+                       aria-label="Share a link to this replay"
+                       title="Turn this replay into an encrypted link anyone can open">${SHARE_MARK}</button>`
+            : label
+        }</td>
         <td>${fmtBytes(record.compressedBytes)}</td>
         <td>${fmtCount(record.chunkCount)}</td>
         <td>${fmtCount(statOf(record, "keyframes"))}</td>
@@ -524,7 +581,20 @@
         <td>${fmtMs(statOf(record, "captureP50Ms"))}</td>
         <td>${fmtMs(statOf(record, "captureMaxMs"))}</td>
         ${visualStateCell(record)}
-      </tr>`;
+        <td class="vd-actions"><button class="vd-icon vd-del" data-visualdel="${id}"
+              aria-label="Delete this recording"
+              title="Delete this recording. The match itself is kept.">✕</button></td>
+      </tr>${
+        // The share panel is one component with one state per match id, so the
+        // copy here and the copy in the expanded match row show the same phase.
+        // It sits in its own full-width row rather than in the first cell,
+        // which would drag the numeric columns out of line.
+        open
+          ? `<tr class="vd-share-row"><td colspan="9">
+               <div class="share-box" data-sharebox="${id}">${shareBoxInner(record.matchId)}</div>
+             </td></tr>`
+          : ""
+      }`;
   }
 
   function renderVisualPanel() {
@@ -537,34 +607,37 @@
 
     // Every record gets a row: retention is the store's job, and it never hands
     // back more than the retention setting allows.
-    $("#visualTable tbody").innerHTML = records.map(visualRow).join("");
+    setHtml("#visualTable tbody", records.map(visualRow).join(""));
 
     const bytes = records.reduce((n, r) => n + (Number(r.compressedBytes) || 0), 0);
     const chunks = records.reduce((n, r) => n + (Number(r.chunkCount) || 0), 0);
     // What retention actually costs: every replay is captured at full fidelity,
     // so the mean is the only figure needed to price a different keep count.
     const mean = records.length ? bytes / records.length : 0;
-    $("#visualTable tfoot").innerHTML = `
+    setHtml(
+      "#visualTable tfoot",
+      `
       <tr class="vd-total">
         <td>Total · ${records.length} match${records.length === 1 ? "" : "es"}</td>
         <td>${fmtBytes(bytes)}</td>
         <td>${chunks}</td>
         <td>${fmtCount(sumStat(records, "keyframes"))}</td>
-        <td colspan="4"></td>
+        <td colspan="5"></td>
       </tr>
       <tr class="vd-total">
         <td>+ shared stylesheets · ${fmtCount(visualAssets.count)}</td>
         <td>${fmtBytes(visualAssets.bytes)}</td>
-        <td colspan="6" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
+        <td colspan="7" class="vd-note">stored once by content hash, uncompressed, and shared by every match that used them</td>
       </tr>
       <tr class="vd-total">
         <td>On disk now · retained replays + shared stylesheets</td>
         <td>${fmtBytes(bytes + (Number(visualAssets.bytes) || 0))}</td>
-        <td colspan="6" class="vd-note">
+        <td colspan="7" class="vd-note">
           ${fmtBytes(mean)} per match on average &mdash; keeping the newest ${keepMatches}
           works out at roughly ${fmtBytes(mean * keepMatches)} once that many have been played
         </td>
-      </tr>`;
+      </tr>`
+    );
   }
 
   // ---- replay sharing --------------------------------------------------
@@ -730,8 +803,16 @@
 
   /** Repaint one match's panel in place. A collapsed row simply has none. */
   function paintShare(matchId) {
-    const box = document.querySelector(`[data-sharebox="${CSS.escape(matchId)}"]`);
-    if (!box) return;
+    /* querySelectorAll, not querySelector: the same match can have a panel in
+     * the expanded row AND in the Replays list at the same time, and updating
+     * only the first in document order would leave the other frozen on a phase
+     * it had already left. */
+    const boxes = document.querySelectorAll(`[data-sharebox="${CSS.escape(matchId)}"]`);
+    if (!boxes.length) return;
+    for (const box of boxes) paintOneShareBox(box, matchId);
+  }
+
+  function paintOneShareBox(box, matchId) {
     // Whether the panel is open is the toggle's business and beginShare's, not
     // a repaint's: a paint that forces it open means setShare can never update
     // a collapsed panel without reopening it.
@@ -741,8 +822,13 @@
     // click handler to keep the two in step, because a share could only ever
     // start from inside an already-open panel; a share started from the replay
     // modal opens this one from somewhere the toggle cannot see.
-    const toggle = document.querySelector(`[data-share="${CSS.escape(matchId)}"]`);
-    if (toggle) toggle.textContent = shareOpen.has(matchId) ? "hide" : "share a link";
+    for (const toggle of document.querySelectorAll(`[data-share="${CSS.escape(matchId)}"]`)) {
+      // Only the Replays list labels its toggle; the expanded row's button says
+      // "Share a link" and stays put.
+      if (toggle.classList.contains("vd-share")) {
+        toggle.textContent = shareOpen.has(matchId) ? "hide" : "share a link";
+      }
+    }
   }
 
   function setShare(matchId, patch) {
@@ -948,7 +1034,7 @@
       chrome.storage.local.get({ shares: [] }, (data) => {
         const shares = SHARE.pruneShares(data.shares, Date.now());
         shares.push(record);
-        chrome.storage.local.set({ shares }, () => {
+        STORE.writeShares(shares, () => {
           void chrome.runtime.lastError;
           resolve();
         });
@@ -1367,10 +1453,13 @@
     panel.hidden = readOnly();
     if (panel.hidden) return;
     const now = Date.now();
-    $("#sharesTable tbody").innerHTML = shares.length
-      ? shares.map((r) => shareListRow(r, now)).join("")
-      : `<tr><td colspan="5" class="empty">No share links have been created from this browser.
-           Open a match with a replay and choose “share a link”.</td></tr>`;
+    setHtml(
+      "#sharesTable tbody",
+      shares.length
+        ? shares.map((r) => shareListRow(r, now)).join("")
+        : `<tr><td colspan="5" class="empty">No share links have been created from this browser.
+           Open a match with a replay and choose “share a link”.</td></tr>`
+    );
   }
 
   /** Repaint one row's outcome in place, so re-checking keeps keyboard focus. */
@@ -1418,28 +1507,31 @@
     // Expired only, which is what the row offers - the wording below is about a
     // share whose time is already up and must never be shown for a live one.
     if (!record || !SHARE.isExpired(record, Date.now())) return;
-    const ok = confirm(
-      "Remove this expired share from the list?\n\n" +
-        "This forgets the local record only. It cannot delete the copy on the endpoint — that " +
-        "expired on its own, and the endpoint deletes it within about a day of expiring.\n\n" +
-        "The record is the only place this share's decryption key is kept, so the link can't be " +
-        "rebuilt afterwards."
-    );
-    if (!ok) return;
-    chrome.storage.local.get({ shares: [] }, (data) => {
-      // Pruned on this write like any other. Everything it removes alongside
-      // the chosen record is a share whose object the endpoint deleted days
-      // ago, so no row disappears that could still have been opened.
-      //
-      // Same non-atomic get-then-set as rememberShare, and the same race with a
-      // second dashboard tab. See the note there.
-      const kept = SHARE.pruneShares(data.shares, Date.now()).filter(
-        (s) => !(s && s.objectId === objectId)
-      );
-      chrome.storage.local.set({ shares: kept }, () => {
-        void chrome.runtime.lastError;
-        recheckState.delete(objectId);
-        refreshShares();
+    ask({
+      title: "Remove this expired share from the list?",
+      body:
+        "<p>This forgets the local record only. It cannot delete the copy on the endpoint — that " +
+        "expired on its own, and the endpoint deletes it within about a day of expiring.</p>" +
+        "<p>The record is the only place this share's decryption key is kept, so the link " +
+        "can't be rebuilt afterwards.</p>",
+      confirmLabel: "Clear from list",
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
+      chrome.storage.local.get({ shares: [] }, (data) => {
+        // Pruned on this write like any other. Everything it removes alongside
+        // the chosen record is a share whose object the endpoint deleted days
+        // ago, so no row disappears that could still have been opened.
+        //
+        // Same non-atomic get-then-set as rememberShare, and the same race with
+        // a second dashboard tab. See the note there.
+        const kept = SHARE.pruneShares(data.shares, Date.now()).filter(
+          (s) => !(s && s.objectId === objectId)
+        );
+        STORE.writeShares(kept, () => {
+          recheckState.delete(objectId);
+          refreshShares();
+        });
       });
     });
   }
@@ -1489,11 +1581,26 @@
       const m = all.find((x) => x.id === deckId);
       if (!m) return;
       if (t.value !== NEW_DECK) return setDeckName(m, t.value);
-      const typed = prompt("Name this deck:", m.deckName || "");
-      // Cancelled: put the picker back where it was rather than leaving it
-      // showing the "new name" entry.
-      if (typed === null || !typed.trim()) return render();
-      return setDeckName(m, typed);
+      DIALOG()
+        .textPrompt({
+          title: "Name this deck",
+          body: "<p>A name you type is yours: nothing will overwrite it, even mid-game.</p>",
+          label: "Deck name",
+          value: m.deckName || "",
+          placeholder: "e.g. Hollowmark Aggro",
+          confirmLabel: "Save name",
+          validate: (v) => (v.trim() ? null : "Give the deck a name, or cancel."),
+        })
+        .then((typed) => {
+          // Cancelled: put the picker back where it was rather than leaving it
+          // showing the "new name" entry.
+          if (typed === null || !typed.trim()) return render();
+          // Re-resolved by id: the array may have been replaced while the
+          // dialog was open, and mutating the old object would write nothing.
+          const fresh = all.find((x) => x.id === deckId);
+          if (fresh) setDeckName(fresh, typed);
+        });
+      return;
     }
     if (["fMyChampion", "fMode", "fDeck", "fUnknown"].includes(t.id)) render();
   });
@@ -1504,7 +1611,7 @@
     // Marked manual either way: clearing it is a decision too, and it stops the
     // tracker re-detecting a name onto a match that is still running.
     m.deckSource = "manual";
-    chrome.storage.local.set({ matches: all }, () => {
+    STORE.writeMatches(all, () => {
       buildFilterOptions();
       render(); // a new name has to reach every other row's picker
     });
@@ -1531,7 +1638,7 @@
         const m = all.find((x) => x.id === id);
         if (!m) return;
         m.notes = value;
-        chrome.storage.local.set({ matches: all }, () => {
+        STORE.writeMatches(all, () => {
           if (state) {
             state.textContent = "saved";
             setTimeout(() => (state.textContent = ""), 1500);
@@ -1542,20 +1649,24 @@
   });
 
   document.addEventListener("click", (e) => {
-    const toggle = e.target?.dataset?.toggle;
-    if (toggle) {
-      if (expanded.has(toggle)) expanded.delete(toggle);
-      else expanded.add(toggle);
+    const aggMore = e.target?.dataset?.aggmore;
+    if (aggMore) {
+      if (aggExpanded.has(aggMore)) aggExpanded.delete(aggMore);
+      else aggExpanded.add(aggMore);
       render();
       return;
     }
-    const visualId = e.target?.dataset?.visual;
+    /* The expander moved to view-matches.js with the row it opens. This file
+     * kept a private `expanded` Set that nothing renders from any more, so a
+     * branch here would only fire a second render for the same click. */
+    const visualBtn = e.target?.closest?.("[data-visual]");
+    const visualId = visualBtn && visualBtn.dataset.visual;
     if (visualId) {
       const m = all.find((x) => x.id === visualId) || { id: visualId };
       chrome.runtime.sendMessage({ type: "ra:visual:get", matchId: visualId }, (reply) => {
         const payload = chrome.runtime.lastError || !reply || !reply.ok ? null : reply.replay;
         if (!payload || !payload.events || !payload.events.length) {
-          alert("The replay for this match could not be read.");
+          say("The replay for this match could not be read.", "error");
           return;
         }
         window.RATrackerVisualReplay.openModal(m, payload, {
@@ -1567,17 +1678,62 @@
     // Sharing. The panel is toggled in place rather than through render(), so
     // opening it disturbs nothing else in the row - and a share already running
     // cannot be closed out from under itself.
-    const shareId = e.target?.dataset?.share;
-    if (shareId) {
+    const delReplay = e.target?.closest?.("[data-visualdel]");
+    if (delReplay) {
+      const matchId = delReplay.dataset.visualdel;
+      // A recording being uploaded right now is the one thing that must not be
+      // pulled out from under the pipeline reading it.
+      if (shareBusy === matchId) {
+        say("This replay is being shared right now. Wait for that to finish.", "error");
+        return;
+      }
+      const record = visualRecords.find((r) => r.matchId === matchId);
+      const size = record ? fmtBytes(record.compressedBytes) : null;
+      /* Deleting a RECORDING is not deleting a match, and the wording has to
+       * carry that: the match record, its game log, its result and its card
+       * list all survive, which is exactly what the retention setting already
+       * promises when it drops the oldest replay. */
+      const shared = shares.some((r) => r && r.matchId === matchId);
+      ask({
+        title: "Delete this recording?",
+        sub: size ? `Frees ${size}` : undefined,
+        body:
+          "<p>The match itself is kept &mdash; its record, its game log, its result and its card " +
+          "list are all untouched. Only the video-like replay goes.</p>" +
+          "<p>It cannot be recovered. A replay is never in an export or an archive, so there is " +
+          "nothing to restore it from.</p>" +
+          (shared
+            ? "<p>You have shared this replay. <b>Deleting your copy does not delete the share</b> " +
+              "&mdash; the encrypted copy on the endpoint is served until it expires, and clearing " +
+              "it here would only lose the key that opens it.</p>"
+            : ""),
+        confirmLabel: "Delete recording",
+        danger: true,
+      }).then((ok) => {
+        if (!ok) return;
+        forgetVisual(matchId);
+        shareOpen.delete(matchId);
+        // The Matches view keys its replay buttons off hasVisual(), so it has
+        // to be told as well as the panel this row lives in.
+        render();
+        say("Recording deleted. The match is still here.", "success");
+      });
+      return;
+    }
+
+    const shareBtn = e.target?.closest?.("[data-share]");
+    if (shareBtn) {
+      const shareId = shareBtn.dataset.share;
+      // A share already running must not be closed out from under itself.
       if (shareBusy === shareId) return;
-      const box = document.querySelector(`[data-sharebox="${CSS.escape(shareId)}"]`);
-      if (!box) return;
       if (shareOpen.has(shareId)) shareOpen.delete(shareId);
       else shareOpen.add(shareId);
-      const open = shareOpen.has(shareId);
-      box.hidden = !open;
-      box.innerHTML = shareBoxInner(shareId);
-      e.target.textContent = open ? "hide" : "share a link";
+      /* Re-render rather than poking one box. The panel can be asked for from
+       * the expanded match row, from that row's ⋯ menu while it is collapsed,
+       * or from the Replays list - and only a render puts it where it was
+       * asked for. Nothing in flight is lost: shareState lives outside the DOM
+       * precisely so a rebuild cannot drop it. */
+      render();
       return;
     }
     const shareGoId = e.target?.dataset?.sharego;
@@ -1622,12 +1778,15 @@
       forgetShare(forgetId);
       return;
     }
-    const logId = e.target?.dataset?.log;
-    if (logId) {
-      const box = document.querySelector(`[data-logbox="${CSS.escape(logId)}"]`);
+    const logBtn = e.target?.closest?.("[data-log]");
+    if (logBtn) {
+      const box = document.querySelector(`[data-logbox="${CSS.escape(logBtn.dataset.log)}"]`);
       if (box) {
         box.hidden = !box.hidden;
-        e.target.textContent = box.hidden ? "show" : "hide";
+        // Only the caret, never the button's whole contents: the label beside
+        // it is part of the same button.
+        const caret = logBtn.querySelector("span");
+        if (caret) caret.textContent = box.hidden ? "▸" : "▾";
       }
       return;
     }
@@ -1636,25 +1795,61 @@
       const src = all.find((x) => x.id === applyId);
       // The picker commits on change, so the record is already the truth.
       const name = (src?.deckName || "").trim();
-      if (!name) return alert("Give this match a deck name first.");
+      if (!name) return say("Give this match a deck name first.", "error");
       const champion = champ(src.myChampion || src.myLegend);
       const targets = all.filter(
         (m) => champ(m.myChampion || m.myLegend) === champion && !(m.deckName || "").trim()
       );
-      if (!targets.length) return alert(`No unlabelled ${champion} matches to update.`);
-      if (!confirm(`Label ${targets.length} unlabelled ${champion} match${targets.length === 1 ? "" : "es"} as “${name}”?`)) return;
-      targets.forEach((m) => { m.deckName = name; m.deckSource = "manual"; });
-      chrome.storage.local.set({ matches: all }, () => { buildFilterOptions(); render(); });
+      if (!targets.length) return say(`No unlabelled ${champion} matches to update.`);
+      ask({
+        title: `Label ${targets.length} match${targets.length === 1 ? "" : "es"} as “${name}”?`,
+        body: `<p>Every unlabelled ${esc(champion)} match takes this name, and a name applied
+               here is marked manual, so detection will not overwrite it.</p>`,
+        confirmLabel: `Label ${targets.length}`,
+      }).then((ok) => {
+        if (!ok) return;
+        /* Re-resolved AFTER the dialog, by id. A dialog does not block the
+         * event loop the way confirm() did, so the array captured above may
+         * have been replaced by a reload while it was open - and mutating
+         * those orphans would report success having written nothing. */
+        const now = all.filter(
+          (m) => champ(m.myChampion || m.myLegend) === champion && !(m.deckName || "").trim()
+        );
+        if (!now.length) return say("Those matches have already been labelled.");
+        now.forEach((m) => { m.deckName = name; m.deckSource = "manual"; });
+        STORE.writeMatches(all, () => {
+          buildFilterOptions();
+          render();
+          say(`Labelled ${now.length} match${now.length === 1 ? "" : "es"} as “${name}”.`, "success");
+        });
+      });
       return;
     }
     const del = e.target?.dataset?.del;
-    if (del && !readOnly() && confirm("Delete this match record?")) {
-      all = all.filter((x) => x.id !== del);
-      expanded.delete(del);
-      logCache.delete(del);
-      chrome.storage.local.remove(["deckcards_" + del, "log_" + del]);
-      forgetVisual(del);
-      persist(all, () => { buildFilterOptions(); render(); });
+    if (del && !readOnly()) {
+      ask({
+        title: "Delete this match?",
+        body:
+          "<p>The match record, its game log, its card list and its replay all go. " +
+          "This cannot be undone, and an export taken earlier is the only way back.</p>",
+        confirmLabel: "Delete",
+        danger: true,
+      }).then((ok) => {
+        if (!ok) return;
+        const gone = all.find((x) => x.id === del);
+        all = all.filter((x) => x.id !== del);
+        /* A HAND-MADE series is stored, so deleting one of its games leaves a
+         * hole no later pass closes - detection rebuilds automatic groupings
+         * only and steps around manual ones by design. Renumbering here is what
+         * stops a surviving pair reading G1 and G3, and dissolves a series left
+         * with a single game rather than leaving it wearing a G1 badge. */
+        if (gone && gone.seriesId) all = SERIES.renumber(all, gone.seriesId);
+        expanded.delete(del);
+        logCache.delete(del);
+        STORE.removeKeys(["deckcards_" + del, "log_" + del]);
+        forgetVisual(del);
+        persist(all, () => { buildFilterOptions(); render(); });
+      });
     }
   });
 
@@ -1672,34 +1867,101 @@
 
   // Bulk-label every unlabelled match (respecting the champion filter, so you
   // can do one champion at a time when you play several).
-  $("#bulkLabel").addEventListener("click", () => {
+  on("#bulkLabel", "click", () => {
     if (readOnly()) return;
-    const champFilter = $("#fMyChampion").value;
+    const champFilter = val("#fMyChampion");
     const targets = all.filter(
       (m) =>
         !(m.deckName || "").trim() &&
         (!champFilter || champ(m.myChampion || m.myLegend) === champFilter)
     );
-    if (!targets.length) return alert("Every match already has a deck name.");
+    if (!targets.length) return say("Every match already has a deck name.");
     const scope = champFilter ? `${targets.length} unlabelled ${champFilter} match` : `${targets.length} unlabelled match`;
-    const name = prompt(
-      `Deck name for ${scope}${targets.length === 1 ? "" : "es"}?\n\n` +
-        `Tip: set the "My champion" filter first to label one champion at a time.`,
-      ""
-    );
-    if (name === null) return;
-    const clean = name.trim();
-    if (!clean) return;
-    targets.forEach((m) => { m.deckName = clean; m.deckSource = "manual"; });
-    chrome.storage.local.set({ matches: all }, () => {
-      buildFilterOptions();
-      render();
-      alert(`Labelled ${targets.length} match${targets.length === 1 ? "" : "es"} as “${clean}”.`);
-    });
+    DIALOG()
+      .textPrompt({
+        title: `Name ${scope}${targets.length === 1 ? "" : "es"}`,
+        sub: champFilter
+          ? `Only ${champFilter} matches, because that is the champion filter you have set.`
+          : "Set the My champion filter first to label one champion at a time.",
+        label: "Deck name",
+        confirmLabel: "Label them",
+        validate: (v) => (v.trim() ? null : "Give the deck a name, or cancel."),
+      })
+      .then((name) => {
+        const clean = (name || "").trim();
+        if (!clean) return;
+        // Re-resolved after the dialog: see the note on the deck-apply path.
+        const now = all.filter(
+          (m) =>
+            !(m.deckName || "").trim() &&
+            (!champFilter || champ(m.myChampion || m.myLegend) === champFilter)
+        );
+        if (!now.length) return say("Those matches have already been labelled.");
+        now.forEach((m) => { m.deckName = clean; m.deckSource = "manual"; });
+        STORE.writeMatches(all, () => {
+          buildFilterOptions();
+          render();
+          say(`Labelled ${now.length} match${now.length === 1 ? "" : "es"} as “${clean}”.`, "success");
+        });
+      });
   });
 
+  /* Name each detected group, one dialog at a time.
+   *
+   * This was `clusters.forEach(...)` around a native prompt, which worked only
+   * because prompt() blocks. An async callback inside forEach would open every
+   * dialog at once and reach the write with nothing named, so the loop has to
+   * be a real `for ... of` with an await in it.
+   *
+   * An unnamed group is simply left unlabelled - nothing is guessed, which is
+   * the same promise the undecided matches get. */
+  async function nameClusters(clusters, lines) {
+    const ok = await ask({
+      title: `Found ${clusters.length} distinct deck${clusters.length === 1 ? "" : "s"}`,
+      sub: "Grouped by the cards each game actually showed",
+      body:
+        "<p>You will be asked to name each group in turn. Leave one blank to skip it — " +
+        "an unnamed group keeps <em>— unlabelled —</em> rather than being guessed at.</p>" +
+        `<pre class="ra-dialog-summary">${esc(lines)}</pre>`,
+      confirmLabel: "Name them",
+    });
+    if (!ok) return;
+
+    const named = new Map();
+    for (let i = 0; i < clusters.length; i++) {
+      const c = clusters[i];
+      const name = await DIALOG().textPrompt({
+        title: `Group ${i + 1} of ${clusters.length}`,
+        sub: `${c.size} match${c.size === 1 ? "" : "es"} · ${c.cards} distinct cards`,
+        label: "Deck name",
+        placeholder: "Leave blank to skip",
+        confirmLabel: i + 1 === clusters.length ? "Finish" : "Next",
+      });
+      const clean = (name || "").trim();
+      if (clean) named.set(c, clean);
+    }
+    if (!named.size) return;
+
+    let count = 0;
+    for (const [c, clean] of named) {
+      const ids = new Set(c.ids);
+      all.forEach((m) => {
+        if (!ids.has(m.id)) return;
+        m.deckName = clean;
+        m.deckSource = "fingerprint";
+        count++;
+      });
+    }
+    if (!count) return say("Those matches have already been labelled.");
+    STORE.writeMatches(all, () => {
+      buildFilterOptions();
+      render();
+      say(`Labelled ${count} match${count === 1 ? "" : "es"}.`, "success");
+    });
+  }
+
   // Recognise decks from the cards actually played.
-  $("#autoDeck").addEventListener("click", () => {
+  on("#autoDeck", "click", () => {
     if (readOnly()) return;
     const FP = window.RATrackerFingerprint;
     chrome.storage.local.get(null, (data) => {
@@ -1710,51 +1972,38 @@
       }
       const withCards = [...prints.values()].filter((s) => s.size >= FP.MIN_CARDS).length;
       if (!withCards) {
-        return alert(
-          "No usable card data yet.\n\nDeck recognition compares the cards you actually played, " +
-            `so it needs matches where at least ${FP.MIN_CARDS} of your own cards were seen on the board.`
-        );
+        return DIALOG().alert({
+          title: "No usable card data yet",
+          body:
+            "<p>Deck recognition compares the cards you actually played, so it needs matches " +
+            `where at least ${FP.MIN_CARDS} of your own cards were seen on the board.</p>` +
+            "<p>Play a few more matches with the extension running and try again.</p>",
+        });
       }
       const { proposals, undecided, labelledCount } = FP.suggestLabels(all, prints);
 
       if (!labelledCount) {
         // Nothing labelled yet: group them instead and let the user name each.
         const clusters = FP.clusterDecks(all, prints);
-        if (!clusters.length) return alert("Not enough card data to group these matches yet.");
+        if (!clusters.length) return say("Not enough card data to group these matches yet.");
         const lines = clusters
           .map((c, i) => `  Group ${i + 1}: ${c.size} match${c.size === 1 ? "" : "es"} (${c.cards} distinct cards)`)
           .join("\n");
-        const ok = confirm(
-          `Found ${clusters.length} distinct deck${clusters.length === 1 ? "" : "s"} by card overlap:\n\n${lines}\n\n` +
-            `Name them now? You'll be asked for each group in turn.`
-        );
-        if (!ok) return;
-        let named = 0;
-        clusters.forEach((c, i) => {
-          const name = prompt(
-            `Name for group ${i + 1} — ${c.size} match${c.size === 1 ? "" : "es"}, ${c.cards} distinct cards:`,
-            ""
-          );
-          const clean = (name || "").trim();
-          if (!clean) return;
-          const ids = new Set(c.ids);
-          all.forEach((m) => { if (ids.has(m.id)) { m.deckName = clean; m.deckSource = "fingerprint"; } });
-          named += c.size;
-        });
-        if (!named) return;
-        chrome.storage.local.set({ matches: all }, () => {
-          buildFilterOptions();
-          render();
-          alert(`Labelled ${named} matches.`);
-        });
+        nameClusters(clusters, lines);
         return;
       }
 
       if (!proposals.length) {
-        return alert(
-          `No confident matches found.\n\n${undecided.length} match${undecided.length === 1 ? "" : "es"} couldn't be placed:\n` +
-            undecided.slice(0, 6).map((u) => `  • ${u.reason}`).join("\n")
-        );
+        return DIALOG().alert({
+          title: "No confident matches found",
+          sub: `${undecided.length} match${undecided.length === 1 ? "" : "es"} could not be placed`,
+          body:
+            "<p>Nothing is guessed: a match that sits between two decks keeps " +
+            "<em>— unlabelled —</em> and can be labelled by hand in Matches.</p>" +
+            "<ul>" +
+            undecided.slice(0, 6).map((u) => `<li>${esc(u.reason)}</li>`).join("") +
+            "</ul>",
+        });
       }
       const byDeck = {};
       proposals.forEach((p) => { byDeck[p.deck] = (byDeck[p.deck] || 0) + 1; });
@@ -1762,31 +2011,49 @@
         .map(([d, n]) => `  ${n} × “${d}”`)
         .join("\n");
       const avg = Math.round((proposals.reduce((a, p) => a + p.score, 0) / proposals.length) * 100);
-      const ok = confirm(
-        `Matched ${proposals.length} unlabelled game${proposals.length === 1 ? "" : "s"} to your named decks ` +
-          `(avg ${avg}% card overlap):\n\n${summary}\n\n` +
-          (undecided.length ? `${undecided.length} left unlabelled (too little data or no clear match).\n\n` : "") +
-          `Apply these labels?`
-      );
-      if (!ok) return;
-      const byId = new Map(proposals.map((p) => [p.match.id, p.deck]));
-      all.forEach((m) => { if (byId.has(m.id)) { m.deckName = byId.get(m.id); m.deckSource = "fingerprint"; } });
-      chrome.storage.local.set({ matches: all }, () => {
-        buildFilterOptions();
-        render();
+      ask({
+        title: "Decks detected from cards played",
+        sub: `${proposals.length} unlabelled game${proposals.length === 1 ? "" : "s"} matched, average ${avg}% card overlap`,
+        body:
+          "<p>Matched against decks you have already named:</p>" +
+          `<pre class="ra-dialog-summary">${esc(summary)}</pre>` +
+          (undecided.length
+            ? `<p>${undecided.length} left alone — too little card data, or no clear winner. ` +
+              "Nothing is guessed: those keep <em>— unlabelled —</em>.</p>"
+            : ""),
+        summary: "Names you typed yourself are never touched.",
+        confirmLabel: `Apply ${proposals.length} label${proposals.length === 1 ? "" : "s"}`,
+      }).then((ok) => {
+        if (!ok) return;
+        const byId = new Map(proposals.map((p) => [p.match.id, p.deck]));
+        // By id, so a reload during the dialog cannot leave this writing to
+        // objects that are no longer in the array being saved.
+        let applied = 0;
+        all.forEach((m) => {
+          if (!byId.has(m.id) || (m.deckName || "").trim()) return;
+          m.deckName = byId.get(m.id);
+          m.deckSource = "fingerprint";
+          applied++;
+        });
+        if (!applied) return say("Those matches have already been labelled.");
+        STORE.writeMatches(all, () => {
+          buildFilterOptions();
+          render();
+          say(`Labelled ${applied} match${applied === 1 ? "" : "es"}.`, "success");
+        });
       });
     });
   });
 
-  $("#exportJson").addEventListener("click", () => {
+  on("#exportJson", "click", () => {
     buildBundle(true, (bundle) =>
       download(`riftatlas-matches-${stamp()}.json`, JSON.stringify(bundle, null, 2), "application/json")
     );
   });
 
-  $("#exportCsv").addEventListener("click", () => {
+  on("#exportCsv", "click", () => {
     buildBundle(false, (bundle) => {
-      const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","notes"];
+      const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","seriesId","seriesGame","seriesFormat","seriesSource","notes"];
       const extra = ["duration","verdict","myCommits","oppCommits","myConquers","oppConquers","myTrashed","oppTrashed","logLines"];
       const lines = [cols.concat(extra).join(",")].concat(
         bundle.matches.map((m) => {
@@ -1864,112 +2131,144 @@
         if (Array.isArray(codes) && codes.length) writes["deckcards_" + id] = { id, codes };
       }
       writes.matches = [...byId.values()];
-      chrome.storage.local.set(writes, cb);
+      STORE.writeKeys(writes, cb);
     });
   }
 
-  $("#importJson").addEventListener("click", () => $("#importFile").click());
-  $("#importFile").addEventListener("change", (e) => {
+  on("#importJson", "click", () => { const f = $("#importFile"); if (f) f.click(); });
+  on("#importFile", "change", (e) => {
     const file = e.target.files[0];
     if (!file) return;
     file.text().then((text) => {
       try {
         const bundle = parseBundle(text);
         writeBundleToStorage(bundle, () => {
-          archive = null;
+          setArchive(null);
           logCache.clear();
           load();
-          alert(`Imported ${bundle.matches.length} matches into your live data.`);
+          say(`Imported ${bundle.matches.length} matches into your live data.`, "success");
         });
       } catch (err) {
-        alert("Import failed: " + err.message);
+        say("Import failed: " + err.message, "error");
       }
     });
     e.target.value = "";
   });
 
   // Archive & clear: download everything, then wipe local storage.
-  $("#archiveClear").addEventListener("click", () => {
+  on("#archiveClear", "click", () => {
     if (readOnly()) return;
-    if (!all.length) return alert("There are no matches to archive.");
+    if (!all.length) return say("There are no matches to archive.");
     buildBundle(true, (bundle) => {
       const json = JSON.stringify(bundle, null, 2);
       const sizeMb = (new Blob([json]).size / 1048576).toFixed(1);
+      const archivedIds = new Set(bundle.matches.map((m) => m.id));
       download(`riftatlas-archive-${stamp()}.json`, json, "application/json");
-      setTimeout(() => {
-        const ok = confirm(
-          `Archive downloaded (${bundle.matches.length} matches, ${sizeMb} MB).\n\n` +
-            `Check it's in your Downloads folder, then press OK to CLEAR all matches, logs, card data and share links from the extension.\n\n` +
-            `You can view it again any time with "View archive", or restore it with Import JSON.\n\n` +
-            `The archive does not carry share links: any share still on the endpoint keeps being served until it expires, but the record here is the only copy of the key that opens it.\n\n` +
-            `Press Cancel to keep everything.`
-        );
+      /* The 800ms wait existed because a synchronous modal fired straight after
+       * a programmatic click on a blob URL could suppress the download. The
+       * dialog does not block, so the reason is gone with the modal that
+       * needed it. */
+      ask({
+        title: "Clear everything from the extension?",
+        sub: `Archive downloaded — ${bundle.matches.length} matches, ${sizeMb} MB`,
+        body:
+          "<p>Check it is in your Downloads folder first. This then wipes every match, game " +
+          "log, card list, share record and replay from the extension.</p>" +
+          "<p>You can open the file again any time with <b>View archive</b>, or merge it back " +
+          "with <b>Import JSON</b>.</p>" +
+          "<p>The archive does not carry share links. Any share already uploaded keeps being " +
+          "served until it expires, but the record here is the only copy of the key that " +
+          "opens it.</p>",
+        confirmLabel: "Clear everything",
+        danger: true,
+      }).then((ok) => {
         if (!ok) return;
+        /* Anything that finished while the dialog was open is NOT in the file
+         * that was just written, so clearing it would destroy the only copy.
+         * The wipe is therefore limited to what the archive actually holds. */
+        const stragglers = all.filter((m) => !archivedIds.has(m.id));
         chrome.storage.local.get(null, (data) => {
           // "shares" goes with the rest: each record holds a decryption key,
           // and a wipe that leaves every key a browser ever made behind is not
           // the clean slate the button offers.
           const keys = Object.keys(data || {}).filter(
-            (k) => k === "shares" || k.startsWith("deckcards_") || k.startsWith("log_")
+            (k) =>
+              k === "shares" ||
+              ((k.startsWith("deckcards_") || k.startsWith("log_")) &&
+                archivedIds.has(k.slice(k.indexOf("_") + 1)))
           );
-          chrome.storage.local.remove(keys, () => {
-            all = [];
+          STORE.removeKeys(keys, () => {
+            all = stragglers;
             expanded.clear();
             logCache.clear();
             forgetAllVisual();
-            chrome.storage.local.set({ matches: [] }, () => {
+            STORE.writeMatches(stragglers, () => {
               buildFilterOptions();
               render();
-              alert("Local data cleared. The archive file has everything.");
+              say(
+                stragglers.length
+                  ? `Cleared. ${stragglers.length} match${stragglers.length === 1 ? "" : "es"} finished after the archive was written and ${stragglers.length === 1 ? "was" : "were"} kept.`
+                  : "Local data cleared. The archive file has everything.",
+                "success"
+              );
             });
           });
         });
-      }, 800);
+      });
     });
   });
 
   // View archive: render a file read-only without touching stored data.
-  $("#viewArchive").addEventListener("click", () => {
+  on("#viewArchive", "click", () => {
     if (archive) {
-      archive = null;
+      setArchive(null);
       logCache.clear();
-      $("#viewArchive").textContent = "View archive";
+      setText("#viewArchive", "View archive");
       load();
       return;
     }
-    $("#archiveFile").click();
+    const picker = $("#archiveFile");
+    if (picker) picker.click();
   });
-  $("#archiveFile").addEventListener("change", (e) => {
+  on("#archiveFile", "change", (e) => {
     const file = e.target.files[0];
     if (!file) return;
     file.text().then((text) => {
       try {
         const bundle = parseBundle(text);
-        archive = { name: file.name, matches: bundle.matches, deckCards: bundle.deckCards };
+        setArchive({ name: file.name, matches: bundle.matches, deckCards: bundle.deckCards });
         logCache.clear();
         expanded.clear();
-        $("#viewArchive").textContent = "Exit archive";
+        setText("#viewArchive", "Exit archive");
         load();
       } catch (err) {
-        alert("Could not read archive: " + err.message);
+        say("Could not read archive: " + err.message, "error");
       }
     });
     e.target.value = "";
   });
-  $("#archiveExit").addEventListener("click", () => {
-    archive = null;
+  on("#archiveExit", "click", () => {
+    setArchive(null);
     logCache.clear();
-    $("#viewArchive").textContent = "View archive";
+    setText("#viewArchive", "View archive");
     load();
   });
 
-  $("#clearAll").addEventListener("click", () => {
+  on("#clearAll", "click", () => {
     if (readOnly()) return;
-    if (confirm(
-      "Delete ALL recorded matches, logs, replays and share links? " +
-        "Any share already uploaded keeps being served until it expires, but the key that opens it is kept only here. " +
-        "Consider using Archive & clear instead, which saves a copy first."
-    )) {
+    ask({
+      title: "Delete everything in this browser?",
+      body:
+        "<p>Every match, game log, card list, share record and replay, with no copy taken.</p>" +
+        "<p>Any share already uploaded keeps being served until it expires, but the key that " +
+        "opens it is kept only here, so clearing this leaves it unopenable rather than " +
+        "deleted.</p>" +
+        "<p>If you might want the data later, use <b>Archive &amp; clear</b> instead, which " +
+        "saves a copy first.</p>",
+      confirmLabel: "Delete everything",
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
       all = [];
       expanded.clear();
       logCache.clear();
@@ -1978,34 +2277,24 @@
         const keys = Object.keys(data || {}).filter(
           (k) => k === "shares" || k.startsWith("deckcards_") || k.startsWith("log_")
         );
-        if (keys.length) chrome.storage.local.remove(keys);
+        if (keys.length) STORE.removeKeys(keys);
       });
       persist(all, () => { buildFilterOptions(); render(); });
-    }
+    });
   });
 
   // ---- backups ---------------------------------------------------------
 
   const DAY_MS = 86400000;
-  // The recorder reads visualReplay* out of this same object at match start,
-  // and the service worker reads the retention count out of it at every gc.
-  // shareEndpoint is a public URL, not a secret - see share/config.js. It is a
-  // setting, but has no Settings field: a self-hoster can still point the
-  // extension at their own instance without editing code by writing it to
-  // storage, and everyone else is spared a box they would never touch. There is
-  // deliberately no TTL setting: expiry is a bucket-wide lifecycle rule, not a
-  // property of a share.
-  const defaultSettings = {
-    autoBackup: false, lastBackup: 0, bannerDismissed: 0,
-    visualReplayEnabled: true, visualReplayKeepMatches: 25, visualReplayMaxMatchMb: 512,
-    shareEndpoint: window.RAShareConfig.DEFAULT_SHARE_ENDPOINT,
-  };
 
-  const getSettings = (cb) =>
-    chrome.storage.local.get({ settings: defaultSettings }, (d) =>
-      cb(Object.assign({}, defaultSettings, d.settings || {}))
-    );
-  const setSettings = (s, cb) => chrome.storage.local.set({ settings: s }, cb || (() => {}));
+  // The settings shape lives in storage.js now - a second copy here would drop
+  // whichever keys it had not heard about on every write it made.
+  const defaultSettings = STORE.defaultSettings;
+  // Mirrored so buildBundle can decorate an export without waiting on storage.
+  let seriesSettings = STORE.defaultSettings;
+  STORE.getSettings((s) => { seriesSettings = s; });
+  const getSettings = STORE.getSettings;
+  const setSettings = STORE.setSettings;
 
   function writeBackup(cb) {
     if (!all.length) return cb && cb(new Error("nothing to back up"));
@@ -2047,7 +2336,8 @@
   function refreshBackupUI() {
     getSettings((s) => {
       chrome.permissions.contains({ permissions: ["downloads"] }, (granted) => {
-        $("#autoBackup").checked = !!(s.autoBackup && granted);
+        const box = $("#autoBackup");
+        if (box) box.checked = !!(s.autoBackup && granted);
         showBackupState(s);
         if (s.autoBackup && granted && Date.now() - (s.lastBackup || 0) > DAY_MS) writeBackup();
         maybeShowBanner(s, granted);
@@ -2065,16 +2355,19 @@
       !archive && all.length >= 3 && (never || stale) && !(s.autoBackup && granted) && !dismissedRecently;
     banner.hidden = !show;
     if (show) {
-      $("#backupBannerText").textContent = never
+      setText(
+        "#backupBannerText",
+        never
         ? `You have ${all.length} matches stored only inside this extension. Removing it — or loading it from a different folder — wipes them. Save a backup.`
-        : `Your last backup was ${new Date(s.lastBackup).toLocaleDateString()}. Matches since then exist only inside this extension.`;
+          : `Your last backup was ${new Date(s.lastBackup).toLocaleDateString()}. Matches since then exist only inside this extension.`
+      );
     }
   }
 
   const requestBackupPermission = (cb) =>
     chrome.permissions.request({ permissions: ["downloads"] }, cb);
 
-  $("#autoBackup").addEventListener("change", (e) => {
+  on("#autoBackup", "change", (e) => {
     const on = e.target.checked;
     if (!on) {
       getSettings((s) => { s.autoBackup = false; setSettings(s, refreshBackupUI); });
@@ -2083,7 +2376,7 @@
     requestBackupPermission((granted) => {
       if (!granted) {
         e.target.checked = false;
-        alert("Downloads permission is needed to save backup files automatically.");
+        say("Downloads permission is needed to save backup files automatically.", "error");
         return;
       }
       getSettings((s) => {
@@ -2093,14 +2386,14 @@
     });
   });
 
-  $("#bannerBackup").addEventListener("click", () => {
+  on("#bannerBackup", "click", () => {
     chrome.permissions.contains({ permissions: ["downloads"] }, (granted) => {
       const go = () =>
         writeBackup((err) => {
           if (err) buildBundle(false, (b) =>
             download(`riftatlas-matches-${stamp()}.json`, JSON.stringify(b, null, 2), "application/json")
           );
-          $("#backupBanner").hidden = true;
+          hideBackupBanner();
         });
       if (granted) return go();
       requestBackupPermission((ok) => {
@@ -2108,7 +2401,7 @@
         buildBundle(false, (b) =>
           download(`riftatlas-matches-${stamp()}.json`, JSON.stringify(b, null, 2), "application/json")
         );
-        $("#backupBanner").hidden = true;
+        hideBackupBanner();
       });
     });
   });
@@ -2145,23 +2438,31 @@
     // The spinners' bounds come from the constants above so the two can't drift.
     const keep = $("#visualKeep");
     const ceiling = $("#visualCeiling");
-    keep.min = String(KEEP_MIN);
-    keep.max = String(KEEP_MAX);
-    ceiling.min = String(CEILING_MIN_MB);
-    ceiling.max = String(CEILING_MAX_MB);
+    if (keep) {
+      keep.min = String(KEEP_MIN);
+      keep.max = String(KEEP_MAX);
+    }
+    if (ceiling) {
+      ceiling.min = String(CEILING_MIN_MB);
+      ceiling.max = String(CEILING_MAX_MB);
+    }
     getSettings((s) => {
-      $("#visualEnabled").checked = s.visualReplayEnabled !== false;
+      const enabled = $("#visualEnabled");
+      if (enabled) enabled.checked = s.visualReplayEnabled !== false;
+      // Read whether or not the field exists: the diagnostics panel projects
+      // disk use from it, and that projection outlives this file's own markup.
       keepMatches = clampKeep(s.visualReplayKeepMatches);
-      keep.value = keepMatches;
+      if (keep) keep.value = keepMatches;
       const mb = clampCeiling(s.visualReplayMaxMatchMb);
-      ceiling.value = mb > 0 ? mb : ""; // blank, not 0, is what "no limit" looks like
+      // blank, not 0, is what "no limit" looks like
+      if (ceiling) ceiling.value = mb > 0 ? mb : "";
       // The panel projects disk use from the retention count, so it has to be
       // redrawn whenever that number changes.
       renderVisualPanel();
     });
   }
 
-  $("#visualEnabled").addEventListener("change", (e) => {
+  on("#visualEnabled", "change", (e) => {
     const on = e.target.checked;
     getSettings((s) => {
       s.visualReplayEnabled = on;
@@ -2169,7 +2470,7 @@
     });
   });
 
-  $("#visualKeep").addEventListener("change", (e) => {
+  on("#visualKeep", "change", (e) => {
     const n = clampKeep(e.target.value);
     e.target.value = n; // show what was actually stored, clamp included
     getSettings((s) => {
@@ -2178,7 +2479,7 @@
     });
   });
 
-  $("#visualCeiling").addEventListener("change", (e) => {
+  on("#visualCeiling", "change", (e) => {
     const mb = clampCeiling(e.target.value);
     e.target.value = mb > 0 ? mb : "";
     getSettings((s) => {
@@ -2187,17 +2488,30 @@
     });
   });
 
-  $("#bannerDismiss").addEventListener("click", () => {
+  on("#bannerDismiss", "click", () => {
     getSettings((s) => {
       s.bannerDismissed = Date.now();
-      setSettings(s, () => { $("#backupBanner").hidden = true; });
+      setSettings(s, () => { hideBackupBanner(); });
     });
   });
 
   chrome.storage.onChanged.addListener((changes) => {
     if (archive) return; // never let live writes disturb an archive view
     const busy = document.activeElement?.dataset;
-    if (changes.matches && !busy?.notes && !busy?.deck) load();
+    if (changes.matches && !busy?.notes && !busy?.deck) {
+      /* A dialog no longer blocks the event loop the way confirm() did, so a
+       * reload arriving mid-decision would replace `all` with fresh objects -
+       * and any target list captured before the dialog would then be mutating
+       * records that are no longer in the array being saved. The reload is
+       * parked until the dialog closes, which restores what the native modals
+       * gave for free.
+       *
+       * The activeElement check above cannot cover this: with a modal open the
+       * active element is the dialog's own button, not a notes or deck field. */
+      const dlg = window.RATrackerDialog;
+      if (dlg && dlg.isOpen()) dlg.defer(load);
+      else load();
+    }
     // A share created in the row above writes this key, so the list picks the
     // new link up without a reload.
     if (changes.shares) refreshShares();

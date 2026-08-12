@@ -1,0 +1,133 @@
+/* Rift Atlas Stats Tracker - toolbar popup
+ *
+ * Dark only, like the dashboard. There is no light mode and no
+ * prefers-color-scheme branch.
+ *
+ * The :root block below is copied verbatim from dashboard/dashboard.css. The
+ * popup is a separate document, and linking the dashboard sheet would pull in
+ * the whole dashboard - tables, replay viewer, share dialogs - to style six
+ * elements. Copying only the tokens is the cheaper trade, but it is a copy:
+ * CHANGE A TOKEN IN ONE FILE AND CHANGE IT IN THE OTHER, or the popup and the
+ * page it opens will disagree about what a win looks like.
+ */
+:root {
+  /* Surfaces. Depth comes from these four steps plus a 1px border - never from
+     a gradient, and never from a shadow except on the two overlays. */
+  --bg: #0d1626;
+  --surface: #16233b;
+  --surface-2: #1d2d4a;
+  --surface-sunk: #131f34;  /* table headers, footers, sub-rows, sunk blocks */
+
+  /* Ink */
+  --ink: #edf3ff;
+  --ink-2: #a9bcdd;
+  --ink-3: #7e93b8;
+  --ink-off: #3f4f6d;       /* disabled text and controls, incl. archive mode */
+
+  /* Lines */
+  --border: rgba(134, 168, 246, 0.28);
+  --rule: rgba(134, 168, 246, 0.12);   /* row separators */
+
+  /* Status. Each one names a state, and the same colour means the same thing
+     everywhere: --win is a win and a healthy replay, --loss is a loss and a
+     dead one, --draw is a drawn game and a hand-typed value. */
+  --win: #62c99c;       /* win, replay state 'complete' */
+  --loss: #e08a8a;      /* loss, replay state 'error', danger */
+  --draw: #c9b47a;      /* draw, deckSource 'manual', series accents */
+  --truncated: #d9a54c; /* replay state 'truncated' */
+  --unknown: #7e93b8;   /* unknown result, assumed deck source */
+  --accent: #86a8f6;    /* win-rate hue, deckSource 'fingerprint', selection */
+
+  /* Win-rate ramp: one hue, four steps. Never red/green - a 40% deck is a deck
+     with a 40% win rate, not a bad deck, and colouring it like a failure state
+     makes the table an opinion instead of a reading. */
+  --rate-1: #4a63a0;
+  --rate-2: #5f7fc9;
+  --rate-3: #7396e5;
+  --rate-4: #86a8f6;
+
+  /* System stacks only: remote fonts are forbidden by the extension CSP. Mono
+     is not decoration - it marks every number, id, timestamp, byte count and
+     file name, so columns of data line up and read as data. */
+  --font-ui: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+
+/* A popup sizes itself to its content, so the width is set here and nowhere
+   else; everything below is fluid inside it. */
+body {
+  margin: 0;
+  width: 360px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.45 var(--font-ui);
+}
+
+/* --- header --- */
+.head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 13px 15px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.mark { width: 16px; height: 16px; border-radius: 4px; background: var(--accent); flex: none; }
+.title { font-size: 13px; font-weight: 600; }
+.status { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.status.on { color: var(--win); }
+.status.off { color: var(--ink-3); }
+/* The dot carries the same meaning as the words, so when recording is off it
+   goes the whole way to the disabled ink rather than only dimming. */
+.status.off .status-dot { background: var(--ink-off); }
+
+/* --- body --- */
+.body { display: flex; flex-direction: column; gap: 14px; padding: 14px 15px; }
+.label {
+  font: 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+/* --- in game now / last match --- */
+.now { display: grid; gap: 5px; }
+.now-who { font-size: 13px; }
+.now-meta { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.divider { height: 1px; background: var(--border); }
+
+/* --- tiles --- */
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 11px; display: grid; gap: 4px; min-width: 0;
+}
+.tile-value { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile-value .win { color: var(--win); }
+.tile-value .loss { color: var(--loss); }
+
+/* --- last three --- */
+.recent { display: grid; gap: 5px; }
+.recent-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.recent-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.recent-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-score { margin-left: auto; font-family: var(--font-mono); color: var(--ink-3); flex: none; }
+.dot-win { background: var(--win); }
+.dot-loss { background: var(--loss); }
+.dot-draw { background: var(--draw); }
+.dot-unknown { background: var(--unknown); }
+
+/* --- empty state --- */
+.empty { color: var(--ink-3); font-size: 12px; }
+
+/* --- footer --- */
+.open {
+  width: 100%; padding: 8px 12px; border: 0; border-radius: 7px;
+  background: var(--accent); color: var(--bg); font: 600 13px var(--font-ui);
+  cursor: pointer;
+}
+.open:hover { background: #9ab8f8; }
+.foot { margin: 0; text-align: center; font-size: 11px; color: var(--ink-3); }
+
+/* Native controls are painted by the platform, not by this file. Without this
+   a scrollbar renders light on a dark popup. Kept in step with
+   dashboard/dashboard.css, which declares the same thing for the same reason. */
+:root { color-scheme: dark; }
+[hidden] { display: none !important; }
