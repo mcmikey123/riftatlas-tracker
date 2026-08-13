@@ -192,10 +192,7 @@
   }
 
   root.RATrackerTable = {
-    PAGE_SIZE,
-    DATE_PRESETS,
     sortBy,
-    compare,
     search,
     resolveRange,
     inRange,

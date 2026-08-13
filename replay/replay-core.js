@@ -330,14 +330,9 @@
 
     return {
       totalTime: total,
-      marks,
       getTime: () => at,
-      isPlaying: () => playing,
       seek,
       endDrag,
-      play() {
-        if (!playing) togglePlay();
-      },
       pause: stop,
       togglePlay,
       stepTo,

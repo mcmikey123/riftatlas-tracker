@@ -38,7 +38,7 @@ const FILTERED = new Set(["overview", "matches", "series"]);
 
 // ---- view switching ----------------------------------------------------
 
-export function setView(view) {
+function setView(view) {
   const next = VIEWS.indexOf(view) === -1 ? "overview" : view;
   if (state.view === next) return;
   state.view = next;
@@ -86,7 +86,7 @@ function paintViews() {
  * than shown as 0 - "Replays 0" and "Replays, not asked yet" are different
  * claims and only one of them is true before the worker answers.
  */
-export function paintNav(counts) {
+function paintNav(counts) {
   for (const el of $$("[data-count]")) {
     const n = counts[el.dataset.count];
     el.textContent = n === null || n === undefined ? "" : String(n);
@@ -215,5 +215,3 @@ export function paintShell(counts) {
   paintNav(counts);
   paintReadOnly();
 }
-
-export { closeMenus };

@@ -53,10 +53,9 @@ function resetState() {
     deck: "",
     mode: "",
     dateRange: { preset: "all", from: null, to: null },
-    countUnknown: false,
   });
   Object.assign(state.tables.matches, { sortKey: "date", sortDir: "desc", search: "", page: 1 });
-  Object.assign(state.tables.series, { sortKey: "date", sortDir: "desc", search: "", page: 1 });
+  Object.assign(state.tables.series, { sortKey: "date", sortDir: "desc", search: "" });
   state.openRows.clear();
   state.selection.clear();
   state.openRowMenu = null;
