@@ -53,8 +53,10 @@ test("the record bundle exports the record function as the global itself", () =>
 
 test("the record function carries the helpers the recorder drives", () => {
   const { rrwebRecord } = loadBundle("vendor/rrweb-record.min.js");
-  // capture/dom-recorder.js keyframes with takeFullSnapshot and tags each one
-  // with addCustomEvent so the viewer can label turn chapters.
+  // capture/dom-recorder.js snapshots with takeFullSnapshot and tags turns with
+  // addCustomEvent so the viewer can label turn chapters. The two are
+  // independent: every turn is tagged, while snapshots run on a time cadence, so
+  // a missing addCustomEvent costs the chapter chips and nothing else.
   assert.strictEqual(typeof rrwebRecord.takeFullSnapshot, "function");
   assert.strictEqual(typeof rrwebRecord.addCustomEvent, "function");
 });
