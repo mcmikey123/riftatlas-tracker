@@ -20,6 +20,48 @@
     killMs: 150,
   };
 
+  /* How far apart full snapshots are allowed to be, in wall-clock ms.
+   *
+   * Snapshots are what make playback flash: rrweb rebuilds the entire iframe
+   * document on every one it replays, the board's <img> elements are recreated,
+   * and their bitmaps re-decode - so the card art blanks and pops back. The
+   * board frame survives, being markup and colour, which is why it reads as the
+   * cards specifically rather than as a rebuild.
+   *
+   * Time is the only trigger, and that is the point. Two earlier ones were tried
+   * and both failed for the same reason - they were proxies for elapsed time
+   * that something else could accelerate:
+   *
+   *   - one per turn change: turns run ~36s apart, so this was a flash every
+   *     ~36s for the whole replay;
+   *   - a self-calibrating byte ratio, snapshotting whenever accumulated deltas
+   *     outgrew the snapshot they were diffed against. Loosening the turn rule
+   *     simply handed the schedule to this one, which fired at arbitrary moments
+   *     mid-turn and took a measured 3-minute match from 7 keyframes to 9. Both
+   *     shared one counter, so relaxing either tightened the other.
+   *
+   * The cadence is the seek budget: rrweb replays forward from the nearest
+   * snapshot, so a chapter jump costs at most this much of a match's mutations -
+   * about 2.5k events a minute on a measured replay, which is well under a
+   * tenth of a second to apply. Widening this trades seek speed for fewer
+   * flashes and nothing else.
+   *
+   * Not a floor on fidelity: capture is full or nothing (see the header), and
+   * every delta is recorded regardless. This governs only how often a fresh
+   * anchor is spent. */
+  const KEYFRAME_EVERY_MS = 60 * 1000;
+
+  /* Milliseconds, or null when there aren't any.
+   *
+   * Not `Number()` on its own: `Number(null)` is 0, a perfectly finite instant,
+   * and a missing timestamp read as "time zero" makes every elapsed check look
+   * like the whole match has gone by - a snapshot on every settle. */
+  function msValue(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
   function createCapturePolicy(options) {
     const opts = Object.assign({}, DEFAULTS, options || {});
     const { killMs } = opts;
@@ -46,22 +88,29 @@
     }
 
     /* Pure predicate: same input, same answer, no matter how often it is asked.
-     * The recorder owns "has this turn already been keyframed" - it is the only
-     * side that knows which turn the last frame carried - and says so by passing
-     * `reason: "turn"`, which is taken at face value here. */
+     * The recorder owns the clock - it is the only side holding one - and passes
+     * both instants; the interval they are measured against is this file's.
+     *
+     * The recorder only asks on a settled board, so a snapshot never lands on a
+     * half-transitioned one. That makes this a ceiling on how often a snapshot
+     * may be spent, not a promise of when: a match whose board sits still for
+     * three minutes gets its next snapshot when the board next settles. */
     function shouldKeyframe(input) {
       const s = state();
       if (s === "stopped" || s === "killed") return false;
 
-      const { reason, bytesSinceKeyframe, lastKeyframeBytes } = input || {};
-      if (reason === "turn") return true;
-      if (reason === "ratio") {
-        // Self-calibrating: a delta stream that has grown past the keyframe it
-        // was diffed against costs more to replay than a fresh snapshot would,
-        // whatever the page's actual size. No absolute byte threshold to tune.
-        return Number(bytesSinceKeyframe) > Number(lastKeyframeBytes);
-      }
-      return false;
+      const { nowMs, lastKeyframeAtMs } = input || {};
+      const now = msValue(nowMs);
+      const last = msValue(lastKeyframeAtMs);
+      /* No clock reading, no decision. Answering "yes" here would snapshot on
+       * every settle for the rest of the match, which is the flash this cadence
+       * exists to stop - and a missed anchor only costs seek time. */
+      if (now === null) return false;
+      // Nothing to measure against: rrweb's own opening snapshot is the anchor
+      // the recorder starts this clock from, so this is a recording that somehow
+      // has none, and it wants one.
+      if (last === null) return true;
+      return now - last >= KEYFRAME_EVERY_MS;
     }
 
     function onBytes(totalCompressedBytes) {
@@ -77,7 +126,7 @@
   }
 
   root.createCapturePolicy = createCapturePolicy;
-  root.RATCapturePolicy = { createCapturePolicy };
+  root.RATCapturePolicy = { createCapturePolicy, KEYFRAME_EVERY_MS };
 })(typeof window !== "undefined" ? window : globalThis);
 
 if (typeof module !== "undefined" && module.exports) {

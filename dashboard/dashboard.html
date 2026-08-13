@@ -404,6 +404,11 @@
      share re-strips the CSS that get() rehydrated, using the same pure function
      storage uses, before anything is compressed. -->
 <script src="../store/css-assets.js"></script>
+<!-- Reading a replay happens here rather than in the service worker, so the
+     payload never has to cross chrome.runtime.sendMessage. Must follow
+     css-assets.js: replay-store.js takes rehydrateCssAssets off the global. -->
+<script src="../store/idb.js"></script>
+<script src="../store/replay-store.js"></script>
 <script src="../share/config.js"></script>
 <script src="../share/payload.js"></script>
 <script src="../share/hosts.js"></script>

@@ -195,7 +195,13 @@ body {
    upscaled board blurry; letting the compositor re-raster at the transform's
    scale keeps the text sharp. */
 .scale { transform-origin: top left; }
-.scale iframe { border: 0; display: block; background: #fff; image-rendering: auto; }
+/* Matches .stage above, and must keep matching it. rrweb rebuilds the whole
+   iframe document on every keyframe it replays, and for the ~60ms that takes
+   there is no document to paint, so the iframe's own background is what shows.
+   White strobed against the dark board; the stage colour is the same gap,
+   unseen. Keyframes run on a time cadence — see KEYFRAME_EVERY_MS in
+   capture/capture-policy.js — so this lands roughly once a minute. */
+.scale iframe { border: 0; display: block; background: #0b1424; image-rendering: auto; }
 
 .hint {
   flex: 0 0 auto;

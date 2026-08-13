@@ -195,9 +195,16 @@
   }
 
   /**
-   * Settled board states, as ms from the first event. Recorder-supplied turn
-   * markers win; otherwise every full snapshot is one, which is what the
-   * recorder takes on each turn change.
+   * Settled board states, as ms from the first event.
+   *
+   * Recorder-supplied `ra:turn` markers win, and in a recording made by this
+   * extension there is always one per turn - `tagTurn` emits them independently
+   * of whether a snapshot was spent.
+   *
+   * The fallback numbers full snapshots 1..N and labels them as turns, which is
+   * a lie it has always told to some degree and now tells loudly: snapshots run
+   * on a time cadence, so a 20-turn match yields roughly one a minute. It is
+   * reached only when a recording carries no markers at all.
    */
   function timeline(events) {
     // No events, no board states. Both callers happen to guard on a minimum

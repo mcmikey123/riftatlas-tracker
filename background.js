@@ -98,8 +98,16 @@ async function handleVisual(msg) {
         console.warn("[Rift Atlas] visual replay retention failed:", e);
       }
       return { ok: true };
-    case "ra:visual:get":
-      return { ok: true, replay: await replayStore.get(msg.matchId) };
+    /* No "ra:visual:get". Reads happen in the dashboard, against the same
+     * IndexedDB, because a whole replay does not reliably fit through a message:
+     * get() rehydrates every stylesheet into every keyframe, and a real 3.72 MB
+     * recording came out past the 64 MiB ceiling and would not open at all.
+     *
+     * The snapshot cadence has since cut keyframe counts by roughly an order of
+     * magnitude, so that specific recording would fit today - but the ceiling is
+     * fixed while match length is not, and nothing here would warn before it was
+     * crossed again. The store still exposes get(); this side is no longer one
+     * of its callers. */
     case "ra:visual:list":
       return { ok: true, replays: await replayStore.list(), assets: await assetFootprint() };
     // Deleting a match must take its DOM recording with it: the visual track
@@ -122,6 +130,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // A storage failure must never reject into the content script: the recording
   // stops, and the match record, its game log, its result and its card list all
   // carry on to the end of the match regardless.
-  handleVisual(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e) }));
+  //
+  // .catch, not .then's second argument: that argument cannot see a throw from
+  // sendResponse itself, and sending an oversized reply throws exactly there.
+  // The sender was left with `undefined` and no reason at all, which is how a
+  // payload too large to transport came to look like an unreadable recording.
+  handleVisual(msg)
+    .then(sendResponse)
+    .catch((e) => {
+      console.warn("[Rift Atlas] visual message failed:", msg.type, e);
+      try {
+        sendResponse({ ok: false, error: String(e) });
+      } catch (_) {
+        // The channel closed under us, or the failure reply is itself
+        // untransportable. There is nothing further this side can say.
+      }
+    });
   return true; // reply lands asynchronously
 });

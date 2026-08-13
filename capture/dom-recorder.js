@@ -95,25 +95,19 @@
       s.inFlight = false;
       if (reply && reply.ok !== false && Number.isFinite(Number(reply.totalCompressedBytes))) {
         s.flushFailures = 0;
-        onFlushed(s, Number(reply.totalCompressedBytes), hadKeyframe);
+        onFlushed(s, Number(reply.totalCompressedBytes));
       } else {
         onFlushFailed(s, events, rawBytes, hadKeyframe, reply);
       }
     });
   }
 
-  function onFlushed(s, totalCompressedBytes, hadKeyframe) {
-    // The worker owns the byte totals; we only ever mirror them. The growth one
-    // flush caused is also the only authoritative size we have for the snapshot
-    // that flush carried, which is what the ratio rule diffs against.
-    const growth = Math.max(0, totalCompressedBytes - s.flushedBytes);
+  // The worker owns the byte totals; we only ever mirror them. This used to
+  // split them per keyframe as well, for the ratio rule to diff against - that
+  // rule is gone and it was the only reader, so the split went with it. The
+  // failure path still tracks keyframes, but from its own `hadKeyframe`.
+  function onFlushed(s, totalCompressedBytes) {
     s.flushedBytes = totalCompressedBytes;
-    if (hadKeyframe) {
-      s.lastKeyframeBytes = growth;
-      s.bytesSinceKeyframe = 0;
-    } else {
-      s.bytesSinceKeyframe += growth;
-    }
     s.policy.onBytes(totalCompressedBytes);
     checkPolicy(s);
   }
@@ -159,8 +153,12 @@
       s.keyframes += 1;
       s.bufferHasKeyframe = true;
       s.bufferBytes += SNAPSHOT_WEIGHT_BYTES;
-      // Ship it straight away: the sooner it lands the sooner the worker tells
-      // us what it actually cost, which is what the ratio rule needs.
+      /* Ship it straight away. This used to be about learning the snapshot's
+       * real cost quickly, for the byte-ratio rule to diff against; that rule is
+       * gone. What still earns the immediate flush is the buffer bound: a
+       * snapshot enters at SNAPSHOT_WEIGHT_BYTES, so holding it for up to
+       * FLUSH_MS would sit a nominal 64 KB against MAX_RETAINED_BYTES and make
+       * the retry budget meaningless for the batch that matters most. */
       return true;
     }
     const bytes = approxDeltaBytes(event);
@@ -196,9 +194,14 @@
     });
   }
 
-  /* The viewer builds its chapter chips from these markers. Without them it
-   * falls back to numbering full snapshots, and since the ratio rule takes
-   * snapshots of its own that numbering is not the turn number at all. */
+  /* The viewer builds its chapter chips from these markers, and this is the only
+   * thing that produces them - tagging is deliberately independent of whether a
+   * snapshot is spent for the same turn.
+   *
+   * Without them the viewer falls back to numbering full snapshots 1..N, which
+   * has never been the turn number and is now further from it than ever:
+   * snapshots run on a time cadence, so a long match yields roughly one a minute
+   * and the chips would name turns that never existed. */
   function tagTurn(s, turnNumber) {
     if (turnNumber === null || turnNumber === undefined) return;
     const n = Number(turnNumber);
@@ -207,21 +210,39 @@
     root.rrwebRecord.addCustomEvent("ra:turn", { turnNumber: n });
   }
 
-  function keyframe(s, turnNumber) {
+  function keyframe(s) {
     const t0 = performance.now();
-    s.lastKeyframeTurn = turnNumber;
-    tagTurn(s, turnNumber);
+    s.lastKeyframeAt = t0;
     root.rrwebRecord.takeFullSnapshot();
     noteCaptureCost(s, performance.now() - t0, true);
   }
 
   function fire(s) {
     if (s.stopped || s.finishing || !s.stopRecording) return;
-    // "turn" only when the turn actually moved; otherwise the ratio rule decides.
-    const reason = s.pendingTurn !== s.lastKeyframeTurn ? "turn" : "ratio";
-    const { pendingTurn: turnNumber, bytesSinceKeyframe, lastKeyframeBytes } = s;
-    if (!s.policy.shouldKeyframe({ reason, turnNumber, bytesSinceKeyframe, lastKeyframeBytes })) return;
-    keyframe(s, turnNumber);
+    const turnMoved = s.pendingTurn !== s.lastTurnSeen;
+
+    /* The chapter marker is not the snapshot, and only one of them is optional.
+     * Every turn is tagged the moment it moves, whatever the policy then
+     * decides about spending a frame on it - the viewer builds its chips from
+     * these markers, so a turn that went untagged would simply not be in the
+     * chip row, and the replay would look like it skipped from 4 to 6. */
+    if (turnMoved) {
+      s.lastTurnSeen = s.pendingTurn;
+      tagTurn(s, s.pendingTurn);
+    }
+
+    // Snapshots are timed, not counted: see KEYFRAME_EVERY_MS. This is the only
+    // place that spends one mid-match, so the cadence is the whole schedule.
+    // performance.now(), not Date.now(): the cadence compares two readings, and
+    // a wall clock can step backwards under an NTP correction. One backwards step
+    // would suppress every remaining snapshot in the match, leaving a chapter jump
+    // to replay from the opening frame.
+    const spend = s.policy.shouldKeyframe({
+      nowMs: performance.now(),
+      lastKeyframeAtMs: s.lastKeyframeAt,
+    });
+    if (!spend) return;
+    keyframe(s);
   }
 
   // Not while finishing: the match is already over, so back-pressure has nothing
@@ -259,7 +280,26 @@
     s.finishTimer = null;
     if (s.stopped) return;
     const st = s.policy.state();
-    if (s.stopRecording && st !== "stopped" && st !== "killed") keyframe(s, s.turnNumber);
+    if (s.stopRecording && st !== "stopped" && st !== "killed") {
+      /* A turn that ended the match before its settle fired never reached
+       * `fire`, so it was never tagged - and this is the last chance to mark it.
+       * Tagging used to happen inside `keyframe`, which made this unconditional
+       * and double-tagged every turn that had already settled normally.
+       *
+       * Reads `pendingTurn`, the same field `fire` compares, and not
+       * `turnNumber`. `mark` writes both from one argument so they are equal
+       * today, but nothing enforces that - and the comment over that assignment
+       * contemplates a throttle, which would break it. Two guards reading two
+       * fields to answer one question is how the double-tag got here the first
+       * time; this way a divergence cannot resurrect it. */
+      if (s.pendingTurn !== s.lastTurnSeen) {
+        s.lastTurnSeen = s.pendingTurn;
+        tagTurn(s, s.pendingTurn);
+      }
+      // The closing frame is spent whatever the cadence says: it is the board
+      // the match ended on, and no later snapshot is coming to supersede it.
+      keyframe(s);
+    }
     teardown(s, "end");
   }
 
@@ -342,6 +382,12 @@
     const mb = Number(maxMatchMb);
     const ceilingMb = Number.isFinite(mb) ? mb : DEFAULT_MAX_MATCH_MB;
     s.policy = root.createCapturePolicy({ budgetBytes: ceilingMb * 1024 * 1024 });
+    /* The cadence clock starts here, not where the session literal is built:
+     * `start` reads settings from chrome.storage first, so the session can exist
+     * for some time before rrweb takes the opening snapshot that this is the
+     * anchor for. Starting it early would spend the first cadence snapshot early
+     * by however long that read took. */
+    s.lastKeyframeAt = performance.now();
     const meta = { viewport: s.viewport, startedAt: s.startedAt, href: location.href };
     send({ type: "ra:visual:start", matchId: s.matchId, meta }); // viewport sizes the viewer's iframe
     // The record-only bundle exposes the record function AS `rrwebRecord`, with
@@ -392,7 +438,10 @@
           inFlight: false, flushFailures: 0, droppedEvents: 0,
           idleId: null, settleId: null, pendingTurn: null, turnNumber: null,
           finishing: false, finishTimer: null, onPageHide: null,
-          lastKeyframeTurn: null, lastKeyframeBytes: 0, bytesSinceKeyframe: 0,
+          // Which turn we have already tagged, and when a snapshot was last
+          // spent. The clock is set in `beginRecording`, alongside the rrweb
+          // opening snapshot it is the anchor for - see there for why not here.
+          lastTurnSeen: null, lastKeyframeAt: 0,
           events: 0, keyframes: 0, deltaBytes: 0, samples: [], captureMaxMs: 0,
         });
         chrome.storage.local.get({ settings: {} }, (data) => guarded(() => {
