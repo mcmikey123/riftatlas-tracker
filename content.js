@@ -36,6 +36,7 @@
   const FORMAT_MEMORY_MS = DECK_MEMORY_MS;
   const MAX_LOG = 500; // cap stored log lines per match
   const CARDS_SAVE_MS = 5000; // how often to flush the card-code accumulator
+  const MAX_PENDING_MUTATIONS = 2000; // ceiling on the coalesced observer queue
   // Match-log actor colours (left bar on each log row).
   const ACTOR_SELF = "120,221,183"; // green
   const ACTOR_OPP = "255,187,110"; // amber
@@ -223,7 +224,10 @@
         ["deckcards_" + deckCards.id]: { id: deckCards.id, codes: [...deckCards.codes] },
       });
     } catch (err) {
-      showOrphanBanner();
+      console.error("[RA-Tracker] deck cards not saved", err);
+      // The banner blames an extension update, so it is only honest once the
+      // context really is gone. Any other throw gets the log and nothing else.
+      if (isOrphaned()) showOrphanBanner();
     }
   }
 
@@ -866,14 +870,24 @@
     try {
       chrome.storage.local.set({ ["log_" + m.id]: { id: m.id, log: m.log } });
     } catch (err) {
-      showOrphanBanner();
+      console.error("[RA-Tracker] match log not saved", err);
+      if (isOrphaned()) showOrphanBanner(); // see persistDeckCards
     }
+  }
+
+  // Exactly what goes into the `matches` array. The periodic dirty-check
+  // compares this too: comparing `currentMatch` instead sees `log` grow on
+  // every captured line and rewrites the whole array to store bytes that never
+  // changed.
+  function leanRecord(record) {
+    const lean = Object.assign({}, record);
+    delete lean.log; // stored separately under log_<id>
+    return lean;
   }
 
   function saveMatch(record) {
     lastSavedId = record.id;
-    const lean = Object.assign({}, record);
-    delete lean.log; // stored separately under log_<id>
+    const lean = leanRecord(record);
     try {
       chrome.storage.local.get({ matches: [] }, (data) => {
         // Drop any corrupted (null / id-less) entries - they poison every
@@ -885,10 +899,12 @@
         chrome.storage.local.set({ matches });
       });
     } catch (err) {
-      // Extension was reloaded/updated: this tab's script is orphaned and
-      // cannot reach storage anymore. Tell the user loudly.
-      showOrphanBanner();
-      console.error("[RA-Tracker] storage unavailable - refresh this tab", err);
+      // Nearly always a reloaded/updated extension: this tab's script is
+      // orphaned and cannot reach storage anymore. "Nearly" is why the banner
+      // is gated - it names that cause, and a throw from anything else would
+      // send the user to refresh a tab that is fine.
+      console.error("[RA-Tracker] storage unavailable", err);
+      if (isOrphaned()) showOrphanBanner();
     }
   }
 
@@ -946,6 +962,28 @@
         matches: (data.matches || []).filter((x) => x && x.id && x.id !== id),
       });
     });
+  }
+
+  /* The dashboard deleted the game we are still recording. Storage is already
+   * clean, so there is nothing to remove here - the job is to stop writing it
+   * back, which the next three-second save would otherwise do unconditionally.
+   *
+   * Letting go of `currentMatch` is not enough on its own: the board is still
+   * mounted in "in_game", so the very next tick would call `startMatch` and
+   * record the rest of the game as a new entry. `lastEnded` marked as
+   * human-decided is the same latch `discardMatch` relies on, and it makes that
+   * suppression path fire. The card accumulator is dropped too, or the next
+   * flush would rewrite the deckcards_<id> key the delete just took away. */
+  function dropLiveMatch() {
+    const m = currentMatch;
+    if (!m) return;
+    currentMatch = null;
+    globalThis.RATRec && RATRec.stop("deleted");
+    m.resultSource = "manual";
+    lastEnded = { roomCode: m.roomCode, at: Date.now(), record: m };
+    deckCards = { id: null, codes: new Set() };
+    cardsDirty = false;
+    console.info("[RA-Tracker] live match deleted from the dashboard - no longer recording it");
   }
 
   // ---------- end-of-match confirmation toast (manual override) ----------
@@ -1069,8 +1107,25 @@
   }
 
   function boot() {
+    /* One scan per frame, but every record still gets scanned.
+     *
+     * The observer can deliver several batches inside one frame, and only the
+     * first of them schedules the frame - so the batches have to be kept here
+     * rather than read off the callback argument, which holds the first one
+     * alone. `tick` scanning added nodes is the ONLY place a victory / concede
+     * / "PLAYER LEFT" modal is ever read (the three-second poll calls
+     * `tick(null)` and skips the text scan entirely), so a batch dropped here
+     * is a match that ends as "unknown"/"board-unmounted" minutes later.
+     *
+     * Bounded because rAF does not run in a hidden tab while mutations keep
+     * arriving: the oldest go, since the end modal is always the newest thing
+     * on screen. */
+    let pending = [];
     observer = new MutationObserver((mutations) => {
-      // Throttle: coalesce bursts into one scan per frame.
+      for (const record of mutations) pending.push(record);
+      if (pending.length > MAX_PENDING_MUTATIONS) {
+        pending.splice(0, pending.length - MAX_PENDING_MUTATIONS);
+      }
       if (boot._raf) return;
       boot._raf = requestAnimationFrame(() => {
         boot._raf = null;
@@ -1078,8 +1133,13 @@
           showOrphanBanner();
           return;
         }
+        // takeRecords() drains anything queued but not yet delivered, so the
+        // scan covers the whole frame and nothing is left for a callback that
+        // may never come.
+        const batch = pending.concat(observer.takeRecords());
+        pending = [];
         try {
-          tick(mutations);
+          tick(batch);
         } catch (err) {
           console.warn("[RA-Tracker] error", err);
         }
@@ -1107,7 +1167,7 @@
       try {
         tick(null);
         if (currentMatch) {
-          const snap = JSON.stringify(currentMatch);
+          const snap = JSON.stringify(leanRecord(currentMatch));
           if (snap !== lastPersistSnap) {
             lastPersistSnap = snap;
             saveMatch(currentMatch);
@@ -1115,18 +1175,40 @@
         }
         persistDeckCards(false);
         persistLogFor(currentMatch, false);
-      } catch (_) {}
+      } catch (err) {
+        // This is the path that persists, so a swallowed throw here loses
+        // matches silently.
+        console.warn("[RA-Tracker] error", err);
+      }
     }, 3000);
-    // Flush an unfinished match if the tab closes mid-game.
-    window.addEventListener("beforeunload", () => {
+    /* Flush an unfinished match if the tab closes mid-game.
+     *
+     * "pagehide", not "beforeunload": the recorder listens on the same event,
+     * and beforeunload is the one that gets skipped on mobile and when the page
+     * is frozen into the bfcache.
+     *
+     * Only when a match is still live. The recorder's own pagehide handler
+     * exists solely during the settle window after an "end" stop - the window
+     * where it is waiting to catch the victory modal - and stopping it from
+     * here would file a finished recording as "stopped" and cost it that last
+     * frame. While a match IS live there is no such handler at all, so without
+     * this call the tab closes with the batch unflushed and the replay stays
+     * "recording", incomplete, forever. */
+    window.addEventListener("pagehide", () => {
       if (currentMatch) {
         const m = currentMatch;
+        globalThis.RATRec && RATRec.stop("tab-closed");
         currentMatch = null;
         m.endedAt = new Date().toISOString();
         const st = Date.parse(m.startedAt);
         if (Number.isFinite(st)) m.durationMs = Math.max(0, Date.parse(m.endedAt) - st);
         m.result = "unknown";
         m.endReason = "tab-closed";
+        // A pagehide is not always a goodbye: a page frozen into the bfcache can
+        // come back with the same game still on screen. Handing the record to
+        // the false-end latch means `startMatch` reopens THIS one instead of
+        // writing a second record for a game already half-recorded.
+        lastEnded = { roomCode: m.roomCode, at: Date.now(), record: m };
         saveMatch(m);
         persistDeckCards(true);
         persistLogFor(m, true);
@@ -1158,7 +1240,18 @@
         const saved = (changes.matches.newValue || []).find(
           (x) => x && x.id === currentMatch.id
         );
-        if (!saved || saved.deckSource !== "manual") return; // only we write the rest
+        if (!saved) {
+          // Gone from storage - the dashboard deleted it. Only when it was
+          // there an instant ago: a writer that read `matches` before this
+          // match was first saved writes the array back without it too, and
+          // taking that for a delete would abandon a game in progress.
+          const wasStored = (changes.matches.oldValue || []).some(
+            (x) => x && x.id === currentMatch.id
+          );
+          if (wasStored) dropLiveMatch();
+          return;
+        }
+        if (saved.deckSource !== "manual") return; // only we write the rest
         if (saved.deckName === currentMatch.deckName) return;
         currentMatch.deckName = saved.deckName || "";
         currentMatch.deckSource = "manual";
