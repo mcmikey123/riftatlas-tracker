@@ -5,8 +5,11 @@ const {
   MAX_UPLOAD_BYTES,
   SHARE_TTL_MS,
   MESSAGES,
+  RETRYABLE,
   RECHECK_MESSAGES,
   RECHECK_LABELS,
+  endpointProblem,
+  unreadableReason,
   fmtSize,
   checkPayloadSize,
   describeUploadFailure,
@@ -116,6 +119,140 @@ test("a transport failure with no status is a retryable network error", () => {
 test("every failure message is distinct from every other", () => {
   const shown = Object.values(MESSAGES);
   assert.strictEqual(new Set(shown).size, shown.length, "every failure needs its own wording");
+});
+
+/* Three kinds no status can produce. `describeUploadFailure` is the only
+ * consumer of MESSAGES that is tested here, and it maps HTTP statuses - so
+ * these three had no coverage at all, while being raised at exactly the moments
+ * an upload has already cost the user 3.5 MB and 600 ms.
+ *
+ * They are raised by the dashboard's share pipeline: `unverified` when the
+ * post-upload read does not come back with the frame's magic bytes, `unreadable`
+ * when the replay could not be read out of IndexedDB, `unprepared` when
+ * compression or encryption failed before anything left the machine. */
+test("no upload status can produce a kind the pipeline raises by hand", () => {
+  const byHand = ["unverified", "unreadable", "unprepared"];
+  const statuses = [0, 400, 403, 404, 411, 413, 429, 451, 500, 502, 503, 504];
+  for (const status of statuses) {
+    const { kind } = describeUploadFailure(Object.assign(new Error("x"), { status }));
+    assert.ok(!byHand.includes(kind), `status ${status} must not be described as ${kind}`);
+  }
+  for (const kind of byHand) {
+    assert.strictEqual(typeof MESSAGES[kind], "string", `${kind} needs a message to be raised with`);
+    assert.ok(MESSAGES[kind].length > 0, `${kind} must actually say something`);
+  }
+});
+
+test("an unconfirmed upload is retryable and says the stray copy expires by itself", () => {
+  /* The upload succeeded and the verification read did not come back with the
+   * frame. Something is on the endpoint, this side cannot prove what, and
+   * nothing can delete it - so the message has to both offer the retry and say
+   * the unconfirmed copy goes away on its own, or the user is left believing
+   * they have littered a bucket they cannot reach. */
+  assert.ok(RETRYABLE.includes("unverified"), "a re-upload is the only way past an unconfirmed one");
+  assert.match(MESSAGES.unverified, /no link is being shown/);
+  assert.match(MESSAGES.unverified, /expires on its own/);
+});
+
+test("a failure on this machine is never offered a retry", () => {
+  // Nothing was uploaded and nothing was reached, so a second attempt fails in
+  // exactly the same way. A retry button here would be a lie.
+  assert.ok(!RETRYABLE.includes("unreadable"));
+  assert.ok(!RETRYABLE.includes("unprepared"));
+  assert.notStrictEqual(MESSAGES.unprepared, MESSAGES.network, "unprepared is not a transport failure");
+});
+
+test("every retryable kind names a message that exists", () => {
+  // The list and the message table are separate, so a renamed kind would
+  // otherwise offer a retry beside an undefined message.
+  for (const kind of RETRYABLE) {
+    assert.strictEqual(typeof MESSAGES[kind], "string", `${kind} is retryable but has no message`);
+  }
+});
+
+// ---- the endpoint rule -------------------------------------------------
+
+test("an https endpoint is accepted, whatever host it names", () => {
+  for (const ok of [
+    "https://share.riftatlas.example",
+    "https://share.riftatlas.example/",
+    "https://share.riftatlas.example:8443/base",
+    "https://192.0.2.10"
+  ]) {
+    assert.strictEqual(endpointProblem(ok), null, ok);
+  }
+});
+
+/* SECURITY. The payload is encrypted before it leaves the machine, so plain
+ * http would not expose a replay - but the upload token and the object id are
+ * not part of the payload and travel in the clear. A token read off the wire
+ * uploads to someone else's bucket; an object id read off the wire is half of
+ * a link. So http is permitted for exactly the case that cannot offer https:
+ * a `wrangler dev` on this machine. */
+test("http is refused for every host that is not this machine", () => {
+  for (const bad of [
+    "http://share.riftatlas.example",
+    "http://192.0.2.10",
+    "http://localhost.evil.example",
+    "http://notlocalhost",
+    "http://127.0.0.1.evil.example"
+  ]) {
+    assert.match(endpointProblem(bad), /must be an https:\/\/ URL/, bad);
+  }
+});
+
+test("http is permitted only for the three names a local dev server has", () => {
+  for (const local of ["http://localhost:8787", "http://127.0.0.1:8787", "http://[::1]:8787"]) {
+    assert.strictEqual(endpointProblem(local), null, local);
+  }
+});
+
+test("a scheme that is neither http nor https is refused", () => {
+  // `new URL()` parses all of these happily, so the protocol test is what
+  // stops them - not the try/catch.
+  for (const bad of ["ftp://share.example", "file:///tmp/share", "javascript:alert(1)", "data:,x"]) {
+    assert.match(endpointProblem(bad), /must be an https:\/\/ URL/, bad);
+  }
+});
+
+test("something that is not a URL at all says so, rather than failing at fetch", () => {
+  for (const bad of ["", "   ", "share.riftatlas.example", "not a url", null, undefined]) {
+    assert.strictEqual(
+      endpointProblem(bad),
+      "The share endpoint in Settings isn't a valid URL.",
+      JSON.stringify(bad)
+    );
+  }
+});
+
+// ---- why a replay would not play ---------------------------------------
+
+/* Four distinct failures used to share one message, which is exactly what let a
+ * transport ceiling masquerade as a corrupt recording for as long as it did.
+ * Each needs a different thing from the reader, so each is pinned. */
+test("a missing record is gone for good, and says so", () => {
+  for (const nothing of [null, undefined, 0, ""]) {
+    assert.match(unreadableReason(nothing), /No recording is stored/, JSON.stringify(nothing));
+  }
+});
+
+test("a damaged first chunk blames the recording, not the match", () => {
+  const damaged = { meta: { truncatedAtChunk: 0 }, events: [] };
+  assert.match(unreadableReason(damaged), /first chunk is damaged/);
+});
+
+test("a truncation anywhere but the first chunk is not a damaged recording", () => {
+  // Everything before the cut is playable, so this payload arriving empty means
+  // something else went wrong - and saying "damaged" would be the wrong repair.
+  const later = { meta: { truncatedAtChunk: 4 }, events: [] };
+  assert.match(unreadableReason(later), /recorded no events/);
+});
+
+test("a record that captured nothing says nothing was captured", () => {
+  assert.match(unreadableReason({ events: [] }), /recorded no events/);
+  assert.match(unreadableReason({ meta: {}, events: [] }), /recorded no events/);
+  // No meta at all is the same answer, not a crash on the way to it.
+  assert.match(unreadableReason({}), /recorded no events/);
 });
 
 test("the magic check accepts a real frame and rejects an HTML interstitial", async () => {

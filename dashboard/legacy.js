@@ -208,10 +208,10 @@
     renderVisualPanel();
   }
 
-  // v1 bundles carried `replays` (board snapshots); v2 carries `deckCards`.
-  // v1 files still import - their replays are simply dropped, because nothing
-  // reads snapshots any more.
-  const BUNDLE_VERSION = 2;
+  // The file format, both halves of it: the envelope an export is written into
+  // and the reader an import comes back through. Pure, so it is tested.
+  const BUNDLE = window.RATrackerBundle;
+  const { csvCell, parseBundle } = BUNDLE;
 
   /** Full portable bundle: matches with logs inline, optionally card codes. */
   /* The match array with its series fields filled in. Reads the same settings
@@ -228,13 +228,13 @@
 
   function buildBundle(includeCards, cb) {
     if (archive) {
-      return cb({
-        format: "riftatlas-tracker-archive",
-        version: BUNDLE_VERSION,
-        exportedAt: new Date().toISOString(),
-        matches: archive.matches,
-        deckCards: includeCards ? archive.deckCards || {} : {},
-      });
+      return cb(
+        BUNDLE.bundleFrom({
+          exportedAt: new Date().toISOString(),
+          matches: archive.matches,
+          deckCards: includeCards ? archive.deckCards || {} : {},
+        })
+      );
     }
     chrome.storage.local.get(null, (data) => {
       /* Automatic series are worked out at render time and never written, so
@@ -242,24 +242,13 @@
        * the groupings made by hand and every detected series is lost on
        * import. The manual ones are already on the records and pass through
        * detect() untouched. */
-      const decorated = withSeries(all);
-      const matches = decorated.map((m) =>
-        Object.assign({}, m, { log: ((data["log_" + m.id] || {}).log) || [] })
+      cb(
+        BUNDLE.bundleFrom({
+          exportedAt: new Date().toISOString(),
+          matches: BUNDLE.inlineLogs(withSeries(all), data),
+          deckCards: includeCards ? BUNDLE.deckCardsFrom(all, data) : {},
+        })
       );
-      const deckCards = {};
-      if (includeCards) {
-        for (const m of all) {
-          const r = data["deckcards_" + m.id];
-          if (r && Array.isArray(r.codes) && r.codes.length) deckCards[m.id] = r.codes;
-        }
-      }
-      cb({
-        format: "riftatlas-tracker-archive",
-        version: BUNDLE_VERSION,
-        exportedAt: new Date().toISOString(),
-        matches,
-        deckCards,
-      });
     });
   }
 
@@ -479,49 +468,19 @@
 
   // ---- visual replay diagnostics ---------------------------------------
 
-  // In-flight matches, and any recorded before a counter existed, simply have
-  // no value here - which must read as "not recorded", never as NaN.
-  function statOf(record, key) {
-    const v = record.stats ? record.stats[key] : undefined;
-    return typeof v === "number" && Number.isFinite(v) ? v : null;
-  }
-
-  // Null - not zero - when no record carried the counter at all, so an empty
-  // column can't masquerade as a measured zero.
-  function sumStat(records, key) {
-    const vals = records.map((r) => statOf(r, key)).filter((v) => v !== null);
-    return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
-  }
-
-  function visualLabel(record) {
-    const at = record.startedAt ? new Date(record.startedAt) : null;
-    const when = at
-      ? at.toLocaleDateString() + " " + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : DASH;
-    const m = all.find((x) => x.id === record.matchId);
-    if (!m) return when;
-    return `${when} · ${champ(m.myChampion || m.myLegend)} vs ${champ(m.opponentChampion || m.opponentLegend)}`;
-  }
-
-  function visualStateCell(record) {
-    const state = record.state || "unknown";
-    const why =
-      state === "truncated" && record.truncatedAtTurn != null
-        ? `capture stopped at turn ${record.truncatedAtTurn} - the replay covers everything up to there`
-        : state === "error"
-        ? record.error || "capture failed"
-        : state;
-    return `<td><span class="vd-state vd-${esc(state)}" title="${esc(why)}">${esc(state)}</span></td>`;
-  }
+  /* What each record says about itself - which counters were measured, what
+   * its state means in words, and whether it can be played at all. Pure over
+   * one record, so it is tested rather than trusted; the markup around it is
+   * what stays here. `visualLabel` takes the match rather than finding it,
+   * because `all` is this file's state and not the decision's input. */
+  const PANEL = window.RATrackerReplayPanel;
+  const { statOf, sumStat, visualStateCell, playable } = PANEL;
+  const visualLabel = (record) =>
+    PANEL.visualLabel(record, all.find((x) => x.id === record.matchId) || null);
 
   /* The match label opens the replay. It is the thing on the row that names a
    * match, so it is what a reader reaches for - and the modal is already one
-   * click away from Matches, so this is a shortcut rather than a new power.
-   *
-   * Not every row can offer it. A record with no chunks has nothing to play,
-   * and an `error` recording is unplayable by definition - the legend on this
-   * view says exactly that. Those stay as plain text rather than becoming a
-   * button that opens a modal only to apologise. */
+   * click away from Matches, so this is a shortcut rather than a new power. */
   /* No approved glyph exists for "share", and an emoji renders differently on
    * every platform - so an inline SVG, shipped in the repo, which is what the
    * design asks for when a character will not do. currentColor so it follows
@@ -531,8 +490,6 @@
     '<path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
     'd="M6.5 9.5a3 3 0 0 0 4.2 0l2.1-2.1a3 3 0 0 0-4.2-4.2l-1 1M9.5 6.5a3 3 0 0 0-4.2 0l-2.1 2.1' +
     'a3 3 0 0 0 4.2 4.2l1-1"/></svg>';
-
-  const playable = (record) => (Number(record.chunkCount) || 0) > 0 && record.state !== "error";
 
   function visualRow(record) {
     const label = esc(visualLabel(record));
@@ -647,6 +604,10 @@
    * gets no unit tests and must instead stay small and obviously correct. */
 
   const SHARE = window.RAShareUI;
+  // Whether the configured endpoint may be uploaded to, and why a stored
+  // replay could not be played. Both are decidable from their argument alone,
+  // so both live and are tested next to the rest of the taxonomy.
+  const { endpointProblem, unreadableReason } = SHARE;
 
   // matchId -> {phase, link, error, retry, createdAt}. Held outside the DOM so a
   // re-render, which rebuilds the whole history table, cannot lose a share that
@@ -809,38 +770,6 @@
     paintMomentPanel(matchId);
   }
 
-  // The only endpoints that legitimately cannot offer https, and the only ones
-  // http is accepted for. `new URL()` keeps the brackets on an IPv6 hostname.
-  const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-  /* An extension page's fetch obeys CORS like any other page, so uploading needs
-   * the endpoint's cooperation. The share Worker grants it: it answers the
-   * preflight and echoes Access-Control-Allow-Origin for chrome-extension://
-   * origins only. That is deliberately server-side rather than a host permission
-   * here, so the extension ships no wildcard origin access and a self-hoster can
-   * point Settings at their own instance with no manifest edit and no prompt.
-   *
-   * The endpoint is still validated, because a malformed one should fail with a
-   * clear message rather than an opaque fetch rejection.
-   *
-   * Returns what to tell the user, or null when there is nothing to say. */
-  function endpointProblem(endpoint) {
-    let url;
-    try {
-      url = new URL(endpoint);
-    } catch (_) {
-      return "The share endpoint in Settings isn't a valid URL.";
-    }
-    /* The payload is encrypted before it leaves here, so plain http would not
-     * expose a replay - but the upload token and the object id are not part of
-     * the payload, and both travel in the clear. The one endpoint that
-     * legitimately cannot offer https is a `wrangler dev` on this machine, so
-     * that is the only place http is allowed. */
-    if (url.protocol === "https:") return null;
-    if (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname)) return null;
-    return "The share endpoint in Settings must be an https:// URL (http:// only for localhost).";
-  }
-
   /* Reading a replay does not go through the service worker.
    *
    * get() rehydrates every stored stylesheet back into every keyframe, so a
@@ -867,19 +796,6 @@
   });
 
   const readReplay = (matchId) => replayReader.get(matchId);
-
-  /* Four distinct failures used to share one message, which is exactly what let
-   * a transport ceiling masquerade as a corrupt recording for as long as it
-   * did. They need different things from the reader: a missing record is gone
-   * for good, a damaged first chunk means the recording itself is hurt, and an
-   * empty one never captured anything to begin with. */
-  function unreadableReason(payload) {
-    if (!payload) return "No recording is stored for this match any more.";
-    if ((payload.meta || {}).truncatedAtChunk === 0) {
-      return "This replay's first chunk is damaged, so none of it can be played.";
-    }
-    return "This replay recorded no events, so there is nothing to play.";
-  }
 
   /* Read just enough of an object to recognise it: the four magic bytes. Used
    * both to verify a fresh upload and to re-check an old share from the shares
@@ -1536,14 +1452,11 @@
 
   let shareEndpoint = window.RAShareConfig.DEFAULT_SHARE_ENDPOINT;
 
-  // Blank is the "put it back to the default" affordance, so an endpoint can
-  // never be cleared into a state where sharing silently has nowhere to go.
-  const cleanEndpoint = (value) => {
-    const text = String(value == null ? "" : value).trim();
-    return text
-      ? window.RAShareHosts.normaliseEndpoint(text)
-      : window.RAShareConfig.DEFAULT_SHARE_ENDPOINT;
-  };
+  const cleanEndpoint = (value) =>
+    window.RATrackerSettingsClamps.cleanEndpoint(
+      value,
+      window.RAShareConfig.DEFAULT_SHARE_ENDPOINT
+    );
 
   /* There is no Settings field for this. The stored value is still honoured, so
    * a self-hoster can point the extension at their own instance without editing
@@ -2082,47 +1995,6 @@
     });
   });
 
-  const csvCell = (v) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-
-  /** Accepts the bundle format or a bare array of matches. */
-  function parseBundle(text) {
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      throw new Error("That file isn't valid JSON (" + err.message + ").");
-    }
-    if (Array.isArray(data)) return { matches: data, deckCards: {} };
-    if (data && Array.isArray(data.matches)) {
-      // A v1 bundle's `replays` key is ignored rather than rejected: its board
-      // snapshots have no reader left, but its matches and logs are still good.
-      return { matches: data.matches, deckCards: data.deckCards || {} };
-    }
-    // Be specific about what went wrong - "not an array" helps nobody.
-    const looksLikeSummary =
-      data &&
-      (data.totalMatches !== undefined ||
-        data.byOpponentChampion !== undefined ||
-        data.winRate !== undefined);
-    if (looksLikeSummary) {
-      throw new Error(
-        "This is a stats SUMMARY file — it holds totals like win rate and " +
-          "per-champion records, but not the individual matches, so there is " +
-          "nothing to import.\n\nYou want the export itself: look in Downloads " +
-          "for riftatlas-archive-<date>.json, riftatlas-matches-<date>.json, " +
-          "or riftatlas-backups/matches-<date>.json."
-      );
-    }
-    const keys = Object.keys(data || {}).slice(0, 8).join(", ") || "(none)";
-    throw new Error(
-      'Unrecognised file: expected a Rift Atlas export with a "matches" array.\n\n' +
-        "Top-level keys found: " + keys
-    );
-  }
-
   function writeBundleToStorage(bundle, cb) {
     chrome.storage.local.get({ matches: [] }, (data) => {
       const byId = new Map((data.matches || []).filter((m) => m && m.id).map((m) => [m.id, m]));
@@ -2415,31 +2287,13 @@
 
   // ---- visual replay settings ------------------------------------------
 
-  /* Retention is the storage control. Recordings are never degraded, so what a
-   * replay costs is fixed by the match; the only lever over total disk use is
-   * how many matches keep one. The MB ceiling below is a runaway guard. */
-  const KEEP_MIN = 1;
-  const KEEP_MAX = 500;
-  // Out-of-range values are clamped rather than rejected: the number input's
-  // own min/max only constrain its spinner, not what can be typed or pasted.
-  const clampKeep = (v) => {
-    const n = Math.round(Number(v));
-    if (!Number.isFinite(n)) return defaultSettings.visualReplayKeepMatches;
-    return Math.min(KEEP_MAX, Math.max(KEEP_MIN, n));
-  };
-
-  const CEILING_MIN_MB = 16;
-  const CEILING_MAX_MB = 4096;
-  // A blank field is the explicit "no limit" affordance and is stored as 0,
-  // which the capture policy reads as uncapped. Anything else is clamped into
-  // range, so the guard can never be set so low that it shapes normal capture.
-  const clampCeiling = (v) => {
-    if (v === "" || v === null || v === undefined) return 0;
-    const mb = Math.round(Number(v));
-    if (!Number.isFinite(mb)) return defaultSettings.visualReplayMaxMatchMb;
-    if (mb <= 0) return 0;
-    return Math.min(CEILING_MAX_MB, Math.max(CEILING_MIN_MB, mb));
-  };
+  /* What each of these fields is allowed to become. Pure given the default it
+   * falls back to, so the bounds and the fallbacks are tested; the shipped
+   * defaults are this file's to supply. */
+  const CLAMP = window.RATrackerSettingsClamps;
+  const { KEEP_MIN, KEEP_MAX, CEILING_MIN_MB, CEILING_MAX_MB } = CLAMP;
+  const clampKeep = (v) => CLAMP.clampKeep(v, defaultSettings.visualReplayKeepMatches);
+  const clampCeiling = (v) => CLAMP.clampCeiling(v, defaultSettings.visualReplayMaxMatchMb);
 
   function refreshVisualSettingsUI() {
     // The spinners' bounds come from the constants above so the two can't drift.

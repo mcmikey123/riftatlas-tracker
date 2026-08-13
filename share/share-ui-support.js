@@ -83,6 +83,61 @@
     503: "unavailable"
   };
 
+  /* The only hosts an http:// endpoint may name. A `wrangler dev` on this
+   * machine is the one endpoint that legitimately cannot offer https.
+   * `new URL()` keeps the brackets on an IPv6 hostname, hence `[::1]`. */
+  const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+  /**
+   * Whether the configured share endpoint may be uploaded to at all.
+   *
+   * An extension page's fetch obeys CORS like any other page, so uploading needs
+   * the endpoint's cooperation. The share Worker grants it: it answers the
+   * preflight and echoes Access-Control-Allow-Origin for chrome-extension://
+   * origins only. That is deliberately server-side rather than a host permission
+   * in the manifest, so the extension ships no wildcard origin access and a
+   * self-hoster can point Settings at their own instance with no manifest edit
+   * and no prompt.
+   *
+   * The endpoint is still validated, because a malformed one should fail with a
+   * clear message rather than an opaque fetch rejection - and because of the
+   * https rule below, which is the actual security content of this function.
+   * The payload is encrypted before it leaves the machine, so plain http would
+   * not expose a replay - but the upload token and the object id are not part
+   * of the payload, and both travel in the clear.
+   *
+   * Returns what to tell the user, or null when there is nothing to say.
+   */
+  function endpointProblem(endpoint) {
+    let url;
+    try {
+      url = new URL(endpoint);
+    } catch (_) {
+      return "The share endpoint in Settings isn't a valid URL.";
+    }
+    if (url.protocol === "https:") return null;
+    if (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname)) return null;
+    return "The share endpoint in Settings must be an https:// URL (http:// only for localhost).";
+  }
+
+  /**
+   * Why a stored replay could not be played, from the payload the read
+   * produced.
+   *
+   * Four distinct failures used to share one message, which is exactly what let
+   * a transport ceiling masquerade as a corrupt recording for as long as it
+   * did. They need different things from the reader: a missing record is gone
+   * for good, a damaged first chunk means the recording itself is hurt, and an
+   * empty one never captured anything to begin with.
+   */
+  function unreadableReason(payload) {
+    if (!payload) return "No recording is stored for this match any more.";
+    if ((payload.meta || {}).truncatedAtChunk === 0) {
+      return "This replay's first chunk is damaged, so none of it can be played.";
+    }
+    return "This replay recorded no events, so there is nothing to play.";
+  }
+
   /** Bytes as B / KB / MB, matching how the capture panel prints sizes. */
   function fmtSize(bytes) {
     const n = Number(bytes);
@@ -484,8 +539,15 @@
     PRUNE_GRACE_MS,
     MIN_REUSE_MS,
     MESSAGES,
+    // Exported so the retry offer can be asserted against the list rather than
+    // against the four call sites that decide it. `describeUploadFailure` can
+    // never return `unverified` - only the verification step raises that - so
+    // nothing else reaches this entry.
+    RETRYABLE,
     RECHECK_MESSAGES,
     RECHECK_LABELS,
+    endpointProblem,
+    unreadableReason,
     fmtSize,
     checkPayloadSize,
     oversizeMessage,

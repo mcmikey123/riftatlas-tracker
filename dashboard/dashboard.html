@@ -396,6 +396,12 @@
      Classic, so node --test can require() them; dialog.js reads them off the
      global. -->
 <script src="dialog-support.js"></script>
+<!-- The export/import file format: the envelope a bundle is written into, the
+     reader an imported file comes back through, and the CSV cell. -->
+<script src="bundle.js"></script>
+<!-- What a replay record says about itself: which of its counters were
+     measured, what its state means in words, whether it can be played. -->
+<script src="replay-panel.js"></script>
 <script src="../vendor/rrweb-replay.min.js"></script>
 <script src="../replay/replay-timeline.js"></script>
 <script src="../replay/replay-core.js"></script>
@@ -415,6 +421,9 @@
 <script src="../share/share-ui-support.js"></script>
 <script src="../share/repaint.js"></script>
 <script src="../share/clipboard.js"></script>
+<!-- What the three typed Settings fields are allowed to become. After
+     share/hosts.js, whose normaliseEndpoint it reads off the global. -->
+<script src="settings-clamps.js"></script>
 <!-- The dashboard's only writer. After share/config.js, whose default endpoint
      is part of the settings shape, and before anything that could write. -->
 <script src="storage.js"></script>
