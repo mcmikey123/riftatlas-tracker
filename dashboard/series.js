@@ -502,9 +502,18 @@
     return renumber(out, seriesId);
   }
 
-  /** Renumber a series' remaining games 1..n in `startedAt` order. */
+  /**
+   * Renumber a series' remaining games 1..n in `startedAt` order.
+   *
+   * Copies first, like every other exported mutator here. It used to rewrite
+   * the caller's own records in place, which read as safe only because its one
+   * internal caller (removeFromSeries) had already copied - while the external
+   * caller in legacy.js hands over the live match array the dashboard is
+   * rendering from. One mutator behaving differently from its five siblings is
+   * the part that would eventually catch someone out.
+   */
   function renumber(matches, seriesId) {
-    const out = matches || [];
+    const out = (matches || []).map((m) => Object.assign({}, m));
     const games = out.filter((m) => m && m.seriesId === seriesId).sort(byStartedAt);
     // Dissolved on the same rule it was formed by: one game is still a series
     // when the lobby said Bo3, and is not otherwise.
