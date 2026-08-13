@@ -81,6 +81,17 @@ test("legacy.js never dereferences a query result it did not check", () => {
   // aborting the IIFE and taking load() and the storage listener with it.
   const legacy = sources.find((f) => f.name === "legacy.js");
   if (!legacy) return; // fully drained; nothing left to check
+
+  /* The scan below looks for `$("#id").prop`, so it only says anything while
+   * legacy.js still reaches for elements that way. A port that changes the
+   * idiom empties the match set and turns the assertion green without checking
+   * a thing, so the presence of the idiom is asserted first. */
+  assert.ok(
+    /\$\("#[^"]+"\)/.test(legacy.text),
+    "legacy.js no longer looks up elements as $(\"#id\") - this guard has stopped " +
+      "matching the code it exists to check, and must be taught the new idiom."
+  );
+
   const bare = legacy.text.match(/\$\("#[^"]+"\)\.(textContent|innerHTML|value|checked|click|hidden|min|max)/g);
   assert.deepEqual(bare || [], [], "unguarded element access in legacy.js: " + (bare || []).join(", "));
 });

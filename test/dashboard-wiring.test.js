@@ -44,6 +44,17 @@ test("every element id legacy.js reaches for is still in the markup", () => {
     wanted.add(m[1]);
   }
 
+  /* Without this the test is vacuous, not passing. It works by matching the
+   * accessor idioms legacy.js happens to use today; the moment a port rewrites
+   * them - which is exactly what draining this file means - `wanted` goes empty
+   * and the assertion below succeeds having checked nothing. Same guard, and
+   * same reason, as test/vendor-contract.test.js. */
+  assert.ok(
+    wanted.size > 0,
+    "no #id lookups found in legacy.js - the accessor idiom this scan knows about " +
+      "has changed, so it is no longer checking anything. Teach it the new one."
+  );
+
   const missing = [...wanted].filter((id) => !idsInHtml.has(id)).sort();
   assert.deepEqual(
     missing,
