@@ -296,18 +296,35 @@
     sel.value = current;
   }
 
+  /* The filter row sits above every view and says so: "Filters apply to every
+   * view". The date range was the one control this side never read, so picking
+   * "Last 7 days" narrowed the Matches table and left every Overview tile and
+   * all three aggregate tables showing all-time numbers - under that note.
+   *
+   * The controls are read here rather than from the module half's `state`,
+   * because state.js is an ES module and this is a classic script: there is no
+   * global to reach it through. RATrackerTable is on the global, and owns the
+   * same range arithmetic the Matches table uses, so both sides answer the
+   * question the same way. */
   function filtered(includeUnknownAnyway) {
     const mc = val("#fMyChampion");
     const mode = val("#fMode");
     const deck = val("#fDeck");
     const inclUnknown = includeUnknownAnyway || isChecked("#fUnknown");
-    return all.filter((m) => {
+    const rows = all.filter((m) => {
       if (mc && champ(m.myChampion || m.myLegend) !== mc) return false;
       if (deck && deckOf(m) !== deck) return false;
       if (mode && m.mode !== mode) return false;
       if (!inclUnknown && (m.result === "unknown" || !m.result)) return false;
       return true;
     });
+    const T = window.RATrackerTable;
+    if (!T) return rows;
+    return T.inRange(
+      rows,
+      { preset: val("#fDates") || "all", from: val("#fFrom"), to: val("#fTo") },
+      "startedAt"
+    );
   }
 
   function render() {
@@ -560,6 +577,15 @@
     const records = visualRecords.slice().sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
     // An archive file holds no visual replays, so the panel would be lying.
     panel.hidden = readOnly() || !records.length;
+
+    /* Say so, rather than rendering nothing at all. The markup for this has
+     * been in the page from the start and nothing ever showed it, so with no
+     * recordings the whole view was blank - no table, no message, nothing to
+     * distinguish "you have none" from "this is broken". The Shared links view
+     * next door has always written its own empty row; this is the same idea. */
+    const empty = $("[data-empty='replays']");
+    if (empty) empty.hidden = readOnly() || records.length > 0;
+
     if (panel.hidden) return;
 
     // Every record gets a row: retention is the store's job, and it never hands
@@ -1572,7 +1598,15 @@
         });
       return;
     }
-    if (["fMyChampion", "fMode", "fDeck", "fUnknown"].includes(t.id)) render();
+    /* The date controls repaint this side too. The module half wires them to
+     * its own emit(), which redraws Matches and Series but never calls back in
+     * here - so before this, changing the range moved those two tables and left
+     * the Overview showing all-time numbers. */
+    if (
+      ["fMyChampion", "fMode", "fDeck", "fUnknown", "fDates", "fFrom", "fTo"].includes(t.id)
+    ) {
+      render();
+    }
   });
 
   /** Name a match's deck by hand, from either deck picker. */
@@ -2488,6 +2522,14 @@
     // A share created in the row above writes this key, so the list picks the
     // new link up without a reload.
     if (changes.shares) refreshShares();
+    /* Settings were read once, at load, and never again - so toggling
+     * "Group best-of-three games into a series" left this side still holding
+     * the old value. Every export, archive and daily backup is decorated from
+     * it (withSeries -> buildBundle), so the file written after that toggle
+     * described the setting the user had just changed away from, and stayed
+     * wrong until the page was reloaded. The module half already re-reads on
+     * this same event; this side simply never did. */
+    if (changes.settings) STORE.getSettings((s) => { seriesSettings = s; });
   });
 
   load();
