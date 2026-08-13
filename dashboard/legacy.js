@@ -7,7 +7,6 @@
   // live games stays ~0.5 KB per match instead of ~21 KB.
   let all = [];
   const logCache = new Map(); // id -> log[]
-  const expanded = new Set();
   // When viewing an archive file we render from memory and never write.
   let archive = null; // { name, matches, deckCards }
 
@@ -266,36 +265,6 @@
 
   // ---- rendering -------------------------------------------------------
 
-  const champ = (name) => (name ? String(name).split(",")[0].trim() : "Unknown");
-
-  function fmtDuration(ms) {
-    if (!Number.isFinite(ms) || ms <= 0) return "–";
-    const total = Math.round(ms / 1000);
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    const pad = (n) => String(n).padStart(2, "0");
-    return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-  }
-
-  const deckOf = (m) => (m.deckName || "").trim() || "Unlabelled";
-
-  // Where a deck name came from, so a detected name can be told apart from one
-  // you typed before you decide whether to trust it.
-  const DECK_SOURCE_LABEL = {
-    picker: "the deck you had open in the picker (its champion matches the board)",
-    "picker-unverified": "the deck you had open in the picker, unchecked against the board",
-    board: "read off the game board",
-    url: "read from the room URL",
-    last: "assumed — the same deck as your previous match",
-    fingerprint: "matched by the cards you played",
-    manual: "typed by you",
-  };
-  const deckTitle = (m) =>
-    (m.deckName || "").trim()
-      ? `${DECK_SOURCE_LABEL[m.deckSource] || "source not recorded"} — pick another to override`
-      : "Pick or add a deck name to override detection";
-
   function buildFilterOptions() {
     fillSelect($("#fMyChampion"), [...new Set(all.map((m) => champ(m.myChampion || m.myLegend)))]);
     fillSelect($("#fMode"), [...new Set(all.map((m) => m.mode).filter(Boolean))]);
@@ -400,7 +369,6 @@
     shareOpenHas: (id) => shareOpen.has(id),
     shareBoxInner: (id) => shareBoxInner(id),
     deckNames,
-    deckTitle,
     // The log is loaded lazily and cached. Returns null when it has not been
     // fetched yet, and starts fetching - the caller re-renders when it lands.
     logFor: (id) => {
@@ -489,18 +457,10 @@
   }
 
 
-  const esc = window.RATrackerFormat.esc;
+  const { esc, champ, fmtDuration, deckOf, DASH, fmtBytes, fmtCount, fmtMs } =
+    window.RATrackerFormat;
 
   // ---- visual replay diagnostics ---------------------------------------
-
-  const DASH = "—"; // stands in wherever a number was never recorded
-
-  function fmtBytes(n) {
-    if (!Number.isFinite(n)) return DASH;
-    if (n < 1024) return Math.round(n) + " B";
-    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
-    return (n / 1048576).toFixed(2) + " MB";
-  }
 
   // In-flight matches, and any recorded before a counter existed, simply have
   // no value here - which must read as "not recorded", never as NaN.
@@ -508,9 +468,6 @@
     const v = record.stats ? record.stats[key] : undefined;
     return typeof v === "number" && Number.isFinite(v) ? v : null;
   }
-
-  const fmtCount = (v) => (v === null || !Number.isFinite(v) ? DASH : String(v));
-  const fmtMs = (v) => (v === null ? DASH : v + " ms");
 
   // Null - not zero - when no record carried the counter at all, so an empty
   // column can't masquerade as a measured zero.
@@ -818,17 +775,6 @@
     // a collapsed panel without reopening it.
     box.hidden = !shareOpen.has(matchId);
     box.innerHTML = shareBoxInner(matchId);
-    // The toggle says what the panel is doing. It used to be enough for the
-    // click handler to keep the two in step, because a share could only ever
-    // start from inside an already-open panel; a share started from the replay
-    // modal opens this one from somewhere the toggle cannot see.
-    for (const toggle of document.querySelectorAll(`[data-share="${CSS.escape(matchId)}"]`)) {
-      // Only the Replays list labels its toggle; the expanded row's button says
-      // "Share a link" and stays put.
-      if (toggle.classList.contains("vd-share")) {
-        toggle.textContent = shareOpen.has(matchId) ? "hide" : "share a link";
-      }
-    }
   }
 
   function setShare(matchId, patch) {
@@ -1166,7 +1112,7 @@
    * every time the panel is painted, so it is on screen for both the reuse and
    * the forced upload. */
   async function startRowShare(matchId, options) {
-    const plan = SHARE.planShare(await readStoredShares(), matchId, Date.now(), options);
+    const plan = SHARE.planShare(await STORE.readShares(), matchId, Date.now(), options);
     if (plan.action === "reuse") {
       // No upload and no record: a second record for the same object would be a
       // duplicate row in the shares panel claiming to be a second share.
@@ -1251,19 +1197,6 @@
     )}</p>`;
   }
 
-  /* A failed read is an empty list: there is nothing to reuse that we can see,
-   * and an upload is the right answer to that. lastError is consumed the way
-   * rememberShare consumes it - left unchecked, chrome logs a warning about an
-   * error this already handles. */
-  function readStoredShares() {
-    return new Promise((resolve) =>
-      chrome.storage.local.get({ shares: [] }, (data) => {
-        void chrome.runtime.lastError;
-        resolve((data && data.shares) || []);
-      })
-    );
-  }
-
   function closeMomentPanel(panel) {
     panel.hidden = true;
     panel.innerHTML = "";
@@ -1315,7 +1248,7 @@
    * the moment the user meant even when an upload happens in between. */
   async function shareMoment({ atMs, button, panel }, match) {
     const atSeconds = window.RAShareHosts.toLinkSeconds(atMs);
-    const record = SHARE.reusableShare(await readStoredShares(), match.id, Date.now());
+    const record = SHARE.reusableShare(await STORE.readShares(), match.id, Date.now());
     if (record) return offerReusedLink(panel, button, record, atSeconds);
     // Nothing live to reuse, so this is a first upload. The disclosure comes
     // first and the upload is a second, deliberate click - the same two steps
@@ -1343,7 +1276,7 @@
        * row's own panel behind the modal. Uploading now would put a second 3.5 MB
        * object on the endpoint and write a second record, both undeletable for
        * seven days, which is exactly what reuse exists to prevent. */
-      const landed = SHARE.reusableShare(await readStoredShares(), matchId, Date.now());
+      const landed = SHARE.reusableShare(await STORE.readShares(), matchId, Date.now());
       // The panel's own buttons go with its content, so a Cancel or a closed
       // modal during the read detaches this one.
       if (!go.isConnected) return;
@@ -1693,9 +1626,9 @@
       render();
       return;
     }
-    /* The expander moved to view-matches.js with the row it opens. This file
-     * kept a private `expanded` Set that nothing renders from any more, so a
-     * branch here would only fire a second render for the same click. */
+    /* The expander moved to view-matches.js with the row it opens, and the open
+     * set with it, so a branch here would only fire a second render for the
+     * same click. */
     const visualBtn = e.target?.closest?.("[data-visual]");
     const visualId = visualBtn && visualBtn.dataset.visual;
     if (visualId) {
@@ -1888,7 +1821,6 @@
          * stops a surviving pair reading G1 and G3, and dissolves a series left
          * with a single game rather than leaving it wearing a G1 badge. */
         if (gone && gone.seriesId) all = SERIES.renumber(all, gone.seriesId);
-        expanded.delete(del);
         logCache.delete(del);
         STORE.removeKeys(["deckcards_" + del, "log_" + del]);
         forgetVisual(del);
@@ -2243,7 +2175,6 @@
           );
           STORE.removeKeys(keys, () => {
             all = stragglers;
-            expanded.clear();
             logCache.clear();
             forgetAllVisual();
             STORE.writeMatches(stragglers, () => {
@@ -2282,7 +2213,6 @@
         const bundle = parseBundle(text);
         setArchive({ name: file.name, matches: bundle.matches, deckCards: bundle.deckCards });
         logCache.clear();
-        expanded.clear();
         setText("#viewArchive", "Exit archive");
         load();
       } catch (err) {
@@ -2314,7 +2244,6 @@
     }).then((ok) => {
       if (!ok) return;
       all = [];
-      expanded.clear();
       logCache.clear();
       forgetAllVisual();
       chrome.storage.local.get(null, (data) => {

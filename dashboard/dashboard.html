@@ -106,7 +106,7 @@
          dashboard re-renders every three seconds while a match is live, and a
          search field inside re-rendered markup would lose its caret and its
          value each time. -->
-    <section class="filter-row" data-filters>
+    <section class="filter-row">
       <span class="nav-label">Filters</span>
       <label class="filter"><span>My champion</span>
         <select id="fMyChampion"><option value="">All</option></select>
@@ -155,7 +155,7 @@
       </div>
 
       <div class="agg-grid">
-        <div class="card card-vs">
+        <div class="card">
           <div class="card-head"><h2>Win rate vs opponent champion</h2></div>
           <table id="vsTable" class="agg">
             <thead><tr><th>Champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th></tr></thead>
@@ -289,7 +289,7 @@
               <input type="number" id="visualKeep" step="1" data-mutates />
               <span class="setting-text">
                 <span class="setting-name">Keep replays for the newest N matches</span>
-                <span class="setting-copy" data-keep-copy>1&ndash;500. When a new match is recorded, the oldest replay
+                <span class="setting-copy">1&ndash;500. When a new match is recorded, the oldest replay
                   beyond this number is deleted.</span>
               </span>
             </label>

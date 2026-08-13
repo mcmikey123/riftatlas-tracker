@@ -13,7 +13,7 @@
 (function (root) {
   "use strict";
 
-  const { esc, fmtClock } = root.RATrackerFormat;
+  const { esc, fmtClock, fmtScore } = root.RATrackerFormat;
   const { MAX_CHIPS, SEEK, timeline, evenly, truncationText, targetOwnsKey } = root.RAReplayTimeline;
 
   /**
@@ -344,9 +344,9 @@
     const title = `${esc(match.myChampion || match.myLegend || "You")} vs ${esc(
       match.opponentChampion || match.opponentLegend || "Opponent"
     )}`;
-    const sub = `${esc(match.opponentName || "")}${d ? " · " + d.toLocaleString() : ""} · ${
-      match.myScore ?? 0
-    }–${match.opponentScore ?? 0} · ${esc(match.result || "unknown")}`;
+    const sub = `${esc(match.opponentName || "")}${d ? " · " + d.toLocaleString() : ""} · ${esc(
+      fmtScore(match)
+    )} · ${esc(match.result || "unknown")}`;
     back.innerHTML = `
       <div class="rp-modal vr-modal" role="dialog" aria-label="Match replay">
         <div class="rp-modal-head">
