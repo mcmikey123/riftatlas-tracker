@@ -20,6 +20,9 @@
     deckTab: "#deck-list-tab",
   };
 
+  // First to 8 points. The same constant decides whether a lingering "in_game"
+  // board is a finished match, which is capture/match-start.js's job, so it is
+  // declared there too; test/content-wiring.test.js pins the pair.
   const WIN_SCORE = 8;
   const DECK_POLL_MS = 2000; // how often to re-read the deck picker
   const DECK_READ_MIN_MS = 250; // floor between reads when mutations drive them
@@ -40,11 +43,6 @@
   // Match-log actor colours (left bar on each log row).
   const ACTOR_SELF = "120,221,183"; // green
   const ACTOR_OPP = "255,187,110"; // amber
-  // Deliberately strict: card/battlefield names appear in the match log, so
-  // loose words ("abandoned", "won", "left") cause false match-ends.
-  const END_TEXT_RE = /\b(victory|defeat|you win|you lose|you won|you lost|wins the game|conceded|concedes)\b/i;
-  const WIN_TEXT_RE = /\b(victory|you win|you won)\b/i;
-  const LOSS_TEXT_RE = /\b(defeat|you lose|you lost)\b/i;
 
   let currentMatch = null; // in-progress match record
   let lastSavedId = null; // id of last saved record (toast overrides edit it)
@@ -238,23 +236,14 @@
   //       <p><span><span>16:11</span><span>Conquered <b>X</b> and scored 1.</span></span>…</p></li>
   //
   // Chat rows are the same shape but render their own header and repeat the
-  // time after the message, so the raw text carries the same timestamp up to
-  // three times ("16:34You at 16:34: nice?16:34"). The row's time is stored
-  // once in `t` and drawn by the dashboard, so every standalone repeat of it
-  // is noise. Only repeats of THIS row's own time are touched - a time that
-  // genuinely differs is part of what was said and stays put.
-  function stripRepeatedTime(text, t) {
-    return text
-      .replace(new RegExp("^" + t + "\\s*"), "")
-      .replace(new RegExp("\\s*" + t + "$"), "")
-      .replace(new RegExp("\\s+at\\s+" + t + "\\s*:"), ":")
-      .trim();
-  }
-
+  // time after the message; capture/match-log.js takes those repeats back out.
   function parseLogLi(li) {
     const p = li.querySelector("p");
     if (!p) return null;
     const spans = [...p.querySelectorAll("span")];
+    // This shape check is load-bearing beyond finding the time: `t` reaches
+    // match-log.js's RegExps unescaped, and digits-and-a-colon is what keeps
+    // that safe.
     const timeIdx = spans.findIndex((s) =>
       /^\d{1,2}:\d{2}$/.test((s.textContent || "").trim())
     );
@@ -262,7 +251,10 @@
     const t = spans[timeIdx].textContent.trim();
     // Use the wrapper span so nested <b>/<span> formatting is included.
     const holder = spans[timeIdx].parentElement || p;
-    const text = stripRepeatedTime((holder.textContent || "").trim(), t);
+    const text = globalThis.RATMatchLog.stripRepeatedTime(
+      (holder.textContent || "").trim(),
+      t
+    );
     if (!text) return null;
     const bar = li.querySelector('span[aria-hidden="true"]');
     const cls = (bar && bar.className) || "";
@@ -273,8 +265,6 @@
       : "system";
     return { t, actor, text };
   }
-
-  const logSig = (e) => e.t + "|" + e.actor + "|" + e.text;
 
   function captureLog() {
     const m = currentMatch;
@@ -294,25 +284,9 @@
     }
     if (!entries.length) return;
     entries.reverse();
-
-    m.log = m.log || [];
     // Count-based merge: append only the occurrences we haven't stored yet.
     // Survives React re-rendering the whole list (node identity is useless).
-    const stored = new Map();
-    for (const e of m.log) {
-      const s = logSig(e);
-      stored.set(s, (stored.get(s) || 0) + 1);
-    }
-    const seen = new Map();
-    for (const e of entries) {
-      const s = logSig(e);
-      const n = (seen.get(s) || 0) + 1;
-      seen.set(s, n);
-      if (n > (stored.get(s) || 0)) {
-        m.log.push(e);
-        if (m.log.length > MAX_LOG) m.log.shift();
-      }
-    }
+    m.log = globalThis.RATMatchLog.mergeLog(m.log, entries, MAX_LOG);
   }
 
   // ---------- deck name ----------
@@ -640,40 +614,29 @@
     const code =
       document.querySelector(SEL.roomCode)?.dataset.roomCode || null;
     // ONE ENTRY PER GAME: after a match ends, the site keeps the board in
-    // "in_game" under the end overlay. Never start a new record in the same
-    // room unless the turn counter has reset (a genuine rematch).
-    if (lastEnded && lastEnded.roomCode && lastEnded.roomCode === code) {
-      const prev = lastEnded.record;
-      const turnNow = parseInt(root?.dataset.turnNumber ?? "", 10) || 0;
-      const isNewGame = turnNow <= 1 || turnNow < (prev.turns || 1);
-      if (!isNewGame) {
-        const decidedByScore =
-          prev.myScore >= WIN_SCORE || prev.opponentScore >= WIN_SCORE;
-        if (
-          decidedByScore ||
-          prev.resultSource === "manual" ||
-          prev.endReason === "score" || // a score-decided end is never false
-          (prev.endCount || 0) >= 3 // hard latch: end/resume loops impossible
-        ) {
-          return; // game is over, board is lingering - suppress duplicates
-        }
-        // Otherwise it was a false end while the game continues: reopen it.
-        prev.endedAt = null;
-        prev.result = null;
-        prev.resultSource = null;
-        prev.endReason = null;
-        currentMatch = prev;
-        lastEnded = null;
-        removeToast();
-        saveMatch(prev);
-        console.info("[RA-Tracker] false end detected - resumed match", code);
-        return;
-      }
-      lastEnded = null; // turn counter reset: genuine rematch, record it
+    // "in_game" under the end overlay. Whether that board is a finished game
+    // lingering, a false end to reopen, or a genuine rematch is decided in
+    // capture/match-start.js; the mutations each verdict implies are here.
+    const latched = lastEnded && lastEnded.record;
+    const { verdict, clearLatch } = globalThis.RATMatchStart.decideStart(lastEnded, {
+      roomCode: code,
+      turnNow: parseInt(root?.dataset.turnNumber ?? "", 10) || 0,
+      myScore: readMyScore(),
+    });
+    if (clearLatch) lastEnded = null;
+    if (verdict === "suppress") return;
+    if (verdict === "reopen") {
+      latched.endedAt = null;
+      latched.result = null;
+      latched.resultSource = null;
+      latched.endReason = null;
+      currentMatch = latched;
+      lastEnded = null;
+      removeToast();
+      saveMatch(latched);
+      console.info("[RA-Tracker] false end detected - resumed match", code);
+      return;
     }
-    // Extra belt-and-braces: a fresh game never begins at match point.
-    const my0 = readMyScore();
-    if (my0 !== null && my0 >= WIN_SCORE) return;
     const names = readPlayerNames();
     currentMatch = {
       id: uid(),
@@ -1041,33 +1004,15 @@
 
   // ---------- end detection from added text (victory screens, log lines) ----------
 
-  const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
   function scanAddedText(node) {
     if (!currentMatch || !node || !node.textContent) return;
-    // Never react to our own toast.
+    // Never react to our own toast: it prints the detected result in words, so
+    // reading it back would end the match the toast is asking about.
     const host = node.nodeType === 3 ? node.parentElement : node;
     if (host && host.closest && host.closest("#ra-tracker-toast")) return;
-    const text = node.textContent;
-    const m = currentMatch;
-    // "<PLAYER> LEFT" end-modal (appears with a "LEAVE GAME" button).
-    const oppLeft =
-      m.opponentName &&
-      new RegExp("\\b" + escRe(m.opponentName) + "\\s+left\\b", "i").test(text);
-    const iLeft =
-      m.myName &&
-      new RegExp("\\b" + escRe(m.myName) + "\\s+left\\b", "i").test(text);
-    const leaveModal = /\bleave game\b/i.test(text);
-    if (!END_TEXT_RE.test(text) && !oppLeft && !iLeft && !leaveModal) return;
-    let result = "unknown";
-    if (WIN_TEXT_RE.test(text) || oppLeft) result = "win";
-    else if (LOSS_TEXT_RE.test(text) || iLeft) result = "loss";
-    else {
-      // No direction in the text: use the score leader as the guess.
-      const my = m.myScore, opp = m.opponentScore;
-      result = my === opp ? "unknown" : my > opp ? "win" : "loss";
-    }
-    endMatch(result, "text:" + (text.trim().slice(0, 60)));
+    // The record carries exactly the four facts the decision needs.
+    const end = globalThis.RATMatchEnd.decideResult(node.textContent, currentMatch);
+    if (end) endMatch(end.result, end.reason);
   }
 
   // ---------- main loop ----------

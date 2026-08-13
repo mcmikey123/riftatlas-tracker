@@ -13,6 +13,9 @@
         "vendor/rrweb-record.min.js",
         "capture/capture-policy.js",
         "capture/dom-recorder.js",
+        "capture/match-end.js",
+        "capture/match-log.js",
+        "capture/match-start.js",
         "content.js"
       ],
       "css": ["content.css"],
