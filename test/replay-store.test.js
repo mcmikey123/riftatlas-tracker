@@ -40,6 +40,9 @@ function fakeIdb() {
         if (chunk.matchId === matchId) stores.chunks.delete(key);
       }
     },
+    async clearAll() {
+      for (const name of Object.keys(stores)) stores[name].clear();
+    },
   };
 }
 
@@ -427,6 +430,122 @@ test("gc leaves assets a mid-flight append has written but not yet referenced", 
 
   assert.deepEqual([...idb.stores.assets.keys()], ["h" + BIG_CSS.length]);
   assert.deepEqual((await store.get("live")).events, [fullSnapshot(BIG_CSS)]);
+});
+
+/* Parks compress so a test can land another operation inside an append, in the
+ * window between its asset write and its chunk write. `arm()` holds the next
+ * append there and returns the release; appends before it run straight through. */
+function pausableCompress() {
+  let gate = null;
+  return {
+    compress: async (bytes) => (gate ? gate.then(() => bytes) : bytes),
+    arm() {
+      let release;
+      gate = new Promise((r) => { release = r; });
+      return () => { gate = null; release(); };
+    },
+  };
+}
+
+// A tick, so an armed append reaches its parked compress before the test moves.
+const parked = () => new Promise((r) => setTimeout(r, 0));
+
+/* Deleting a replay mid-recording is a normal thing to do from the dashboard.
+ * Unserialized it leaves the chunk the append was writing behind with no
+ * `replays` row to reach it from - gc walks records - and the append's patch
+ * puts that row back with its chunks already gone, which the dashboard reads as
+ * a playable replay that opens to nothing. */
+test("a delete landing mid-append leaves neither its chunks nor a phantom record", async () => {
+  const idb = fakeIdb();
+  const paused = pausableCompress();
+  const store = makeStore(idb, { compress: paused.compress });
+
+  await store.start("m1", meta());
+  await store.append("m1", events(2, 1), 1000);
+
+  const release = paused.arm();
+  const inflight = store.append("m1", [fullSnapshot(BIG_CSS), ...events(3, 100)], 1000);
+  await parked();
+  assert.equal(idb.stores.assets.size, 1, "the parked append has written its asset");
+
+  const removed = store.remove("m1");
+  release();
+  await inflight;
+  await removed;
+
+  assert.deepEqual([...idb.stores.chunks.keys()], []);
+  assert.equal(idb.stores.replays.get("m1"), undefined);
+  assert.deepEqual([...idb.stores.assets.keys()], []);
+});
+
+// The session answers from memory without consulting the record, so a delete
+// that left it in place would have the recorder writing chunks for a match that
+// no longer exists - rows no cleanup path can ever see again.
+test("a delete drops the session, so a later append cannot resurrect its chunks", async () => {
+  const idb = fakeIdb();
+  const store = makeStore(idb);
+
+  await store.start("m1", meta());
+  await store.append("m1", [fullSnapshot(BIG_CSS), ...events(2, 1)], 1000);
+  await store.remove("m1");
+
+  await assert.rejects(store.append("m1", events(3, 100), 1000), /append before start/);
+  assert.equal(idb.stores.chunks.size, 0);
+  assert.equal(idb.stores.replays.size, 0);
+  assert.equal(idb.stores.assets.size, 0);
+});
+
+test("gc evicts a match whose append is still in flight, chunks included", async () => {
+  const idb = fakeIdb();
+  const OLD_CSS = BIG_CSS + "/*old*/";
+  const paused = pausableCompress();
+  const store = makeStore(idb, { compress: paused.compress });
+
+  await store.start("old", meta(100));
+  await store.append("old", [fullSnapshot(OLD_CSS)], 1000);
+  await store.start("new", meta(400));
+  await store.append("new", [fullSnapshot(BIG_CSS)], 1000);
+
+  const release = paused.arm();
+  const inflight = store.append("old", events(3, 1), 1000);
+  await parked();
+
+  const collected = store.gc(1);
+  release();
+  await inflight;
+
+  assert.equal(await collected, 1);
+  assert.deepEqual([...idb.stores.replays.keys()], ["new"]);
+  assert.deepEqual(chunksOf(idb, "old"), []);
+  assert.deepEqual([...idb.stores.assets.keys()], ["h" + BIG_CSS.length]);
+  assert.deepEqual((await store.get("new")).events, [fullSnapshot(BIG_CSS)]);
+});
+
+test("clearAll empties every store and leaves no session writing into it", async () => {
+  const idb = fakeIdb();
+  const paused = pausableCompress();
+  const store = makeStore(idb, { compress: paused.compress });
+
+  await store.start("done", meta(100));
+  await store.append("done", [fullSnapshot(BIG_CSS)], 1000);
+  await store.stop("done", { reason: "end" });
+
+  await store.start("live", meta(400));
+  const release = paused.arm();
+  const inflight = store.append("live", events(2, 1), 1000);
+  await parked();
+
+  const cleared = store.clearAll();
+  release();
+  await inflight;
+  await cleared;
+
+  assert.equal(idb.stores.replays.size, 0);
+  assert.equal(idb.stores.chunks.size, 0);
+  assert.equal(idb.stores.assets.size, 0);
+  // The live recording is gone with the database, not still holding a session.
+  await assert.rejects(store.append("live", events(1, 100), 1000), /append before start/);
+  assert.equal(idb.stores.chunks.size, 0);
 });
 
 /* The dashboard reads replays itself now, against the same IndexedDB the worker

@@ -192,9 +192,44 @@
       }));
     }
 
+    /* Deleting has to run in the queue like everything else, and it has to drop
+     * the session as well as the rows.
+     *
+     * Outside the queue it lands between a mid-flight append's chunk write and
+     * its patch, and the patch re-creates a `replays` row whose chunks are gone
+     * - a record the dashboard still offers to open. Leaving the session behind
+     * is worse: `session()` answers from memory without consulting the record,
+     * so the recorder's next batch writes `chunks` rows for a match with no
+     * `replays` row, and `gc` walks records, so nothing can ever reach them
+     * again. Dropping the session takes its buffered events and its cssRefs with
+     * it, which is what lets the reap below free stylesheets only this match
+     * held. */
+    async function removeNow(matchId) {
+      sessions.delete(matchId);
+      // Drops replays + chunks only: assets are shared by content hash, so they
+      // are reaped against what is left rather than per match.
+      await idb.clearMatch(matchId);
+    }
+
     const append = (matchId, events, rawBytes) =>
       enqueue(matchId, () => appendNow(matchId, events, rawBytes));
     const stop = (matchId, options) => enqueue(matchId, () => stopNow(matchId, options));
+
+    async function remove(matchId) {
+      await enqueue(matchId, () => removeNow(matchId));
+      await reapAssets();
+    }
+
+    /* The whole database, for the dashboard's clear-all. The sessions go first
+     * so no recorder in flight re-opens a chunk for a match that is about to
+     * stop existing, then the queues drain so their writes land before the clear
+     * rather than after it. An append that arrives later finds no record and
+     * fails where it belongs, in the recorder's reply. */
+    async function clearAll() {
+      sessions.clear();
+      await Promise.all([...tails.values()]);
+      await idb.clearAll();
+    }
 
     async function get(matchId) {
       const record = await idb.get("replays", matchId);
@@ -242,11 +277,10 @@
         .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))
         .slice(keep);
 
+      // Through the queue, so an eviction cannot interleave with a write for the
+      // same match; assets are reaped once below rather than per record.
       for (const record of doomed) {
-        sessions.delete(record.matchId);
-        // Drops replays + chunks only: assets are shared by content hash, so
-        // they are reaped below against what is left rather than per match.
-        await idb.clearMatch(record.matchId);
+        await enqueue(record.matchId, () => removeNow(record.matchId));
       }
       await reapAssets();
       return doomed.length;
@@ -268,7 +302,7 @@
       }
     }
 
-    return { start, append, stop, get, list, gc };
+    return { start, append, stop, remove, clearAll, get, list, gc };
   }
 
   root.RATrackerReplayStore = { createReplayStore, BATCH_MAX_RAW, BATCH_MAX_MS };
