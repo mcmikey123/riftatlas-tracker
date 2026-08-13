@@ -48,7 +48,7 @@ const DECK_SOURCE = {
   fingerprint: { dot: "accent", words: "Matched by the cards you actually played during the match." },
   manual: { dot: "draw", words: "You typed this name, so nothing will overwrite it." },
 };
-const deckSourceOf = (m) => DECK_SOURCE[m.deckSource] || { dot: "unknown", words: "Where this name came from was not recorded." };
+export const deckSourceOf = (m) => DECK_SOURCE[m.deckSource] || { dot: "unknown", words: "Where this name came from was not recorded." };
 
 // ---- the rows a render works from --------------------------------------
 
@@ -81,7 +81,7 @@ export function visibleMatches(all) {
   return T.sortBy(rows, sortKeyFor(t.sortKey), t.sortDir);
 }
 
-function sortKeyFor(key) {
+export function sortKeyFor(key) {
   switch (key) {
     case "matchup": return (m) => champ(m.myChampion || m.myLegend);
     case "mode": return (m) => m.mode;
@@ -95,7 +95,7 @@ function sortKeyFor(key) {
   }
 }
 
-const COLUMNS = [
+export const COLUMNS = [
   { key: "", label: "", sortable: false },
   { key: "", label: "", sortable: false },
   { key: "date", label: "Date" },
