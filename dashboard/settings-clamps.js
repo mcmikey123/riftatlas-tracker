@@ -28,13 +28,15 @@
    * Out-of-range values are clamped rather than rejected: the number input's
    * own min/max only constrain its spinner, not what can be typed or pasted.
    *
-   * KNOWN, and asserted as it stands in test/settings-clamps.test.js: a blank
-   * field does NOT reach the fallback. Number("") is 0, which is finite, so it
-   * is clamped up to KEEP_MIN - clearing the box sets retention to 1 and the
-   * next gc deletes everything else. Left as it behaves rather than changed
-   * under a refactor of the file this moved out of.
+   * Blank means "put it back to the default", the same affordance cleanEndpoint
+   * offers below. It has to be tested for before Number() sees it: Number("")
+   * is 0, not NaN, so a blank field used to sail past the fallback as a finite
+   * zero and clamp UP to KEEP_MIN. Clearing the box set retention to "keep the
+   * newest 1" and the next gc deleted every other recording - no confirmation,
+   * no warning, and the field simply showed 1 afterwards.
    */
   const clampKeep = (v, fallback) => {
+    if (v === null || v === undefined || String(v).trim() === "") return fallback;
     const n = Math.round(Number(v));
     if (!Number.isFinite(n)) return fallback;
     return Math.min(KEEP_MAX, Math.max(KEEP_MIN, n));

@@ -48,22 +48,24 @@ test("an unnumeric retention count falls back to the default", () => {
   }
 });
 
-/* PINNED, NOT ENDORSED - clearing the retention field stores 1, not the default.
+/* Clearing the retention field used to store 1 and delete almost everything.
  *
- * Number("") is 0, not NaN, so a blank field never reaches the fallback: it is
- * a finite 0 and gets clamped up to KEEP_MIN. Clearing the box and tabbing out
- * therefore sets retention to "keep the newest 1", and the service worker's
- * next gc deletes the other 24 recordings. Nothing asks first and nothing says
- * so afterwards; the field just shows 1.
+ * Number("") is 0, not NaN, so a blank field never reached the fallback: it
+ * arrived as a finite 0 and was clamped UP to KEEP_MIN. Clearing the box and
+ * tabbing out set retention to "keep the newest 1", and the service worker's
+ * next gc deleted the other 24 recordings - nothing asked first, nothing said
+ * so afterwards, and the field simply showed 1.
  *
- * clampCeiling next door treats a blank as its own meaning ("no limit") before
- * touching Number, which is why it does not have this. There is no equivalent
- * meaning for a blank retention count - so this is asserted as it stands and
- * reported rather than changed under a refactor. null and [] are the same
- * coercion arriving from storage rather than from the field. */
-test("a blank retention field clamps to the minimum rather than the default", () => {
-  for (const blank of ["", "   ", null, []]) {
-    assert.equal(keep(blank), C.KEEP_MIN, JSON.stringify(blank));
+ * The fallback parameter existing at all is what says this was never intended:
+ * it was written for exactly this input and could not be reached. cleanEndpoint
+ * treats a blank the same way, as "put it back to the default".
+ *
+ * "   " and [] are here because Number() coerces both to 0 as well - the second
+ * is what a corrupted settings object looks like arriving from storage rather
+ * than from the field. */
+test("a blank retention field falls back to the default rather than keeping one match", () => {
+  for (const blank of ["", "   ", null, undefined, []]) {
+    assert.equal(keep(blank), KEEP_DEFAULT, JSON.stringify(blank));
   }
 });
 
