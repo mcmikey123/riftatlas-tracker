@@ -27,16 +27,13 @@
   const DECK_POLL_MS = 2000; // how often to re-read the deck picker
   const DECK_READ_MIN_MS = 250; // floor between reads when mutations drive them
   const DECK_STAMP_MS = 30000; // how often to refresh the stored "last seen"
-  // How long a deck seen in the picker stays usable. Long enough to cover a
-  // session (pick a deck, play several games), short enough that the deck you
-  // browsed last week never labels today's match.
-  const DECK_MEMORY_MS = 2 * 60 * 60 * 1000;
   const MAX_DECK_NAME = 60; // longer than this and it isn't a deck name
   // The lobby format runs on the deck picker's clock: it is chosen on the same
   // screen, in the same breath, and cannot change faster than a click either.
+  // Its memory window is the deck's, read from capture/deck-name.js at the one
+  // place it is used, so the two cannot drift apart.
   const FORMAT_READ_MIN_MS = DECK_READ_MIN_MS;
   const FORMAT_STAMP_MS = DECK_STAMP_MS;
-  const FORMAT_MEMORY_MS = DECK_MEMORY_MS;
   const MAX_LOG = 500; // cap stored log lines per match
   const CARDS_SAVE_MS = 5000; // how often to flush the card-code accumulator
   const MAX_PENDING_MUTATIONS = 2000; // ceiling on the coalesced observer queue
@@ -334,9 +331,6 @@
   let deckReadAt = 0;
   let deckSavedAt = 0;
 
-  const deckIsUsable = () =>
-    !!activeDeck && Date.now() - (activeDeck.at || 0) < DECK_MEMORY_MS;
-
   /** Poll the picker. Cheap enough to run on a timer whatever page we're on. */
   function watchDeckPicker() {
     // Mutation-driven calls can arrive every frame on this site; the picker
@@ -384,58 +378,40 @@
     } catch (_) {}
   }
 
-  // "Diana, Scorn of the Moon" -> "diana". The picker names the champion the
-  // deck is built around; the board exposes legend and champion CARDS, whose
-  // titles differ ("Diana, Scorn of the Moon" vs "Diana, Aspect of the Moon").
-  // Comparing the character alone is what makes the check work across both.
-  const championKey = (s) =>
-    String(s || "").split(",")[0].toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  /* Everything capture/deck-name.js needs to name the deck, gathered in one
+   * read. The sweep and the URL are cheap enough to take every time rather
+   * than only on the paths that end up using them, and taking them together
+   * means the decision sees one consistent picture of the page. */
+  const deckSources = () => ({
+    activeDeck,
+    candidates: deckCandidates().concat(pendingDeckCands),
+    urlName: detectDeckName(),
+  });
 
-  /**
-   * Does the picked deck agree with the cards on the board?
-   * true = agrees, false = contradicted, null = not enough to tell.
-   */
-  function deckMatchesBoard(deck, m) {
-    const want = championKey(deck && deck.champion);
-    if (!want) return null;
-    const mine = [championKey(m.myLegend), championKey(m.myChampion)].filter(Boolean);
-    if (!mine.length) return null;
-    return mine.includes(want);
-  }
+  /* The two notices a deck verdict can carry. capture/deck-name.js does not
+   * log, and these are the only trace left when a match ends up under the
+   * wrong deck - or under none - so they are printed where the verdict is
+   * used. The ambiguity warning fires once a session: the sweep that raises it
+   * runs at the start and end of every match, and the page it is complaining
+   * about does not change in between. */
+  let severalDecksWarned = false;
 
-  /**
-   * Decide which deck a match was played with, best source first, and say
-   * where the answer came from so the dashboard can be honest about it.
-   *
-   * The champion check is a guard, not a proof: it rules the picked deck OUT
-   * when the board shows a different champion, but it cannot tell two decks on
-   * the SAME champion apart ("Diana Aggro" vs "Diana Control"). The picker is
-   * still the best evidence there is - it names the deck the player last had
-   * open - which is why an override always stays one keystroke away.
-   */
-  function pickDeckName(m) {
-    const usable = deckIsUsable();
-    const agrees = usable ? deckMatchesBoard(activeDeck, m) : null;
-    if (usable && agrees === true) {
-      return { name: activeDeck.name, source: "picker" };
+  function noteDeckVerdict(pick, m, sources) {
+    if (pick.ambiguous && !severalDecksWarned) {
+      severalDecksWarned = true;
+      console.info(
+        "[RA-Tracker] several decks on screen, can't tell which is active:",
+        sources.candidates
+      );
     }
-    const fromBoard = resolveDeckName(m.myLegend, pendingDeckCands);
-    if (fromBoard) return { name: fromBoard, source: "board" };
-    if (usable && agrees === null) {
-      // Couldn't check either way (no champion text, or the board hasn't
-      // revealed our cards yet) - the picker is still the best thing we have.
-      return { name: activeDeck.name, source: "picker-unverified" };
-    }
-    if (usable && agrees === false) {
+    if (pick.pickerContradicted) {
       console.info(
         "[RA-Tracker] ignoring picked deck “%s” (%s): board shows %s",
-        activeDeck.name,
-        activeDeck.champion,
+        sources.activeDeck.name,
+        sources.activeDeck.champion,
         m.myLegend || m.myChampion || "nothing yet"
       );
     }
-    const fromUrl = detectDeckName();
-    return fromUrl ? { name: fromUrl, source: "url" } : null;
   }
 
   /** New matches fall back to this when nothing can be detected. */
@@ -481,23 +457,6 @@
       out.push({ name, legend });
     }
     return out;
-  }
-
-  /** Pick the deck whose legend matches ours; only guess when unambiguous. */
-  function resolveDeckName(myLegend, extra) {
-    const cands = deckCandidates().concat(extra || []);
-    if (!cands.length) return null;
-    if (myLegend) {
-      const hit = cands.find((c) => c.legend === myLegend);
-      if (hit) return hit.name;
-    }
-    const names = [...new Set(cands.map((c) => c.name))];
-    if (names.length === 1) return names[0];
-    if (!resolveDeckName._warned) {
-      resolveDeckName._warned = true;
-      console.info("[RA-Tracker] several decks on screen, can't tell which is active:", cands);
-    }
-    return null;
   }
 
   function detectDeckName() {
@@ -568,7 +527,8 @@
   let formatSavedAt = 0;
 
   const formatIsUsable = () =>
-    !!activeFormat && Date.now() - (activeFormat.at || 0) < FORMAT_MEMORY_MS;
+    !!activeFormat &&
+    Date.now() - (activeFormat.at || 0) < globalThis.RATDeckName.DECK_MEMORY_MS;
 
   /** Poll the lobby. Cheap enough to run on a timer whatever page we're on. */
   function watchMatchFormat() {
@@ -670,8 +630,10 @@
 
     // Deck: the name from the picker (checked against the legend on the
     // board), else the in-game DOM, else the URL, else the deck you used last.
-    const found = pickDeckName(currentMatch);
-    if (found) {
+    const sources = deckSources();
+    const found = globalThis.RATDeckName.pickDeckName(currentMatch, sources, Date.now());
+    noteDeckVerdict(found, currentMatch, sources);
+    if (found.source) {
       currentMatch.deckName = found.name;
       currentMatch.deckSource = found.source;
       console.info("[RA-Tracker] deck detected:", found.name, "(" + found.source + ")");
@@ -790,30 +752,23 @@
     m.resultSource = result && result !== "unknown" ? "auto" : null;
     m.endReason = reason;
     m.endCount = (m.endCount || 0) + 1;
-    // Deck, one last time. A game can begin before we ever saw the picker (a
-    // room link opened straight into a match, or a tab loaded mid-game), and
-    // by now the board has long since revealed our legend - so a name we
-    // couldn't check at the start can be improved or contradicted here. Names
-    // we already trust, and anything hand-typed, are left alone.
-    if (m.deckSource !== "manual" && m.deckSource !== "picker" && m.deckSource !== "board") {
-      const late = pickDeckName(m);
-      if (late && (late.name !== m.deckName || late.source !== m.deckSource)) {
-        m.deckName = late.name;
-        m.deckSource = late.source;
-        rememberLastDeck(late.name);
-        console.info("[RA-Tracker] deck resolved at match end:", late.name, "(" + late.source + ")");
-      } else if (
-        m.deckSource === "picker-unverified" &&
-        deckMatchesBoard(activeDeck, m) === false
-      ) {
-        // Only an explicit contradiction clears a name - never the mere
-        // absence of evidence, which would throw away the reading taken at
-        // the start of the game. A guess we now know is wrong is worse than
-        // no label at all: it silently skews that deck's stats.
-        m.deckName = "";
-        m.deckSource = null;
-        console.info("[RA-Tracker] dropped unverified deck name - the board disagrees");
-      }
+    // Deck, one last time: by now the board has long since revealed our
+    // legend, so a name we couldn't check at the start can be improved - or,
+    // if it is contradicted outright, dropped. capture/deck-name.js decides
+    // which; see the rule spelled out on `reviseDeckAtEnd` for why silence
+    // never counts as a contradiction.
+    const deckAtEnd = deckSources();
+    const late = globalThis.RATDeckName.reviseDeckAtEnd(m, deckAtEnd, Date.now());
+    noteDeckVerdict(late, m, deckAtEnd);
+    if (late.verdict !== "keep") {
+      m.deckName = late.name;
+      m.deckSource = late.source;
+    }
+    if (late.verdict === "revise") {
+      rememberLastDeck(late.name);
+      console.info("[RA-Tracker] deck resolved at match end:", late.name, "(" + late.source + ")");
+    } else if (late.verdict === "clear") {
+      console.info("[RA-Tracker] dropped unverified deck name - the board disagrees");
     }
     lastEnded = { roomCode: m.roomCode, at: Date.now(), record: m };
     saveMatch(m);
