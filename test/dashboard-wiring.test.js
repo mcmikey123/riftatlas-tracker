@@ -127,3 +127,45 @@ test("the filter row is static markup, not something a render rebuilds", () => {
     );
   }
 });
+
+test("the dashboard loads the replay store, and loads css-assets.js before it", () => {
+  /* Reading a replay happens in the page, not the service worker: get() hands
+   * back every stylesheet rehydrated into every keyframe, which took a real
+   * 3.72 MB recording past the 64 MiB ceiling on a sendMessage payload and made
+   * the match unopenable. The snapshot cadence has since cut keyframe counts by
+   * roughly an order of magnitude; the ceiling has not moved and match length is
+   * unbounded, so the read stays out of the message channel.
+   *
+   * The order is load-bearing, and gets no second chance: replay-store.js
+   * destructures rehydrateCssAssets off the global as it evaluates, so loading
+   * it before css-assets.js binds undefined for the life of the page. */
+  const order = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+  const at = (file) => order.findIndex((src) => src.endsWith(file));
+
+  /* css-assets.js is in this loop as well as the ordering assertion below:
+   * `at()` answers -1 for a file that is absent entirely, and -1 sorts before
+   * every real index, so an ordering check alone would pass most loudly at the
+   * moment the file was deleted. */
+  for (const file of ["idb.js", "replay-store.js", "css-assets.js"]) {
+    assert.ok(at(file) !== -1, `dashboard.html must load store/${file} to read replays in the page`);
+  }
+  assert.ok(
+    at("css-assets.js") < at("replay-store.js"),
+    "css-assets.js must load before replay-store.js, which reads rehydrateCssAssets off the global at load time"
+  );
+  assert.ok(
+    at("replay-store.js") < at("legacy.js"),
+    "replay-store.js must load before legacy.js, which builds its reader as it evaluates"
+  );
+});
+
+test("the dashboard reads replays directly, not over sendMessage", () => {
+  // The whole point of the page-side reader: a payload this large cannot cross
+  // chrome.runtime.sendMessage, so a reintroduced ra:visual:get here would fail
+  // on exactly the largest replays and nowhere else.
+  const legacy = stripComments(read("legacy.js"));
+  assert.ok(
+    !/ra:visual:get/.test(legacy),
+    "legacy.js must not fetch replays over sendMessage - payloads exceed the 64 MiB message ceiling"
+  );
+});

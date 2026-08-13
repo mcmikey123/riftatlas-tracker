@@ -428,3 +428,31 @@ test("gc leaves assets a mid-flight append has written but not yet referenced", 
   assert.deepEqual([...idb.stores.assets.keys()], ["h" + BIG_CSS.length]);
   assert.deepEqual((await store.get("live")).events, [fullSnapshot(BIG_CSS)]);
 });
+
+/* The dashboard reads replays itself now, against the same IndexedDB the worker
+ * writes to, because a whole replay does not reliably fit through
+ * chrome.runtime.sendMessage. It builds its store with `idb` and `decompress`
+ * only - see the reader in dashboard/legacy.js - and deliberately withholds the
+ * write-side dependencies so a mistaken start/append/stop throws there rather
+ * than writing behind the back of the worker that believes it owns the
+ * recording.
+ *
+ * That makes "get() needs neither compress nor hash" a contract between two
+ * files, and nothing else pins it. Give get() a reason to hash an asset or
+ * compress anything and every test here still passes while the dashboard breaks
+ * at runtime - which is the exact failure that moving the read fixed. */
+test("get() reads with no compress and no hash, which is all the dashboard injects", async () => {
+  const idb = fakeIdb();
+  const writer = makeStore(idb);
+  await writer.start("m1", meta());
+  await writer.append("m1", [{ type: 2, data: { node: { attributes: {} } } }], 10);
+  await writer.stop("m1", { reason: "end" });
+
+  // Exactly what dashboard/legacy.js constructs: no compress, no hash.
+  const reader = createReplayStore({ idb, decompress: identity });
+  const replay = await reader.get("m1");
+
+  assert.ok(replay, "a stored replay must be readable without the write-side deps");
+  assert.equal(replay.events.length, 1);
+  assert.equal(replay.meta.matchId, "m1");
+});

@@ -869,12 +869,44 @@
     return "The share endpoint in Settings must be an https:// URL (http:// only for localhost).";
   }
 
-  function readReplay(matchId) {
-    return new Promise((resolve) =>
-      chrome.runtime.sendMessage({ type: "ra:visual:get", matchId }, (reply) =>
-        resolve(chrome.runtime.lastError ? null : reply)
-      )
-    );
+  /* Reading a replay does not go through the service worker.
+   *
+   * get() rehydrates every stored stylesheet back into every keyframe, so a
+   * 3.72 MB record became a >64 MiB reply - past the hard ceiling on a
+   * chrome.runtime.sendMessage payload - and the match would not open at all.
+   * The snapshot cadence has since cut keyframe counts by roughly an order of
+   * magnitude, which lowers the multiplier without moving the ceiling: match
+   * length is unbounded and nothing warns before it is crossed again.
+   * The dashboard is the same origin as the worker, so it opens the same
+   * IndexedDB directly and nothing large has to cross a message boundary at
+   * all. Writes stay with the worker: the recorder lives in a content script
+   * and the worker is the only thing it can talk to.
+   *
+   * Only `decompress` is supplied. The write-side dependencies are missing on
+   * purpose - start/append/stop would throw here rather than quietly write
+   * behind the back of the worker that believes it owns the recording. */
+  const replayReader = window.RATrackerReplayStore.createReplayStore({
+    idb: window.RATrackerIdb,
+    decompress: async (data) => {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      const piped = new Response(bytes).body.pipeThrough(new DecompressionStream("deflate-raw"));
+      return new Uint8Array(await new Response(piped).arrayBuffer());
+    },
+  });
+
+  const readReplay = (matchId) => replayReader.get(matchId);
+
+  /* Four distinct failures used to share one message, which is exactly what let
+   * a transport ceiling masquerade as a corrupt recording for as long as it
+   * did. They need different things from the reader: a missing record is gone
+   * for good, a damaged first chunk means the recording itself is hurt, and an
+   * empty one never captured anything to begin with. */
+  function unreadableReason(payload) {
+    if (!payload) return "No recording is stored for this match any more.";
+    if ((payload.meta || {}).truncatedAtChunk === 0) {
+      return "This replay's first chunk is damaged, so none of it can be played.";
+    }
+    return "This replay recorded no events, so there is nothing to play.";
   }
 
   /* Read just enough of an object to recognise it: the four magic bytes. Used
@@ -942,14 +974,19 @@
   async function runShare(matchId, endpoint) {
     await paintYield();
 
-    const reply = await readReplay(matchId);
-    const replay = reply && reply.ok ? reply.replay : null;
-    if (!replay || !replay.events || !replay.events.length) {
+    let replay;
+    try {
+      replay = await readReplay(matchId);
+    } catch (err) {
+      console.warn("[Rift Atlas] replay read failed:", err);
       throw new ShareUiError(SHARE.MESSAGES.unreadable, false);
+    }
+    if (!replay || !replay.events || !replay.events.length) {
+      throw new ShareUiError(unreadableReason(replay), false);
     }
 
     /* get() hands back the stylesheets rehydrated inline into every one of the
-     * ~34 keyframes. Re-stripping them with the same pure function storage uses
+     * keyframe. Re-stripping them with the same pure function storage uses
      * costs one pass and takes the deflated frame from 5.95 MB to 3.48 MB on the
      * worst replay measured. The viewer runs rehydrateCssAssets after decrypting,
      * which is the exact inverse. */
@@ -1663,16 +1700,23 @@
     const visualId = visualBtn && visualBtn.dataset.visual;
     if (visualId) {
       const m = all.find((x) => x.id === visualId) || { id: visualId };
-      chrome.runtime.sendMessage({ type: "ra:visual:get", matchId: visualId }, (reply) => {
-        const payload = chrome.runtime.lastError || !reply || !reply.ok ? null : reply.replay;
-        if (!payload || !payload.events || !payload.events.length) {
-          say("The replay for this match could not be read.", "error");
-          return;
+      readReplay(visualId).then(
+        (payload) => {
+          if (!payload || !payload.events || !payload.events.length) {
+            say(unreadableReason(payload), "error");
+            return;
+          }
+          window.RATrackerVisualReplay.openModal(m, payload, {
+            shareMoment: (request) => shareMoment(request, m),
+          });
+        },
+        (err) => {
+          // A storage fault, not an empty recording: say so, and leave the real
+          // error somewhere a bug report can reach it.
+          console.warn("[Rift Atlas] replay read failed:", err);
+          say("The replay for this match could not be read: " + String((err && err.message) || err), "error");
         }
-        window.RATrackerVisualReplay.openModal(m, payload, {
-          shareMoment: (request) => shareMoment(request, m),
-        });
-      });
+      );
       return;
     }
     // Sharing. The panel is toggled in place rather than through render(), so
