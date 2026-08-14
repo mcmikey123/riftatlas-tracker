@@ -18,7 +18,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const worker = path.join(__dirname, "..", "share", "worker");
+const repo = path.join(__dirname, "..");
+const worker = path.join(repo, "share", "worker");
 const read = (p) => fs.readFileSync(path.join(worker, p), "utf8");
 
 const indexHtml = read("public/index.html");
@@ -81,12 +82,20 @@ test("every global viewer.js requires at boot is loaded before it", () => {
   const viewerAt = before.indexOf("viewer.js");
   assert.notEqual(viewerAt, -1, "index.html must load viewer.js");
 
-  // Each required global has to be published by some script the page loads
-  // ahead of viewer.js. Read the sources rather than trusting the names.
+  /* Each required global has to be published by some script the page loads
+   * ahead of viewer.js. Read the sources rather than trusting the names.
+   *
+   * The REPO-ROOT copies, not the ones beside index.html: public/{replay,share,
+   * store,vendor} are gitignored build output that only exists once
+   * sync-assets.sh has run, so reading those made this test pass locally and
+   * fail on every clean clone - reporting "no script defines RAReplayTimeline"
+   * when the truth was "the assets have not been synced yet". The two tests
+   * above already assert the deploy copies these exact paths, so checking the
+   * tracked source checks the same file. */
   const earlier = before.slice(0, viewerAt);
   const published = earlier
     .map((rel) => {
-      const full = path.join(worker, "public", rel);
+      const full = path.join(repo, rel);
       return fs.existsSync(full) ? fs.readFileSync(full, "utf8") : "";
     })
     .join("\n");
