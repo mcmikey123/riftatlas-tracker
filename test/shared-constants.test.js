@@ -54,10 +54,23 @@ test("the log cap the recorder enforces is the one the dashboard tells the user 
   assert.ok(cap, "content.js must declare MAX_LOG");
 
   const view = read("dashboard/view-matches.js");
-  const mentions = [...view.matchAll(/\b(\d{3,})\b/g)].map((m) => m[1]);
+
+  /* Anchored to the comparison rather than to "some three-digit number in the
+   * file", which was the first shape of this check and would have kept passing
+   * if the sentence were deleted and an unrelated 500 appeared anywhere else.
+   * The comparison is code, so it is the stable half. */
+  assert.match(
+    view,
+    new RegExp(`length\\s*>=\\s*${cap[1]}\\b`),
+    `content.js caps the log at ${cap[1]} entries but dashboard/view-matches.js no longer ` +
+      "compares against that number - the cap and the view that renders it have drifted"
+  );
+
+  /* The prose is checked too, but only for the number: the sentence gets
+   * reworded and should not fail for it. */
   assert.ok(
-    mentions.includes(cap[1]),
-    `content.js caps the log at ${cap[1]} entries but dashboard/view-matches.js ` +
-      "no longer mentions that number - the cap and the copy describing it have drifted"
+    new RegExp(`\\b${cap[1]}\\b[^\\n]*lines`).test(view),
+    `dashboard/view-matches.js tells the user about a line cap but no longer says ${cap[1]} ` +
+      "- the copy and the constant have drifted"
   );
 });

@@ -16,7 +16,7 @@ import { mountShell, paintShell, VIEWS } from "./shell.js";
 import { renderMatches, mountMatches } from "./view-matches.js";
 import { renderSeries, mountSeries } from "./view-series.js";
 import * as dialog from "./dialog.js";
-import { toast, clearToasts } from "./toast.js";
+import { toast } from "./toast.js";
 
 /* legacy.js is a classic script and cannot import a module, so the two
  * components it needs are published on window for it. This is the only bridge
@@ -54,12 +54,7 @@ window.RATrackerDialog = {
     deferredReload = run;
   },
 };
-/* Published as the toast function itself, with clearToasts hung off it as
- * `.clear`. Every existing call over there is `window.RATrackerToast(msg, opts)`,
- * so wrapping it in an object would have meant editing each one; this way the
- * archive open/close paths can reach the clear that toast.js wrote for them
- * without any call site changing. */
-window.RATrackerToast = Object.assign(toast, { clear: clearToasts });
+window.RATrackerToast = toast;
 
 const STORE = window.RATrackerStorage;
 const SERIES = window.RATrackerSeries;

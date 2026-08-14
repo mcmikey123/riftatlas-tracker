@@ -21,7 +21,7 @@
 (function (root) {
   "use strict";
 
-  const { esc, champ, DASH } = root.RATrackerFormat || require("./format.js");
+  const { esc, champ, fmtStamp, DASH } = root.RATrackerFormat || require("./format.js");
   const SHARE = root.RAShareUI || require("../share/share-ui-support.js");
   const PANEL = root.RATrackerSharePanel || require("./share-panel.js");
   const PIPELINE = root.RATrackerSharePipeline || require("./share-pipeline.js");
@@ -78,10 +78,7 @@
    */
   function matchLabel(record, match) {
     if (!match) return "match no longer in your history";
-    const at = match.startedAt ? new Date(match.startedAt) : null;
-    const when = at
-      ? at.toLocaleDateString() + " " + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : DASH;
+    const when = fmtStamp(match.startedAt);
     return `${when} · ${champ(match.myChampion || match.myLegend)} vs ${champ(
       match.opponentChampion || match.opponentLegend
     )}`;
@@ -109,9 +106,7 @@
     const oid = esc(record.objectId);
     return `<tr class="${expired ? "sh-expired-row" : ""}">
         <td>${esc(label)}</td>
-        <td class="sh-when">${esc(created.toLocaleDateString())} ${esc(
-          created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        )}</td>
+        <td class="sh-when">${esc(fmtStamp(record.createdAt))}</td>
         <td class="sh-when">${
           expired
             ? `<span class="sh-state sh-expired">${esc(SHARE.expiryText(record, now))}</span>`

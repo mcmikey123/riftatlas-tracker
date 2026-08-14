@@ -366,7 +366,6 @@
     visualAssets: () => visualAssets,
     keepMatches: () => keepMatches,
     shares: () => SHARES_VIEW.list(),
-    archiveName: () => (archive ? archive.name : ""),
     readOnly,
     onRender: null, // main.js sets this
 

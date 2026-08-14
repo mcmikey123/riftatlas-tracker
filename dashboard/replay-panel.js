@@ -15,7 +15,7 @@
 
   // format.js is loaded first by dashboard.html; the require is for node.
   const FORMAT = root.RATrackerFormat || require("./format.js");
-  const { esc, champ, DASH } = FORMAT;
+  const { esc, champ, fmtStamp, DASH } = FORMAT;
 
   /**
    * One capture counter off a record, or null.
@@ -49,10 +49,7 @@
    * left to say about the row.
    */
   function visualLabel(record, match) {
-    const at = record.startedAt ? new Date(record.startedAt) : null;
-    const when = at
-      ? at.toLocaleDateString() + " " + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : DASH;
+    const when = fmtStamp(record.startedAt);
     if (!match) return when;
     return `${when} · ${champ(match.myChampion || match.myLegend)} vs ${champ(
       match.opponentChampion || match.opponentLegend

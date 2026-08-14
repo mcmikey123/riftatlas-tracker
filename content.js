@@ -1104,10 +1104,25 @@
         if (Number.isFinite(st)) m.durationMs = Math.max(0, Date.parse(m.endedAt) - st);
         m.result = "unknown";
         m.endReason = "tab-closed";
-        // A pagehide is not always a goodbye: a page frozen into the bfcache can
-        // come back with the same game still on screen. Handing the record to
-        // the false-end latch means `startMatch` reopens THIS one instead of
-        // writing a second record for a game already half-recorded.
+        /* A pagehide is not always a goodbye: a page frozen into the bfcache can
+         * come back with the same game still on screen. Handing the record to
+         * the false-end latch means `startMatch` reopens THIS one instead of
+         * writing a second record for a game already half-recorded.
+         *
+         * The MATCH resumes; the REPLAY does not. Nothing restarts the recorder
+         * on that path, and it must not: replayStore.start overwrites the
+         * replays row while chunks are keyed [matchId, seq] and are not cleared,
+         * so a second session renumbers from 0 and the first session's tail
+         * splices onto the end of the second. A truncated replay is bad; that
+         * one is corrupt. So a restored page finishes the match with a replay
+         * ending at the freeze, filed "stopped" and incomplete.
+         *
+         * Worth knowing this is a trade rather than a free win: beforeunload,
+         * which this replaced, never fired on a freeze at all, so restore used
+         * to be transparent - at the cost of losing the whole buffered batch on
+         * every real close. Resuming properly needs a flush that does not stop
+         * the session, or an event.persisted branch that gives up the flush on
+         * mobile freeze-then-discard. Both belong with the store, not here. */
         lastEnded = { roomCode: m.roomCode, at: Date.now(), record: m };
         saveMatch(m);
         persistDeckCards(true);

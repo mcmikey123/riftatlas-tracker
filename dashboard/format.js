@@ -64,6 +64,10 @@
   /** A match's deck name, or the bucket unnamed ones are grouped under. */
   const deckOf = (m) => ((m && m.deckName) || "").trim() || "Unlabelled";
 
+  /* One spelling of the wall-clock options, shared by the two helpers below so
+   * a share row and a replay row cannot start rendering the time differently. */
+  const HOUR_MINUTE = { hour: "2-digit", minute: "2-digit" };
+
   /**
    * Today / Yesterday / "2 May" / "2 May 2025".
    *
@@ -84,11 +88,27 @@
     return d.getFullYear() === today.getFullYear() ? day : day + " " + d.getFullYear();
   }
 
+  /**
+   * `02/05/2026 20:14` - an absolute date and time in one string.
+   *
+   * Distinct from fmtDay above, which is deliberately RELATIVE ("Today",
+   * "Yesterday") because the history it labels is mostly recent. The rows that
+   * use this one are not: a shared link and a stored recording both outlive the
+   * match they came from, and "Yesterday" on a share that expires in six days
+   * tells you nothing about when it lapses.
+   */
+  function fmtStamp(iso) {
+    const t = Date.parse(iso || "");
+    if (!Number.isFinite(t)) return DASH;
+    const d = new Date(t);
+    return d.toLocaleDateString() + " " + d.toLocaleTimeString([], HOUR_MINUTE);
+  }
+
   /** `20:14`, the 24-hour wall clock a match started at. */
   function fmtTime(iso) {
     const t = Date.parse(iso || "");
     if (!Number.isFinite(t)) return DASH;
-    return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return new Date(t).toLocaleTimeString([], HOUR_MINUTE);
   }
 
   /** `8–5`, or an em dash when neither side was ever scored. */
@@ -107,6 +127,7 @@
     fmtCount,
     fmtMs,
     fmtDay,
+    fmtStamp,
     fmtTime,
     fmtScore,
     fmtPercent,

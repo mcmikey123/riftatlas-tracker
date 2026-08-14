@@ -195,7 +195,6 @@
     shareLinkRowHtml,
     shareBoxHtml,
     shareBoxInner,
-    paintShare,
     setShare,
     onPaint,
   };

@@ -329,6 +329,35 @@ test("a missing or unparseable start time reads as a dash", () => {
   }
 });
 
+// ---- fmtStamp ----------------------------------------------------------
+
+/* The absolute date-and-time used by rows that outlive their match - a shared
+ * link and a stored recording. Deliberately NOT fmtDay's relative wording:
+ * "Yesterday" on a share that lapses in six days says nothing useful. */
+test("a stamp carries both the date and the wall-clock time of that instant", () => {
+  const at = new Date(2026, 4, 9, 20, 14);
+  const out = F.fmtStamp(at.toISOString());
+  assert.match(out, /\d{2}:14/, `expected the local minute in ${out}`);
+  assert.ok(out.includes(at.toLocaleDateString()), `expected the local date in ${out}`);
+});
+
+test("a stamp uses the same wall clock as a start time, so two rows cannot disagree", () => {
+  const at = new Date(2026, 4, 9, 20, 14);
+  assert.ok(
+    F.fmtStamp(at.toISOString()).endsWith(F.fmtTime(at.toISOString())),
+    "fmtStamp's time half must be exactly what fmtTime renders"
+  );
+});
+
+/* The shares list built this string by hand before, straight off a Date with
+ * no guard, so a record with no createdAt rendered the literal "Invalid Date"
+ * into the table. */
+test("a missing or unparseable stamp reads as a dash, never as Invalid Date", () => {
+  for (const bad of ["", null, undefined, "whenever"]) {
+    assert.equal(F.fmtStamp(bad), F.DASH, `fmtStamp(${String(bad)})`);
+  }
+});
+
 // ---- fmtScore ----------------------------------------------------------
 
 test("a score reads as both sides separated by an en dash", () => {
