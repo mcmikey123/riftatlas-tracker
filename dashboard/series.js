@@ -554,22 +554,16 @@
     return out;
   }
 
+  /* The formats, the window bounds and the four predicates behind them are this
+   * file's own business - detect(), group() and seriesRecord() are where they
+   * are read, and nothing outside has ever asked. They were exported anyway,
+   * and eleven names published for nobody is eleven more names another file can
+   * come to depend on by accident. Publish what is called. */
   root.RATrackerSeries = {
-    FORMATS,
-    FORMAT_LENGTH,
-    WINS_NEEDED,
-    DEFAULT_WINDOW_MINUTES,
-    WINDOW_MIN,
-    WINDOW_MAX,
     clampWindow,
     normFormat,
-    winsNeeded,
-    formatLength,
-    joins,
-    isComplete,
     detect,
     group,
-    seriesRecord,
     stats,
     suggestions,
     groupManually,
