@@ -29,7 +29,7 @@
  * ------------------------------------------------------------------------
  * WHY THIS FILE IS SHAPED THE WAY IT IS
  *
- * Three audits have defeated three versions of this guard, each by writing a
+ * Five audits have defeated five versions of this guard, each by writing a
  * reference in a syntax the previous version did not enumerate:
  *
  *   1. nine renames found by eye, which was a sample and not a sweep; the
@@ -42,51 +42,83 @@
  *      `window.RATrackerStorage?.writeShares(...)`. Every count held, the suite
  *      stayed green, and renaming `writeShares` afterwards passed 806/806 with
  *      both production consumers live.
+ *   4. nothing - (3) was fixed properly, by inverting the enumeration on the
+ *      ACCESS side, and the fix held.
+ *   5. THE DOOR RATHER THAN THE ROOM. `const { RATrackerStorage } = window;`,
+ *      and `window\n  .RATrackerStorage.writeShares(...)`, and
+ *      `{ ...root.RAThing }`. The access side was closed, so the audit stopped
+ *      attacking it and attacked what counts as a namespace value in the first
+ *      place. Renaming `writeShares` afterwards passed 809/809 with both
+ *      production consumers calling `undefined`.
  *
- * All three are one bug. The resolver was a set of regexes for enumerated
- * syntaxes with an OPEN BOTTOM: a `root.NS` read that no member pattern matched
- * fell through to the name-level check and was counted as RESOLVED. An unread
- * member syntax therefore did not merely vanish - it was reported as coverage,
- * which is why every floor stayed satisfied while the members went unchecked.
+ * All five are one bug in two places. The resolver was a set of regexes for
+ * enumerated syntaxes with an OPEN BOTTOM: something that no pattern matched
+ * fell through to a cheaper check, or to nothing at all, and was counted as
+ * RESOLVED either way. An unread syntax therefore did not merely vanish - it was
+ * reported as coverage, which is why every floor stayed satisfied while the
+ * members went unchecked.
  *
- * So the shape of this version is not "one more syntax". It is:
+ * So the shape of this version is not "one more syntax". It is that the same
+ * inversion is applied at all three places a value can be lost:
  *
- *   a. Whether there IS a member access on a namespace value is decided
- *      SEPARATELY from whether that member access can be read, and it is decided
- *      by enumerating the OTHER side. `accessorAt` reads the accessors it knows;
+ *   a. ACCESS. Whether there IS a member access on a namespace value is decided
+ *      SEPARATELY from whether that access can be read, and it is decided by
+ *      enumerating the OTHER side. `accessorAt` reads the accessors it knows;
  *      everything else it checks against TERMINATOR_AT, the closed list of
  *      operators and separators that can mean "this value ends here". A token
  *      that is neither is an access this file cannot read, and `readAccess`
  *      sends it to `unresolvable`. There is no path at all from "followed by
  *      something unrecognised" to "counted as a name-level read", which is what
- *      makes the NEXT unknown syntax announce itself rather than hide: `?.` is
- *      not a terminator, so it would have failed here even before anyone taught
- *      this file what optional chaining is.
- *   b. A namespace value is recognised in ONE place - `namespaceValue`, a small
- *      recursive reader of expressions - which every binding site asks: a
- *      `const`, an arrow or function thunk body, the right-hand side of a
- *      destructure. Adding a binding syntax is a change in one function rather
- *      than a fourth regex, and an expression it cannot decide is reported.
- *   c. A name-level read that nobody takes a member off is classified by what
- *      BECOMES of it. Tested, compared, called, or bound by a form the resolver
- *      read: nothing more to check. Passed as an argument, stored in an object
- *      or an array, returned, or bound by a form the resolver did NOT read: the
- *      value has moved somewhere no name resolution follows, and it lands in
- *      `unresolvable` rather than being counted.
+ *      makes the NEXT unknown syntax announce itself: `?.` is not a terminator,
+ *      so it would have failed here even before anyone taught this file what
+ *      optional chaining is.
+ *   b. ENTRY. A namespace value can only come from a read off the global
+ *      object - there is no import here - so every occurrence of a name that
+ *      MEANS the global object is found first (`ROOT_TOKEN`), and only then
+ *      asked what is being done with it. Five answers, closed: the name is being
+ *      bound rather than read; a known accessor names a namespace; a computed
+ *      accessor does not; nothing readable follows and nothing that ends the
+ *      value either; or the global object itself is the value. The last three
+ *      report. No regex decides whether something is a door.
+ *   c. PROPAGATION. A namespace value that nobody reads a member off is
+ *      classified by what BECOMES of it, from closed lists on both sides: the
+ *      operator in front either uses it up or hands it on, and the value is
+ *      followed - out through grouping parens, not stopped by them - until
+ *      something in a closed list accounts for it. Used up where it stands, or
+ *      claimed by a binding the resolver read: nothing more to check. Passed as
+ *      an argument, stored in an object or an array, returned, or landing inside
+ *      a binding no binding here claimed: reported. `namespaceValue` failing to
+ *      decide an expression is therefore no longer a way out - the read it did
+ *      not claim is still followed, and still ends up somewhere that reports.
  *   d. The name-level count is floored SEPARATELY from the member-level ones and
  *      excluded from their total, because it is a different check. It was the
  *      bucket the degraded member reads fell into, and a bucket that grows when
  *      member checks are lost cannot also be what proves they are not.
  *
- * What `unresolvable` means, exactly, and it is worth being precise because two
- * rounds have overclaimed here: it holds every namespace-valued expression the
- * scan SEES but cannot decide. It does not and cannot mean "there is nothing
- * else": a namespace that reaches another file through a function parameter is
- * outside static name resolution altogether, and those seams are listed by name
- * at the assertion below rather than pretended away. What is guaranteed is
- * narrower and checkable: no member access on a namespace value in scanned
- * source is silently dropped, and no namespace value escapes this file's names
- * without being named in that list.
+ * WHAT IS GUARANTEED, stated to match the code and no wider, because a claim
+ * ahead of the code is the defect that keeps recurring here:
+ *
+ *   In the files this scan reads, every mention of the global object and every
+ *   mention of a local this file bound to a namespace or to the global object is
+ *   classified exactly once, into one of: the name being BOUND rather than read
+ *   (a parameter, an object key - not a read at all), a RESOLVED check against
+ *   what the other file publishes, or a line in `unresolvable`. So: no member
+ *   access on such a value is silently dropped, and no such value is bound,
+ *   stored, passed or returned without either being followed to another name
+ *   this file tracks or being named in that list.
+ *
+ * What that does NOT claim, all of which is real:
+ *   - it says nothing about what a CALLEE does with a namespace handed to it.
+ *     Those hand-overs are named in `unresolvable` (the idb injection, the three
+ *     global-object hand-overs) and the idb one is pinned behaviourally instead.
+ *   - it says nothing about namespaces reached by neither route - through
+ *     `this`, or an import, or a name this file never saw bound. Nothing in the
+ *     extension does that today, and the member floors are what would notice a
+ *     wholesale move.
+ *   - `unresolvable` is total for what the scan SEES. It is not a claim that
+ *     nothing else exists, and the list is the place to argue about that.
+ * The three known limits above are the whole of it; each is checked or listed
+ * below rather than left to prose.
  */
 
 const test = require("node:test");
@@ -410,18 +442,160 @@ const BROWSER_GLOBALS = new Set([
 ]);
 
 /* ------------------------------------------------------------------ *
- * Reading a namespace value, and reading an access off one
+ * Entering: every mention of the global object, classified
  * ------------------------------------------------------------------ */
 
-/* The leading guard matters now that the name after the dot is no longer
- * required to start with `RA`: `out.self.endTurn` in dashboard/analysis.js is a
- * field of a tally called `self`, not a global read, and half a dozen such
- * fields would otherwise be reported as unpublished globals. */
-const NS_ROOT = "(?<![.\\w$])(?:root|window|globalThis|self)";
-const ROOT_READ = new RegExp(NS_ROOT + "\\.([A-Za-z0-9_$]+)(?![\\w$])", "g");
-const ROOT_READ_AT = new RegExp(NS_ROOT + "\\.([A-Za-z0-9_$]+)(?![\\w$])", "y");
-const ROOT_ALONE_AT = new RegExp(NS_ROOT + "(?![\\w$.])", "y");
+/* THE CLOSED BOTTOM ON THE ENTRY SIDE - the door, rather than the room.
+ *
+ * A namespace value gets into this extension exactly one way: something reads a
+ * name off the global object. There is no import and no module scope, so
+ * `<the global object>.<name>` is the only door, and every namespace value
+ * anywhere is that read or a copy of one.
+ *
+ * Which makes the door the same enumeration problem the access side had, and
+ * the fifth audit won on exactly that. The door used to be a regex - one of the
+ * four root names followed IMMEDIATELY by a dot - and everything that regex did
+ * not match was not "an entry I cannot read", it was nothing at all:
+ *
+ *   window\n  .RATrackerStorage.writeShares(x)   - a newline before the dot
+ *   const { RATrackerStorage } = window;         - a door with no dot in it
+ *   (typeof window !== "undefined" ? window : globalThis).RATBoard
+ *   { ...root.RAThing }                          - the `.` of the spread made
+ *                                                  the read look like `x.root`
+ *
+ * all read as nothing at all, so the members taken off them afterwards were
+ * checked nowhere and renaming the key stayed green.
+ *
+ * So the door is enumerated from the other side too. `ROOT_TOKEN` finds every
+ * occurrence of a name that MEANS the global object, and only then is it asked
+ * what is being done with that occurrence. The answers are a closed set:
+ *
+ *   - the name is being BOUND, not read (a parameter, an object-literal key, a
+ *     declaration). `bindsTheName` decides this, and a declaration is reported,
+ *     because it would make every later read in the file mean something else.
+ *   - a known accessor follows, naming a namespace: the ordinary read, in
+ *     whatever syntax and across whatever whitespace or comment, because the
+ *     accessor machinery is shared with the access side.
+ *   - a computed accessor follows (`root[name]`): the namespace itself is not
+ *     known, and it is reported.
+ *   - nothing readable follows, and nothing that ENDS the value either: an
+ *     entry syntax this file cannot read, reported.
+ *   - the value ends: the global object itself is the value, and where it goes
+ *     is `dispositionOf`'s question.
+ *
+ * There is no fall-through. A root token is one of those five, and the two that
+ * mean "I cannot follow this" both report. */
+
+const ROOT_NAMES = new Set(["root", "window", "globalThis", "self"]);
+const ROOT_TOKEN = /(?<![\w$])(?:root|window|globalThis|self)(?![\w$])/g;
+const ROOT_TOKEN_AT = /(?:root|window|globalThis|self)(?![\w$])/y;
 const IDENT_AT = /[A-Za-z_$][\w$]*/y;
+
+/* `out.self.endTurn` in dashboard/analysis.js is a field of a tally called
+ * `self`, not the global object. But `{ ...root.RAThing }` IS a read of the
+ * global object and there is a dot in front of THAT too - it belongs to the
+ * spread. The old `(?<![.\w$])` guard could not tell them apart and rejected
+ * both, which is why a spread was not merely unread but unseen. */
+function isMemberName(masked, at) {
+  let i = at - 1;
+  while (i >= 0 && /\s/.test(masked[i])) i--;
+  if (i < 0 || masked[i] !== ".") return false;
+  return !(masked[i - 1] === "." && masked[i - 2] === ".");
+}
+
+/** The operator a value sits behind, as written: `===`, `||`, `=>`, `(`, `,`. */
+function operatorBefore(masked, at) {
+  let i = at - 1;
+  while (i >= 0 && /\s/.test(masked[i])) i--;
+  if (i < 0) return "";
+  if (/[\w$]/.test(masked[i])) return wordBefore(masked, at);
+  if (!/[=!<>+\-*/%&|^~?:]/.test(masked[i])) return masked[i]; // a bracket, a comma, a spread's dot
+  let j = i;
+  while (j >= 0 && /[=!<>+\-*/%&|^~?:]/.test(masked[j])) j--;
+  return masked.slice(j + 1, i + 1);
+}
+
+/** A `(` that opens a parameter list rather than a call's arguments. */
+function opensParameterList(masked, open) {
+  if (masked[open] !== "(") return false;
+  const close = matchingClose(masked, open);
+  if (close !== null && /^\s*=>/.test(masked.slice(close + 1, close + 6))) return true;
+  const head = masked.slice(Math.max(0, open - 64), open);
+  return /\bfunction\s*(?:[A-Za-z_$][\w$]*\s*)?$/.test(head) || /\b(?:get|set)\s+[A-Za-z_$][\w$]*\s*$/.test(head);
+}
+
+/**
+ * The name being BOUND rather than the global object being read.
+ *
+ * `(function (root) {`, `root: '[data-testid="game-state"]'` in
+ * capture/board-read.js and `self: blankSide()` in dashboard/analysis.js are all
+ * the word `root`/`self` used as a name, not as the global object; counting them
+ * as reads would report an object literal's own keys as escaping namespaces. A
+ * `const`/`let`/`var`/`function`/`class` of one of these names is a different
+ * matter - it would make every read after it mean something else - so it comes
+ * back as "declaration" and the caller reports it.
+ */
+function bindsTheName(masked, at, end) {
+  const before = operatorBefore(masked, at);
+  if (["const", "let", "var", "function", "class"].includes(before)) return "declaration";
+  if (/^\s*=>/.test(masked.slice(end, end + 5))) return "parameter";
+  const open = enclosingOpen(masked, at);
+  if (open === null) return null;
+  if (masked[open] === "(" && opensParameterList(masked, open)) return "parameter";
+  if (
+    masked[open] === "{" &&
+    opensObjectLiteral(masked, open) &&
+    (before === "{" || before === ",") &&
+    /^\s*:/.test(masked.slice(end, end + 4))
+  ) {
+    return "key";
+  }
+  return null;
+}
+
+/**
+ * `})(typeof window !== "undefined" ? window : globalThis)` - the wrapper every
+ * module in this repo ends with, and the one place the global object itself is
+ * meant to cross a call boundary.
+ *
+ * It is not an escape, but not because it is spelled that way: it crosses into a
+ * PARAMETER whose name is one of the four root names, and reads off that name
+ * are scanned as reads of the global object exactly like `window.` is. The seam
+ * closes because the name closes it, and this checks that the name really is one
+ * of them rather than trusting the shape.
+ */
+function handedToModuleWrapper(masked, at) {
+  const open = enclosingOpen(masked, at);
+  if (open === null || masked[open] !== "(") return false;
+  const head = masked.slice(0, open).trimEnd();
+  if (!head.endsWith(")")) return false;
+  const calleeOpen = enclosingOpen(masked, head.length - 1);
+  if (calleeOpen === null) return false;
+  const inner = masked.slice(calleeOpen + 1, head.length - 1);
+  const m = /^\s*(?:async\s+)?function\s*[A-Za-z_$]*\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/.exec(inner);
+  return !!m && ROOT_NAMES.has(m[1]);
+}
+
+/**
+ * ...and the same seam checked from the inside. A parameter named `root` that
+ * was handed something OTHER than the global object would make every `root.RA*`
+ * in that file a read of that other thing, and this whole scan would be
+ * resolving references that do not exist. Returns null when the wrapper is the
+ * module idiom, and a reason when it is not.
+ */
+function wrapperFeeding(masked, at) {
+  const open = enclosingOpen(masked, at);
+  if (open === null || !opensParameterList(masked, open)) return "is a parameter of a function this file cannot follow";
+  const fnOpen = enclosingOpen(masked, open);
+  if (fnOpen === null || masked[fnOpen] !== "(") return "is a parameter of a function that is not an immediately invoked wrapper";
+  const fnClose = matchingClose(masked, fnOpen);
+  if (fnClose === null || masked[fnClose + 1] !== "(") return "is a parameter of a function that is not called where it is written";
+  const args = matchingClose(masked, fnClose + 1);
+  if (args === null) return "is a parameter of a wrapper whose argument list does not close";
+  const blank = { aliases: new Map(), thunks: new Map(), globals: new Set() };
+  const value = namespaceValue(masked, fnClose + 2, args, blank);
+  return value.globalObject ? null : "is a parameter of a wrapper that is handed something other than the global object";
+}
 
 /* THE CLOSED BOTTOM, AND WHY IT IS CLOSED THE WAY ROUND IT IS.
  *
@@ -460,7 +634,10 @@ function accessorAt(masked, from) {
     return { kind: "named", name: m[3], end: ACCESSOR_AT.lastIndex };
   }
   TERMINATOR_AT.lastIndex = from;
-  if (TERMINATOR_AT.exec(masked)) return { kind: "none", end: from };
+  const t = TERMINATOR_AT.exec(masked);
+  // WHICH terminator it is decides where the value goes, so it is kept:
+  // `NS ===` uses the value up where it stands, `NS ||` hands it on.
+  if (t) return { kind: "none", end: from, terminator: t[0].trim() };
   return { kind: "unreadable", end: from, text: masked.slice(from, from + 12).trim() };
 }
 
@@ -473,23 +650,44 @@ function callEnd(masked, from) {
 }
 
 /* A value in parentheses is still that value: `(root.RAShare ||
- * require("./payload.js")).MAGIC` reads MAGIC off the namespace. Following the
- * value out through its grouping parens is what makes that a general rule
- * rather than the special-cased regex it used to be - and a call's parentheses
- * are excluded, because `f(root.RANs).m` reads a member of what f returned. */
-function accessOn(masked, from) {
-  let pos = from;
-  for (let step = 0; step < 4; step++) {
-    const acc = accessorAt(masked, pos);
-    if (acc.kind !== "none") return acc;
-    const open = enclosingOpen(masked, pos);
-    if (open === null || masked[open] !== "(" || !opensGroup(masked, open)) return acc;
-    if (STATEMENT_KEYWORDS.has(wordBefore(masked, open))) return acc;
+ * require("./payload.js")).MAGIC` reads MAGIC off the namespace, and
+ * `(typeof window !== "undefined" ? window : globalThis).RATBoard` reads a
+ * namespace off the global object - the CommonJS footer thirty-five files here
+ * carry, and a door the old regex could not see through at all.
+ *
+ * Following the value out through its grouping parens is what makes that a
+ * general rule rather than the special-cased regex it used to be. It is allowed
+ * only when the parenthesised expression really does hand THIS value on, which
+ * `namespaceValue` decides: in the footer above, the `window` inside `typeof
+ * window` is the test and not the value, and an access after the `)` is nothing
+ * to do with it. A call's parentheses are excluded for the same reason -
+ * `f(root.RANs).m` reads a member of what f returned. */
+function accessOn(masked, from, ctx) {
+  let acc = accessorAt(masked, from);
+  for (let step = 0; step < 4 && acc.kind === "none"; step++) {
+    const open = enclosingOpen(masked, acc.end);
+    if (open === null || masked[open] !== "(" || !opensGroup(masked, open)) break;
+    if (STATEMENT_KEYWORDS.has(wordBefore(masked, open))) break;
     const close = matchingClose(masked, open);
-    if (close === null) return acc;
-    pos = close + 1;
+    if (close === null || close < acc.end) break;
+    if (!handsOnValueAt(masked, open + 1, close, ctx)) break;
+    acc = accessorAt(masked, close + 1);
   }
-  return { kind: "none", end: pos };
+  return acc;
+}
+
+/** Whether the expression in `[from, to)` yields the value that starts at
+ *  `ctx.start` - the one question `accessOn` needs answered to follow a value
+ *  out of its parentheses. */
+function handsOnValueAt(masked, from, to, ctx) {
+  if (!ctx) return false;
+  return offsetsOf(namespaceValue(masked, from, to, ctx.locals)).includes(ctx.start);
+}
+
+/** Every read a resolved value was built out of. */
+function offsetsOf(value) {
+  if (value.ats) return value.ats;
+  return value.at === undefined ? [] : [value.at];
 }
 
 const NOTHING = { none: true };
@@ -541,15 +739,19 @@ function operands(masked, start, end) {
   return null;
 }
 
-/** One namespace-valued result, or `unknown` when the operands disagree. */
+/** One namespace-valued result, or `unknown` when the operands disagree. Every
+ *  read that went into it is carried along, because a binding that consumes the
+ *  value consumes ALL of them: `flag ? root.RAThing : root.RAThing` is one
+ *  binding and two reads, and the read the merge did not return is not loose. */
 function mergeValues(values) {
+  const ats = values.flatMap(offsetsOf);
   const puzzling = values.find((v) => v.unknown);
-  if (puzzling) return puzzling;
+  if (puzzling) return { ...puzzling, ats };
   const held = values.filter((v) => v.ns || v.globalObject);
   const names = [...new Set(held.map((v) => v.ns || "the global object"))];
   if (names.length === 0) return NOTHING;
-  if (names.length > 1) return { unknown: "it holds one of " + names.join(" or ") };
-  return held[0];
+  if (names.length > 1) return { unknown: "it holds one of " + names.join(" or "), ats };
+  return { ...held[0], ats };
 }
 
 /**
@@ -562,11 +764,18 @@ function mergeValues(values) {
  * shape teaches every site at once, and an expression it cannot decide comes
  * back as `unknown` and is reported rather than dropped.
  *
- * Returns `{ ns, at }` for a namespace (with the offset of the `root.NS` read
- * it consumed, so the name-level pass can tell a binding it understood from one
- * it did not), `{ globalObject }` for the global object itself, `{ unknown }`
- * for an expression that holds a namespace by a route this cannot follow, and
- * `NOTHING` for an expression whose value is not a namespace at all.
+ * Returns `{ ns, at }` for a namespace (with the offset of the read it consumed,
+ * so the name-level pass can tell a binding it understood from one it did not),
+ * `{ globalObject, at }` for the global object itself, `{ unknown }` for an
+ * expression that holds a namespace by a route this cannot follow, and `NOTHING`
+ * for an expression whose value is not a namespace at all.
+ *
+ * NOTHING is no longer a way out. Every read this function declines to bind
+ * stays UNCLAIMED, and an unclaimed read that reaches a binding is reported by
+ * `dispositionOf` - so an expression form nobody taught this function costs a
+ * resolved reference and gains a line in `unresolvable`, rather than costing a
+ * resolved reference and gaining silence. That is the difference between this
+ * round and the four before it.
  */
 function namespaceValue(masked, from, to, locals) {
   let start = from;
@@ -581,30 +790,47 @@ function namespaceValue(masked, from, to, locals) {
   const split = operands(masked, start, end);
   if (split) return mergeValues(split.map(([a, b]) => namespaceValue(masked, a, b, locals)));
 
-  ROOT_READ_AT.lastIndex = start;
-  const root = ROOT_READ_AT.exec(masked);
-  if (root) {
-    // Only a read that ENDS at the namespace holds one. `root.RAThing.pick()`
-    // binds what pick() returned; its `.pick` is checked by the member pass.
-    // A platform name is not ours to track: `const doc = document` binds the
-    // document, and `doc.createElement` is nobody's cross-file reference.
-    if (BROWSER_GLOBALS.has(root[1])) return NOTHING;
-    return ROOT_READ_AT.lastIndex === end ? { ns: root[1], at: start } : NOTHING;
+  ROOT_TOKEN_AT.lastIndex = start;
+  if (ROOT_TOKEN_AT.exec(masked) && !isMemberName(masked, start)) {
+    const after = ROOT_TOKEN_AT.lastIndex;
+    if (after === end) return { globalObject: true, at: start };
+    return offTheGlobalObject(masked, start, after, end, locals);
   }
-  ROOT_ALONE_AT.lastIndex = start;
-  if (ROOT_ALONE_AT.exec(masked) && ROOT_ALONE_AT.lastIndex === end) return { globalObject: true };
 
   IDENT_AT.lastIndex = start;
   const ident = IDENT_AT.exec(masked);
   if (ident) {
     const local = ident[0];
-    if (locals.aliases.has(local) && IDENT_AT.lastIndex === end) {
-      return { ns: locals.aliases.get(local), at: start };
-    }
+    const after = IDENT_AT.lastIndex;
+    if (locals.aliases.has(local) && after === end) return { ns: locals.aliases.get(local), at: start };
     if (locals.thunks.has(local)) {
-      const called = callEnd(masked, IDENT_AT.lastIndex);
+      const called = callEnd(masked, after);
       if (called === end) return { ns: locals.thunks.get(local), at: start };
     }
+    // A local holding the global object is another door into it, and the same
+    // one: `const w = scheduler || root;` in share/repaint.js, then `w.RA*`.
+    if (locals.globals.has(local)) return offTheGlobalObject(masked, start, after, end, locals);
+  }
+  return NOTHING;
+}
+
+/** What `<the global object>.<something>` is worth, the global object itself
+ *  ending at `after`. */
+function offTheGlobalObject(masked, start, after, end, locals) {
+  const acc = accessorAt(masked, after);
+  if (acc.kind !== "named") return NOTHING; // computed or unreadable: reported where it is read
+  // A platform name is not ours to track: `const doc = window.document` binds
+  // the document, and `doc.createElement` is nobody's cross-file reference.
+  if (BROWSER_GLOBALS.has(acc.name)) return NOTHING;
+  if (acc.end === end) return { ns: acc.name, at: start };
+  /* Only a read that ENDS at the namespace holds one - `root.RAThing.pick()`
+   * binds what pick() returned - with the one exception the repo actually uses:
+   * a member that IS an exported thunk hands back the far namespace, so
+   * `const d = root.RATrackerNotify.dialog();` holds RATrackerDialog. */
+  const member = accessorAt(masked, acc.end);
+  const entry = locals.published && locals.published.get(acc.name);
+  if (member.kind === "named" && entry && entry.thunks.has(member.name)) {
+    if (callEnd(masked, member.end) === end) return { ns: entry.thunks.get(member.name), at: start };
   }
   return NOTHING;
 }
@@ -656,23 +882,37 @@ function parameterNames(masked) {
  * bind a thunk another file exported (`const { dialog } = NOTIFY`), and a
  * `const` can bind what that thunk returns (`const d = dialog()`).
  *
- * `claimed` collects the offset of every `root.NS` read that some binding here
- * consumed. That is what lets the name-level pass tell "bound by a form the
- * resolver reads, so its members are checked elsewhere" from "bound by a form
- * the resolver does not read, so its members are checked NOWHERE" - the second
- * being precisely how the arrow-thunk round was lost.
+ * `claimed` collects the offset of every read that some binding here consumed -
+ * including the reads a merged value did not return, because a binding consumes
+ * all of its operands. That is what lets the name-level pass tell "bound by a
+ * form the resolver reads, so its members are checked elsewhere" from "bound by
+ * a form the resolver does not read, so its members are checked NOWHERE" - the
+ * second being precisely how the arrow-thunk round was lost.
+ *
+ * `assignments` is the other half of that, and it is what closes the binding
+ * side rather than enumerating it. Every `=` that binds - a declarator's
+ * initialiser, an assignment to a local or a field - contributes the range of
+ * the expression it binds. A read inside one of those ranges that no binding
+ * claimed has been bound to a name this file is NOT tracking, whatever the
+ * expression was, so `const T = (0, root.RAThing);` and `let T; T = root.RAThing;`
+ * and whatever is invented next are one case, and it is reported. The resolver
+ * no longer has to recognise an expression in order to notice it.
  */
 function collectLocals(masked, published) {
-  const locals = { aliases: new Map(), thunks: new Map() };
+  const locals = { aliases: new Map(), thunks: new Map(), globals: new Set(), published };
   const claimed = new Set();
   const puzzles = new Map(); //  offset -> why this binding could not be read
   const destructures = new Map(); //  offset -> { ns, segments }
   const fromGlobal = new Map(); //  offset -> segments
+  const assignments = bindingRanges(masked);
 
+  const claim = (value) => {
+    for (const at of offsetsOf(value)) claimed.add(at);
+  };
   const take = (value, bind) => {
     if (value.ns) {
       bind(value.ns);
-      if (value.at !== undefined) claimed.add(value.at);
+      claim(value);
     }
     return value;
   };
@@ -692,11 +932,24 @@ function collectLocals(masked, published) {
         const body = masked[bodyAt] === "{" || fn ? returnedExpression(masked, bodyAt) : [bodyAt, to];
         if (!body) continue;
         const value = take(namespaceValue(masked, body[0], body[1], locals), (ns) => locals.thunks.set(local, ns));
-        if (value.unknown) puzzles.set(from, "`" + local + "` defers to a namespace but " + value.unknown);
+        if (value.unknown) {
+          puzzles.set(from, "`" + local + "` defers to a namespace but " + value.unknown);
+          claim(value);
+        }
         continue;
       }
       const value = take(namespaceValue(masked, from, to, locals), (ns) => locals.aliases.set(local, ns));
-      if (value.unknown) puzzles.set(from, "`" + local + "` holds a namespace but " + value.unknown);
+      /* `const w = scheduler || root;` in share/repaint.js. A local holding the
+       * global object is a door into every namespace on it, so it is tracked as
+       * one rather than rediscovered at each use. */
+      if (value.globalObject) {
+        locals.globals.add(local);
+        claim(value);
+      }
+      if (value.unknown) {
+        puzzles.set(from, "`" + local + "` holds a namespace but " + value.unknown);
+        claim(value);
+      }
     }
     FUNCTION_DECL.lastIndex = 0;
     for (const hit of masked.matchAll(FUNCTION_DECL)) {
@@ -717,17 +970,35 @@ function collectLocals(masked, published) {
       const from = walked.end + 1 + eq[0].length;
       const value = namespaceValue(masked, from, initialiserEnd(masked, from), locals);
       /* `const { extractCssAssets, rehydrateCssAssets } = <require or root>;` in
-       * store/replay-store.js reads two names off the global object itself. */
+       * store/replay-store.js reads two names off the global object itself.
+       *
+       * Every name in such a pattern IS a namespace - that is what the global
+       * object holds - so each local is bound as an alias for the namespace of
+       * its own name, and `LOCAL.member` afterwards is a member reference like
+       * any other. Leaving these at a name-level check is how the fifth audit
+       * won: `const { RATrackerStorage } = window;` followed by
+       * `RATrackerStorage.writeShares(...)` resolved the NAME, counted it, and
+       * never looked at the member at all. */
       if (value.globalObject) {
+        claim(value);
         fromGlobal.set(open, walked.segments);
+        for (const raw of walked.segments) {
+          const s = raw.trim();
+          const renamed = /^([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\s*$/.exec(s);
+          const plain = /^([A-Za-z_$][\w$]*)\s*$/.exec(s);
+          const name = renamed ? renamed[1] : plain ? plain[1] : null;
+          const local = renamed ? renamed[2] : plain ? plain[1] : null;
+          if (name && !BROWSER_GLOBALS.has(name)) locals.aliases.set(local, name);
+        }
         continue;
       }
       if (value.unknown) {
         puzzles.set(open, "a destructure reads members of a namespace but " + value.unknown);
+        claim(value);
         continue;
       }
       if (!value.ns) continue;
-      if (value.at !== undefined) claimed.add(value.at);
+      claim(value);
       destructures.set(open, { ns: value.ns, segments: walked.segments });
       /* One of these binds a thunk. `const { ask, dialog: DIALOG } =
        * window.RATrackerNotify` makes DIALOG a deferred RATrackerDialog, and
@@ -747,12 +1018,32 @@ function collectLocals(masked, published) {
   };
 
   for (let round = 0; round < 4; round++) {
-    const size = locals.aliases.size + locals.thunks.size;
+    const size = locals.aliases.size + locals.thunks.size + locals.globals.size;
     readDeclarations();
     readDestructures();
-    if (round > 0 && locals.aliases.size + locals.thunks.size === size) break;
+    if (round > 0 && locals.aliases.size + locals.thunks.size + locals.globals.size === size) break;
   }
-  return { locals, claimed, puzzles, destructures, fromGlobal };
+  return { locals, claimed, puzzles, destructures, fromGlobal, assignments };
+}
+
+/* Every `=` that BINDS: a declarator's initialiser, an assignment to a local or
+ * to a field. Not `==`, `===`, `!==`, `<=`, `>=` or `=>`, and not the compound
+ * assignments, whose operands are arithmetic and never a namespace.
+ *
+ * `module.exports = <namespace>` is marked exempt rather than left out: it is
+ * the CommonJS footer every module here carries, its consumers are tests, and
+ * the name it mirrors is checked like any other read. */
+function bindingRanges(masked) {
+  const ranges = [];
+  for (const hit of masked.matchAll(/(?<![=!<>+\-*/%&|^])=(?![=>])/g)) {
+    const from = hit.index + 1;
+    ranges.push({
+      from,
+      to: initialiserEnd(masked, from),
+      exempt: /module\s*\.\s*exports\s*$/.test(masked.slice(Math.max(0, hit.index - 40), hit.index)),
+    });
+  }
+  return ranges;
 }
 
 /* ------------------------------------------------------------------ *
@@ -843,49 +1134,104 @@ function expressionEnd(masked, from) {
   return masked.length;
 }
 
+/* The operator in front of a value can only USE IT UP - the result is a boolean
+ * or a number, and the namespace goes nowhere - or HAND IT ON, in which case
+ * where it lands is decided further out. Both lists are closed, and an operator
+ * in neither is a position this file cannot read, which is reported.
+ *
+ * The single characters are what `operatorBefore` returns for the WHOLE
+ * operator, so `&&` and `&` are two entries meaning two different things:
+ * `x && NS` may hand NS on, `x & NS` cannot. */
+const CONSUMES_THE_VALUE = new Set([
+  "!", "~", "typeof", "void", "delete", "case", "new", "instanceof", "in", "of",
+  "+", "-", "*", "/", "%", "**", "<", ">", "<=", ">=", "==", "===", "!=", "!==",
+  "&", "|", "^", "<<", ">>", ">>>",
+]);
+const HANDS_THE_VALUE_ON = new Set([
+  "", "=", "=>", "||", "&&", "??", "?", ":", "(", ")", ",", "[", "{", "}", ";", ".",
+  "const", "let", "var", "return", "else", "do", "try", "finally",
+]);
+
+/* ...and the same question on the other side, because `x === root.RAThing`
+ * reaches this file as a terminator rather than as a prefix. `&&` uses up its
+ * LEFT operand (`root.RAThing && root.RAThing.wanted()` is a presence test);
+ * `||` and `??` do not, because the left value is the result when it is there. */
+const USED_UP_BY = new Set([
+  "===", "==", "!==", "!=", "<", ">", "<=", ">=", "&&", "instanceof", "in", "of",
+  "+", "-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>", ">>>",
+]);
+
 /**
  * What becomes of a namespace value nobody reads a member off - the name-level
- * half of the closed bottom.
+ * half of the closed bottom, closed the same way round as the other two.
  *
- * A read that stays inside its expression (tested, compared, called) or that a
+ * A value that is used up where it stands (tested, compared, called) or that a
  * binding above consumed needs nothing further: the name itself is checked, and
- * any member read goes through a local this file tracks. A read that MOVES -
+ * any member read goes through a local this file tracks. A value that MOVES -
  * into an argument, an object property, an array, a return, or a binding the
- * resolver could not read - carries the namespace somewhere name resolution
- * does not follow, so it is named rather than counted. Returns null when there
- * is nothing to report.
+ * resolver did not read - carries the namespace somewhere name resolution does
+ * not follow, so it is named rather than counted.
+ *
+ * The difference from the version this replaces is the DEFAULT. That one
+ * enumerated the escapes and let everything else mean "it stays here", so
+ * `const T = (0, root.RAThing);` - a value handed out through a grouping paren
+ * into a binding - was silence, and `T.writeShares(...)` afterwards was checked
+ * nowhere. Here the value is followed until something in a closed list accounts
+ * for it, a grouping paren is followed OUT of rather than treated as an ending,
+ * and an expression that runs out without being accounted for is reported.
  */
-function escapeOf(masked, start, end, claimed, acc) {
-  if (claimed.has(start)) return null;
+function dispositionOf(masked, start, acc, ctx) {
+  if (ctx.claimed.has(start)) return null;
   // `root.createCapturePolicy({...})` and `root.RAToast?.(message)`: what moves
   // on from here is what the call RETURNED, which is not the namespace.
-  if (acc.kind === "call" || /^\s*\(/.test(masked.slice(end, end + 8))) return null;
-  const stop = expressionEnd(masked, end);
-  const c = masked[stop];
-  // A ternary's condition goes nowhere: `x ? a : b` hands on a or b.
-  if (c === "?") return null;
-  const before = wordBefore(masked, start);
+  if (acc.kind === "call" || acc.terminator === "(") return null;
+  const before = operatorBefore(masked, start);
   if (before === "return") return "returned from a function";
-  if (before === ">" && masked.slice(0, start).trimEnd().endsWith("=>")) {
-    return "returned from an arrow function";
+  if (before === "=>") return "returned from an arrow function";
+  // The name being declared, not a value being read: `const RATrackerIdb = ...`.
+  if (before === "const" || before === "let" || before === "var") return null;
+  if (CONSUMES_THE_VALUE.has(before)) return null;
+  if (!HANDS_THE_VALUE_ON.has(before)) {
+    return "in a position the resolver does not read (after " + JSON.stringify(before) + ")";
   }
-  // `=` here is an assignment, not the tail of `===`, `!==`, `>=` or `+=`.
-  if (before === "=" && !/[=!<>+\-*/%&|^]/.test(masked[masked.lastIndexOf("=", start) - 1] || "")) {
-    /* The CommonJS footer every module carries. It mirrors the namespace for
-     * `require()`, whose consumers are tests - excluded from this scan - and the
-     * name it reads is checked like any other. */
-    if (/module\s*\.\s*exports\s*=\s*$/.test(masked.slice(Math.max(0, start - 40), start))) return null;
-    return "bound by a form the resolver does not read";
-  }
-  if (c === undefined || c === ";") return null;
-  if (c === "," || CLOSERS.includes(c)) {
-    const open = enclosingOpen(masked, start);
-    if (open === null) return null;
-    if (masked[open] === "(") return opensGroup(masked, open) ? null : "an argument to a call";
-    if (masked[open] === "{") return opensObjectLiteral(masked, open) ? "a property of an object" : null;
+  if (acc.terminator === "=") return "reassigned by a form the resolver does not read";
+  if (USED_UP_BY.has(acc.terminator)) return null;
+
+  let pos = acc.end;
+  for (let step = 0; step < 4; step++) {
+    const stop = expressionEnd(masked, pos);
+    const c = masked[stop];
+    // A ternary's condition goes nowhere: `x ? a : b` hands on a or b.
+    if (c === "?") return null;
+    if (c === undefined || c === ";") return boundOutsideTheResolver(ctx, start);
+    const open = enclosingOpen(masked, stop);
+    if (open === null) return boundOutsideTheResolver(ctx, start);
     if (masked[open] === "[") return "an element of an array";
+    if (masked[open] === "{") {
+      return opensObjectLiteral(masked, open) ? "a property of an object" : boundOutsideTheResolver(ctx, start);
+    }
+    if (!opensGroup(masked, open)) return "an argument to a call";
+    if (STATEMENT_KEYWORDS.has(wordBefore(masked, open))) return null; // `if (NS)` tests it
+    const close = matchingClose(masked, open);
+    if (close === null) return boundOutsideTheResolver(ctx, start);
+    /* A grouping paren: the value carries on outside it - and if something is
+     * ACCESSED on it out there, `accessOn` has already declined to follow the
+     * value through this expression (`(0, window).RAThing` is a sequence, which
+     * `namespaceValue` does not read), so that member is checked nowhere. */
+    if (accessorAt(masked, close + 1).kind !== "none") {
+      return "reached through an expression the resolver does not read";
+    }
+    pos = close + 1;
   }
-  return null;
+  return "in an expression the resolver stopped following";
+}
+
+/** A value that reached the end of its expression inside something that BINDS,
+ *  without any binding here having claimed it. */
+function boundOutsideTheResolver(ctx, start) {
+  const binding = ctx.assignments.find((range) => start > range.from && start < range.to);
+  if (!binding || binding.exempt) return null;
+  return "bound by a form the resolver does not read";
 }
 
 /**
@@ -906,9 +1252,14 @@ function resolveReferences(sources, published) {
   const counts = { direct: 0, alias: 0, thunk: 0, destructure: 0, global: 0 };
 
   for (const [rel, masked] of sources) {
-    const { locals, claimed, puzzles, destructures, fromGlobal } = collectLocals(masked, published);
+    const { locals, claimed, puzzles, destructures, fromGlobal, assignments } = collectLocals(masked, published);
     const { aliases, thunks } = locals;
     for (const why of puzzles.values()) unresolvable.push(rel + ": " + why);
+    /* What `accessOn` and `dispositionOf` need in order to answer their
+     * questions about a value that starts at `start`: the file's locals, the
+     * reads some binding consumed, and the ranges a binding would carry one
+     * into. */
+    const about = (start) => ({ locals, claimed, assignments, start });
 
     const check = (ns, member, reference, form) => {
       const entry = published.get(ns);
@@ -950,12 +1301,17 @@ function resolveReferences(sources, published) {
       return null;
     };
 
-    const chain = (ns, member, acc, reference) => {
+    const chain = (ns, member, acc, reference, start) => {
       const entry = published.get(ns);
       if (!member || !entry || !entry.thunks.has(member)) return;
       const called = callEnd(masked, acc.end);
       if (called === null) return;
-      readAccess(entry.thunks.get(member), accessOn(masked, called), reference + "." + member + "()", "thunk");
+      readAccess(
+        entry.thunks.get(member),
+        accessOn(masked, called, about(start)),
+        reference + "." + member + "()",
+        "thunk"
+      );
     };
 
     const params = parameterNames(masked);
@@ -976,35 +1332,86 @@ function resolveReferences(sources, published) {
       }
     }
 
-    /* root.Thing - namespace objects and bare globals alike. One occurrence,
-     * one classification: an access on it is a member reference, and only the
-     * absence of an access makes it a name-level read. */
-    for (const hit of masked.matchAll(ROOT_READ)) {
-      const name = hit[1];
-      if (BROWSER_GLOBALS.has(name)) continue;
-      const start = hit.index;
-      const end = start + hit[0].length;
-      if (/^\s*=(?!=)/.test(masked.slice(end, end + 8))) continue; // the publication itself
-      const acc = accessOn(masked, end);
-      if (acc.kind === "none" || acc.kind === "call") {
-        check(name, null, name, "global");
-        const escape = escapeOf(masked, start, end, claimed, acc);
-        if (escape) unresolvable.push(rel + ": " + name + " is " + escape + ", so its members are not checked here");
+    /* EVERY MENTION OF THE GLOBAL OBJECT, and one classification each: the four
+     * names that mean it, plus any local that was bound to it. What follows the
+     * mention decides which of the five answers it is. Two of them end in a
+     * check, two in a report, and one - the name being bound rather than read -
+     * ends in neither, because it is not a read of the global object at all.
+     * There is no sixth answer and no fall-through. */
+    const mentions = [
+      ...[...masked.matchAll(ROOT_TOKEN)].map((h) => ({ at: h.index, end: h.index + h[0].length, via: h[0] })),
+      // A local named `root` is already in the list above, and reported there.
+      ...[...locals.globals].filter((local) => !ROOT_NAMES.has(local)).flatMap((local) =>
+        [...masked.matchAll(new RegExp("(?<![.\\w$])" + local + "(?![\\w$])", "g"))].map((h) => ({
+          at: h.index,
+          end: h.index + local.length,
+          via: local,
+        }))
+      ),
+    ];
+    for (const { at, end, via } of mentions) {
+      if (isMemberName(masked, at)) continue; // `out.self.endTurn` - a field, not the global object
+      const bound = bindsTheName(masked, at, end);
+      if (bound === "declaration") {
+        /* Declaring the local that HOLDS the global object is the binding this
+         * pass was told about. A declaration of one of the four names is a
+         * different matter: it would make every read after it mean something
+         * other than the global object. */
+        if (ROOT_NAMES.has(via)) {
+          unresolvable.push(rel + ": `" + via + "` is declared as a local here, so reads off it are not the global object");
+        }
         continue;
       }
-      chain(name, readAccess(name, acc, name, "direct"), acc, name);
-    }
+      if (bound === "parameter") {
+        /* The module wrapper's own parameter. Reads off it ARE reads of the
+         * global object, provided the wrapper was handed the global object -
+         * which is checked rather than assumed. */
+        const wrong = ROOT_NAMES.has(via) ? wrapperFeeding(masked, at) : null;
+        if (wrong) unresolvable.push(rel + ": `" + via + "` " + wrong + ", so reads off it may not be the global object");
+        continue;
+      }
+      if (bound) continue; // an object-literal key that happens to be spelled `root`
 
-    /* root[expr] - the NAMESPACE named by a value rather than by syntax, which
-     * is a rung below a computed member read: not even the namespace is known.
-     * Nothing resolves it, so the whole reference has to be visible instead. */
-    for (const hit of masked.matchAll(new RegExp(NS_ROOT + "\\s*(?:\\?\\.)?\\[", "g"))) {
-      const close = matchingClose(masked, hit.index + hit[0].length - 1);
-      const text = masked.slice(hit.index, close === null ? hit.index + 24 : close + 1);
-      unresolvable.push(
-        rel + ": a namespace read off the global object by expression, not by name: " +
-          JSON.stringify(text.replace(/\s+/g, " "))
-      );
+      const door = accessOn(masked, end, about(at));
+      if (door.kind === "computed") {
+        /* root[expr] - the NAMESPACE named by a value rather than by syntax,
+         * which is a rung below a computed member read: not even the namespace
+         * is known. Nothing resolves it, so the reference has to be visible. */
+        const close = matchingClose(masked, masked.indexOf("[", end));
+        const text = masked.slice(at, close === null ? end + 24 : close + 1);
+        unresolvable.push(
+          rel + ": a namespace read off the global object by expression, not by name: " +
+            JSON.stringify(text.replace(/\s+/g, " "))
+        );
+        continue;
+      }
+      if (door.kind === "unreadable") {
+        unresolvable.push(
+          rel + ": a read off the global object in a form the resolver cannot read: " + JSON.stringify(door.text)
+        );
+        continue;
+      }
+      if (door.kind === "named") {
+        const name = door.name;
+        if (BROWSER_GLOBALS.has(name)) continue;
+        if (/^\s*=(?!=)/.test(masked.slice(door.end, door.end + 8))) continue; // the publication itself
+        const acc = accessOn(masked, door.end, about(at));
+        if (acc.kind === "none" || acc.kind === "call") {
+          check(name, null, name, "global");
+          const escape = dispositionOf(masked, at, acc, about(at));
+          if (escape) unresolvable.push(rel + ": " + name + " is " + escape + ", so its members are not checked here");
+          continue;
+        }
+        chain(name, readAccess(name, acc, name, "direct"), acc, name, at);
+        continue;
+      }
+      /* The global object itself is the value. Handing it to another file hands
+       * over every namespace on it at once, so it is reported - unless it is
+       * being handed to the module wrapper, whose parameter is scanned as the
+       * global object in its own right. */
+      const escape = dispositionOf(masked, at, door, about(at));
+      if (!escape || (escape === "an argument to a call" && handedToModuleWrapper(masked, at))) continue;
+      unresolvable.push(rel + ": the global object is " + escape + ", so the namespaces on it are not checked here");
     }
 
     // const { name, name } = root
@@ -1043,14 +1450,14 @@ function resolveReferences(sources, published) {
     for (const [local, ns] of aliases) {
       for (const hit of masked.matchAll(new RegExp("(?<![.\\w$])" + local + "(?![\\w$])", "g"))) {
         const end = hit.index + local.length;
-        const acc = accessOn(masked, end);
+        const acc = accessOn(masked, end, about(hit.index));
         const reference = local + "  (" + local + " = " + ns + ")";
         if (acc.kind === "none" || acc.kind === "call") {
-          const escape = escapeOf(masked, hit.index, end, claimed, acc);
+          const escape = dispositionOf(masked, hit.index, acc, about(hit.index));
           if (escape) unresolvable.push(rel + ": " + reference + " is " + escape + ", so its members are not checked here");
           continue;
         }
-        chain(ns, readAccess(ns, acc, reference, "alias"), acc, reference);
+        chain(ns, readAccess(ns, acc, reference, "alias"), acc, reference, hit.index);
       }
     }
 
@@ -1063,8 +1470,8 @@ function resolveReferences(sources, published) {
         const called = callEnd(masked, hit.index + local.length);
         if (called === null) continue; // the declaration, the export, `const x = T()`
         const reference = local + "()  (" + local + " = () => " + ns + ")";
-        const acc = accessOn(masked, called);
-        chain(ns, readAccess(ns, acc, reference, "thunk"), acc, reference);
+        const acc = accessOn(masked, called, about(hit.index));
+        chain(ns, readAccess(ns, acc, reference, "thunk"), acc, reference, hit.index);
       }
     }
   }
@@ -1165,7 +1572,16 @@ test("every namespace member the extension reads is published under that name", 
 /* Set just under what the repo resolves today, per FORM, because a single total
  * cannot tell "the alias idiom moved to the thunk idiom" from "the alias idiom
  * stopped being read". Live counts: direct 109, alias 165, thunk 60,
- * destructure 97 - 431 member references - and 107 name-level reads.
+ * destructure 97 - 431 member references - and 175 name-level reads.
+ *
+ * The name-level count jumped from 107 to 175 when the entry side was closed,
+ * and none of that is new coverage of members: it is doors that used to be
+ * invisible now being counted once each. Most of it is the CommonJS footer
+ * `module.exports = (typeof window !== "undefined" ? window : globalThis).RAT*`
+ * that thirty-five files carry, which no version of this file had ever seen.
+ * The member total did not move by one - the same 431 member references resolve
+ * - which is the check that closing the door changed what is SEEN rather than
+ * what is resolved.
  *
  * MEMBER floors and NAME floors are kept apart on purpose. `global` counts
  * name-level reads - "something publishes this name" - and the other four count
@@ -1182,7 +1598,7 @@ test("every namespace member the extension reads is published under that name", 
  *     one it never read. Lowering the floor is not the fix. */
 const MEMBER_FLOORS = { direct: 105, alias: 160, thunk: 58, destructure: 95 };
 const MEMBER_TOTAL_FLOOR = 425;
-const NAME_FLOOR = 100;
+const NAME_FLOOR = 168;
 
 test("every reference form is still being resolved in the numbers the repo has", () => {
   const memberTotal = Object.entries(counts)
@@ -1234,31 +1650,60 @@ test("the references that cannot be resolved statically are these, and only thes
    *     another, which cannot be told apart by name;
    *   - a namespace bound, returned or stored by an expression `namespaceValue`
    *     cannot decide - the arrow-thunk hole, had this net existed when it
-   *     opened.
+   *     opened;
+   *   - a namespace or the global object reaching a BINDING the resolver did
+   *     not read: `const T = (0, root.RAThing);`, `let T; T = root.RAThing;`, a
+   *     class field, or whatever is invented next. The resolver does not have to
+   *     recognise the expression to report it - it only has to notice that a
+   *     value it was following ended up inside something that binds;
+   *   - a read off the global object in an entry syntax this file cannot read,
+   *     and a `const`/`let`/`var` of one of the four root names, which would
+   *     make every read after it mean something else;
+   *   - a module wrapper whose `root` parameter is handed something other than
+   *     the global object, which would make that whole file's reads fictional.
    *
-   * The third entry is the viewer's boot check, `REQUIRED.filter((name) =>
-   * !root[name])`. The names it looks for are STRINGS, which the masker blanks
-   * before any of this runs, so the namespace itself is unknown here - a rung
-   * below a computed member read, where at least the namespace has a name. It
-   * is listed rather than described so that a consumer moving to a string-keyed
-   * lookup has to come through this assertion.
+   * The viewer's boot check, `REQUIRED.filter((name) => !root[name])`, is the
+   * `root[name]` entry. The names it looks for are STRINGS, which the masker
+   * blanks before any of this runs, so the namespace itself is unknown here - a
+   * rung below a computed member read, where at least the namespace has a name.
+   * It is listed rather than described so that a consumer moving to a
+   * string-keyed lookup has to come through this assertion.
    *
-   * And the boundary of the claim, stated plainly, because two rounds have
-   * overclaimed it. This list is total for namespace values THIS SCAN SEES. It
-   * is not total for the extension:
+   * The last three entries are new, and they are what closing the entry side
+   * made visible: the GLOBAL OBJECT ITSELF crossing a call boundary, which every
+   * previous version of this file was blind to because it only ever looked at
+   * `root` when a dot followed it. Handing over the global object hands over
+   * every namespace on it at once, so each is a seam of the same kind as the idb
+   * injection above:
+   *   - dashboard/share-pipeline.js `window.RARepaint.repaint(window)` and
+   *     share/worker/public/viewer.js `root.RARepaint.repaint(root)` hand it to
+   *     share/repaint.js, which uses it for requestAnimationFrame only;
+   *   - share/clipboard.js `root.prompt.bind(root)` hands it to a platform
+   *     function as its `this`.
+   * None of the three reads an RA* namespace off what it was handed, and none
+   * can be followed statically, so they are named here. A fourth would be a
+   * prompt to check the same thing about it.
+   *
+   * And the boundary of the claim, stated plainly, because three rounds have
+   * overclaimed it. This list is total for namespace values THIS SCAN SEES, and
+   * what the scan sees is now every mention of the global object rather than
+   * every mention that matched a regex. It is still not total for the extension:
    *   - a namespace that escapes into a parameter is named here, but what the
    *     CALLEE then does with it is invisible; that is the seam above.
    *   - a value that both flows through an expression this reader cannot decide
    *     AND is handed onward in the same breath (`f(cond ? NS : other)`) is
    *     reported at the point it escapes, not at the point it was chosen.
-   *   - a namespace reached through neither `root.` nor a local bound from one
-   *     - through `this`, say, or an import - is not modelled at all. Nothing
-   *     in the extension does that today; the member floors are what would
-   *     notice consumers moving there wholesale. */
+   *   - a namespace reached through neither the global object nor a local bound
+   *     from it - through `this`, say, or an import - is not modelled at all.
+   *     Nothing in the extension does that today; the member floors are what
+   *     would notice consumers moving there wholesale. */
   assert.deepEqual(unresolvable, [
     "background.js: RATrackerIdb is a property of an object, so its members are not checked here",
     "dashboard/legacy.js: RATrackerIdb is a property of an object, so its members are not checked here",
+    "dashboard/share-pipeline.js: the global object is an argument to a call, so the namespaces on it are not checked here",
+    "share/clipboard.js: the global object is an argument to a call, so the namespaces on it are not checked here",
     'share/worker/public/viewer.js: a namespace read off the global object by expression, not by name: "root[name]"',
+    "share/worker/public/viewer.js: the global object is an argument to a call, so the namespaces on it are not checked here",
   ]);
 });
 
@@ -1347,6 +1792,17 @@ test("a renamed export is caught through every reference form", () => {
     "through an arrow body thunk": "const T = () => { return root.RAThing; };\nT().wrong();",
     "destructured through ??": "const { wrong } = root.RAThing ?? {};",
     "destructured through a conditional": "const { wrong } = flag ? root.RAThing : root.RAThing;",
+    /* THE ENTRY forms, which is where the fifth audit went through. Every one of
+     * these was a door the resolver did not know was a door, so the member taken
+     * off it afterwards was checked nowhere and renaming the key stayed green. */
+    "destructured off the global object": "const { RAThing } = window;\nRAThing.wrong();",
+    "destructured off the global object and renamed": "const { RAThing: T } = globalThis;\nT.wrong();",
+    "a newline before the dot": "window\n  .RAThing.wrong();",
+    "a comment before the dot": "window /* still the global object */.RAThing.wrong();",
+    "whitespace around an optional dot": "self ?.\n  RAThing . wrong();",
+    "off a parenthesised global object": "const v = (window).RAThing.wrong;",
+    "off a local holding the global object": "const G = window;\nG.RAThing.wrong();",
+    "off a local holding the global object through a fallback": "const G = injected || root;\nG.RAThing.wrong();",
   };
 
   for (const [shape, publish] of Object.entries(publications)) {
@@ -1434,6 +1890,109 @@ test("an access syntax this file was never taught is reported, not absorbed", ()
       null,
       "`" + optional + "` must never read as the end of a value, taught or not"
     );
+  }
+});
+
+test("a way IN this file was never taught is reported, not passed over", () => {
+  /* The entry side of the same property, and the side the fifth audit went
+   * through. Every case here puts a namespace - or the global object itself -
+   * into a name by an expression `namespaceValue` cannot read. None of them may
+   * be silent, because a member read off that name afterwards is checked
+   * nowhere, which is what `const { RATrackerStorage } = window;` plus a rename
+   * of `writeShares` proved: 809 green, both live call sites reading
+   * `undefined`. */
+  const publish = "root.RAThing = { wanted };\nroot.RAOther = { wanted };\n";
+  const doors = {
+    "a comma sequence": "const T = (0, root.RAThing);\nT.wanted();",
+    "a comma sequence read straight through": "(0, window).RAThing.wanted();",
+    "an array round trip": "const T = [root.RAThing][0];\nT.wanted();",
+    "a Map round trip": "const m = new Map();\nm.set('t', root.RAThing);\nm.get('t').wanted();",
+    "a copy": "const T = Object.assign({}, root.RAThing);\nT.wanted();",
+    "a spread": "const T = { ...root.RAThing };\nT.wanted();",
+    "a class field": "class X { ns = root.RAThing; }",
+    "a parameter": "function use(NS) { NS.wanted(); }\nuse(root.RAThing);",
+    "a reassignment": "let T;\nT = root.RAThing;\nT.wanted();",
+    "a namespace named by a string": "const T = globalThis['RAThing'];\nT.wanted();",
+    "a choice between two namespaces": "const T = flag ? root.RAThing : root.RAOther;\nT.wanted();",
+    "the global object into an array": "const gs = [window];\ngs[0].RAThing.wanted();",
+    "the global object into a binding this file does not read": "const G = (0, window);\nG.RAThing.wanted();",
+  };
+  for (const [form, use] of Object.entries(doors)) {
+    const got = scan({ "a.js": publish, "b.js": use });
+    assert.deepEqual(got.problems, [], form + " is not a broken reference, only an unfollowable one: " + use);
+    assert.ok(got.unresolvable.length >= 1, form + " must be named in unresolvable: " + use);
+  }
+
+  /* And the counterfactual, stated as the fact that makes it hold - the same
+   * shape of argument as the `?.` one above. The report does NOT come from
+   * recognising the expression. `namespaceValue` has never heard of a sequence
+   * expression, an array subscript or a spread, and says "not a namespace" for
+   * all three; they are reported anyway, because the value was followed to the
+   * end of an expression that BINDS and no binding here claimed it. Teaching
+   * this file a new binding syntax therefore moves a case from this test to the
+   * one above, and forgetting to teach it costs a resolved reference and a line
+   * here - not silence. */
+  const blank = { aliases: new Map(), thunks: new Map(), globals: new Set() };
+  for (const expr of ["(0, root.RAThing)", "[root.RAThing][0]", "{ ...root.RAThing }"]) {
+    const src = "const T = " + expr + ";";
+    const masked = maskLiterals(src);
+    const value = namespaceValue(masked, src.indexOf("= ") + 1, src.lastIndexOf(";"), blank);
+    assert.ok(!value.ns && !value.globalObject, "`" + expr + "` must be an expression the reader cannot decide");
+  }
+});
+
+test("the global object crossing a boundary is named, and the module wrapper is checked not assumed", () => {
+  /* Handing over the global object hands over every namespace on it at once, so
+   * it is an escape of the same kind as handing over one namespace - and the
+   * repo does it three times, which no earlier version of this file could see.
+   *
+   * The one place it is NOT an escape is the wrapper every module here ends
+   * with, and that is not a spelling exemption: it holds because the value
+   * crosses into a PARAMETER named `root`, and reads off that name are scanned
+   * as reads of the global object in their own right. Change what the wrapper is
+   * handed and the exemption has to fail, or it is not a check. */
+  const publish = "root.RAThing = { wanted };\n";
+  const wrapper = (arg) => "(function (root) {\n  root.RAThing.wanted();\n})(" + arg + ");\n";
+
+  const closed = scan({ "a.js": publish, "b.js": wrapper('typeof window !== "undefined" ? window : globalThis') });
+  assert.deepEqual(closed.problems, []);
+  assert.deepEqual(closed.unresolvable, [], "the module wrapper is not an escape: its parameter IS the global object");
+
+  const wrong = scan({ "a.js": publish, "b.js": wrapper("someOtherObject") });
+  assert.equal(wrong.unresolvable.length, 1, "a wrapper handed something else must be reported");
+  assert.match(wrong.unresolvable[0], /handed something other than the global object/);
+
+  // ...and the same for a local that takes the global object's place.
+  const shadowed = scan({ "a.js": publish, "b.js": "const root = fake;\nroot.RAThing.wanted();\n" });
+  assert.equal(shadowed.unresolvable.length, 1);
+  assert.match(shadowed.unresolvable[0], /declared as a local here/);
+
+  // A parameter named `self` on some ordinary function is the same problem as a
+  // `const self`, and is reported rather than assumed either way.
+  const borrowed = scan({ "a.js": publish, "b.js": "const run = (self) => self.tick();\n" });
+  assert.match(borrowed.unresolvable.join(), /is a parameter of a function that is not an immediately invoked wrapper/);
+
+  // The three ways the repo hands the global object over, each of which must be
+  // visible where it happens.
+  for (const use of ["repaint(window);", "const all = [root];", "thing.bind(root);"]) {
+    const got = scan({ "a.js": publish, "b.js": use });
+    assert.equal(got.unresolvable.length, 1, "the global object must not cross silently: " + use);
+    assert.match(got.unresolvable[0], /the global object is/);
+  }
+
+  /* And the names that merely LOOK like the global object are not it: an object
+   * key spelled `root`, a field spelled `self`. A guard that reports an object
+   * literal's own keys as escaping namespaces reports nothing. */
+  const quiet = {
+    "an object key": "const SEL = {\n  root: '[data-testid=\"x\"]',\n};\n",
+    "an object key in a returned literal": "const blank = () => ({\n  self: side(),\n});\n",
+    "a field of a tally": "out.self.endTurn += 1;\n",
+    "a field of a tally, read": "const n = out.self.endTurn;\n",
+  };
+  for (const [form, use] of Object.entries(quiet)) {
+    const got = scan({ "a.js": publish, "b.js": use });
+    assert.deepEqual(got.unresolvable, [], form + " is not the global object: " + use);
+    assert.deepEqual(got.problems, [], form + " is not the global object: " + use);
   }
 });
 
