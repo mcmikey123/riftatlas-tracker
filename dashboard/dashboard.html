@@ -442,6 +442,21 @@
 <script src="share-pipeline.js"></script>
 <script src="share-moment.js"></script>
 <script src="shares-view.js"></script>
+<!-- The toast and the dialog live in the module half; this is how a classic
+     script reaches them, and the fallback for when it is loaded on its own. -->
+<script src="notify.js"></script>
+<!-- Views drained out of legacy.js. Classic scripts, and loaded before it: it
+     takes each one off the global as it evaluates and hands it the match array
+     through mount(), and their click listeners must register where legacy.js's
+     own branches used to be - ahead of view-matches.js, a deferred module.
+     view-replays.js follows the four share files, whose panel it draws inside
+     its own rows and whose busy flag its delete confirm checks. -->
+<script src="view-overview.js"></script>
+<script src="view-replays.js"></script>
+<script src="deck-labelling.js"></script>
+<script src="data-io.js"></script>
+<script src="backups.js"></script>
+<script src="settings-capture.js"></script>
 <!-- Being drained one view at a time. Every element it reaches for may already
      have been ported, so nothing in it dereferences a query result directly. -->
 <script src="legacy.js"></script>

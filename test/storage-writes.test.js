@@ -82,7 +82,7 @@ test("legacy.js and the files drained out of it never dereference a query result
    * with it. A module carved out of it renders into that same moving markup and
    * carries the same rule with it, so the scan follows the code rather than
    * staying behind on the file it started in. */
-  const drained = ["legacy.js", "shares-view.js"]
+  const drained = ["legacy.js", "shares-view.js", "view-overview.js", "view-replays.js", "deck-labelling.js", "data-io.js", "backups.js", "settings-capture.js"]
     .map((name) => sources.find((f) => f.name === name))
     .filter(Boolean);
   if (!drained.length) return; // fully drained; nothing left to check
@@ -93,11 +93,18 @@ test("legacy.js and the files drained out of it never dereference a query result
      * idiom empties the match set and turns the assertion green without
      * checking a thing, so the presence of the idiom is asserted first - per
      * file, because the union would stay true for as long as any one of them
-     * still used it. */
+     * still used it.
+     *
+     * The accessors are part of the idiom, not an alternative to it: a file
+     * that only ever reaches an element through `on`, `val`, `setText` and
+     * their siblings has nothing to dereference unguardedly, which is the rule
+     * being kept rather than a hole in it. What must never happen is a file
+     * reaching for elements in some FOURTH way this scan cannot see. */
     assert.ok(
-      /\$\("#[^"]+"\)/.test(file.text),
-      `${file.name} no longer looks up elements as $("#id") - this guard has stopped ` +
-        "matching the code it exists to check, and must be taught the new idiom."
+      /\$\("#[^"]+"\)|\b(?:on|val|isChecked|setText|setHtml)\("#[^"]+"/.test(file.text),
+      `${file.name} no longer looks up elements as $("#id") or through the null-guarded ` +
+        "accessors - this guard has stopped matching the code it exists to check, and must " +
+        "be taught the new idiom."
     );
 
     const bare = file.text.match(

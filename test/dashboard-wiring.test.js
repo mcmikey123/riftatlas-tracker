@@ -39,7 +39,7 @@ const stripComments = (text) =>
  * legacy.js's null-guarded `$("#id")` idiom, which is what the scan below
  * knows how to read; the ES modules use `document.querySelector` and are not
  * part of this. */
-const DRAINED = ["legacy.js", "shares-view.js"];
+const DRAINED = ["legacy.js", "shares-view.js", "view-overview.js", "view-replays.js", "deck-labelling.js", "data-io.js", "backups.js", "settings-capture.js"];
 
 test("every element id legacy.js and its offspring reach for is still in the markup", () => {
   const present = DRAINED.filter((f) => fs.existsSync(path.join(DIR, f)));
@@ -117,6 +117,56 @@ test("the share modules load before legacy.js, which reads them as it evaluates"
     at("settings-clamps.js") < at("share-pipeline.js"),
     "settings-clamps.js must load before share-pipeline.js, which reads it at eval time"
   );
+});
+
+test("the views drained out of legacy.js load before it, as classic scripts", () => {
+  /* Each of these was a section of legacy.js and is now a file with its own
+   * delegated listener. Two things about the load order are load-bearing:
+   *
+   *   legacy.js binds every one of them off the global as it evaluates and
+   *   calls its mount() - load one later and that binding is undefined for the
+   *   life of the page, which is a whole view that silently does nothing;
+   *
+   *   being CLASSIC is what keeps their click branches where they were. Their
+   *   listeners are registered from legacy.js's own evaluation, which happens
+   *   before any deferred module runs - so they stay ahead of view-matches.js,
+   *   whose fallback branch closes an open row menu and repaints on any click
+   *   these branches also answer. Turn one into a module and it registers after
+   *   that repaint instead of before it. */
+  const order = [...html.matchAll(/<script (?:type="module" )?src="([^"]+)"/g)].map((m) => m[1]);
+  const at = (file) => order.findIndex((src) => src.endsWith(file));
+  const legacy = at("legacy.js");
+  assert.notEqual(legacy, -1, "legacy.js is not loaded");
+
+  const drained = [
+    "view-overview.js",
+    "view-replays.js",
+    "deck-labelling.js",
+    "data-io.js",
+    "backups.js",
+    "settings-capture.js",
+  ];
+  for (const file of drained.concat("notify.js")) {
+    assert.ok(at(file) !== -1, `dashboard.html must load ${file}`);
+    assert.ok(at(file) < legacy, `${file} must load before legacy.js, which mounts it as it evaluates`);
+    assert.ok(
+      !new RegExp(`<script type="module" src="[^"]*${file}"`).test(html),
+      `${file} must stay a classic script, or its click listeners register after view-matches.js's`
+    );
+  }
+
+  // notify.js is how a classic script reaches the toast and the dialog; every
+  // one of these takes it off the global as it evaluates.
+  for (const file of drained) {
+    assert.ok(at("notify.js") < at(file), `notify.js must load before ${file}`);
+  }
+  // view-replays.js draws the share panel inside its own rows and asks the
+  // pipeline whether an upload is in flight before it deletes a recording.
+  assert.ok(at("share-panel.js") < at("view-replays.js"));
+  assert.ok(at("shares-view.js") < at("view-replays.js"));
+  // backups.js builds its file with data-io.js's bundle builder, and falls back
+  // to its download when the downloads permission is declined.
+  assert.ok(at("data-io.js") < at("backups.js"));
 });
 
 test("the module entry point is loaded as a module, and last", () => {
