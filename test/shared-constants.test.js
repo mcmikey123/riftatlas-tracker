@@ -28,11 +28,15 @@ function arrayLiteral(source, name, where) {
 }
 
 test("the deck zones the capture and the dashboard read are the same list", () => {
-  /* content.js harvests cards from these zones; fingerprint.js identifies a
+  /* The capture harvests cards from these zones; fingerprint.js identifies a
    * deck from the cards that came back. A zone added to one and not the other
    * is not an error anywhere - the cards from it are simply never collected,
    * or never counted, and the deck is misidentified with no diagnostic. */
-  const fromCapture = arrayLiteral(read("content.js"), "DECK_ZONES", "content.js");
+  const fromCapture = arrayLiteral(
+    read("capture/deck-cards.js"),
+    "DECK_ZONES",
+    "capture/deck-cards.js"
+  );
   const fromDashboard = arrayLiteral(
     read("dashboard/fingerprint.js"),
     "DECK_ZONES",
@@ -46,12 +50,12 @@ test("the deck zones the capture and the dashboard read are the same list", () =
 });
 
 test("the log cap the recorder enforces is the one the dashboard tells the user about", () => {
-  /* content.js stops a match log at MAX_LOG entries. The expanded row in the
+  /* The capture stops a match log at MAX_LOG entries. The expanded row in the
    * dashboard both compares against that number and prints it in a sentence,
    * so raising the cap in the recorder without touching the view leaves the
    * sentence quietly lying about what was kept. */
-  const cap = read("content.js").match(/const MAX_LOG = (\d+)/);
-  assert.ok(cap, "content.js must declare MAX_LOG");
+  const cap = read("capture/match-lifecycle.js").match(/const MAX_LOG = (\d+)/);
+  assert.ok(cap, "capture/match-lifecycle.js must declare MAX_LOG");
 
   const view = read("dashboard/view-matches.js");
 
@@ -62,7 +66,7 @@ test("the log cap the recorder enforces is the one the dashboard tells the user 
   assert.match(
     view,
     new RegExp(`length\\s*>=\\s*${cap[1]}\\b`),
-    `content.js caps the log at ${cap[1]} entries but dashboard/view-matches.js no longer ` +
+    `the capture caps the log at ${cap[1]} entries but dashboard/view-matches.js no longer ` +
       "compares against that number - the cap and the view that renders it have drifted"
   );
 

@@ -76,25 +76,27 @@ test("every capture module is loaded, and none of them after content.js", () => 
   }
 });
 
-test("the winning score agrees between content.js and the start decision", () => {
-  /* Both files need it - content.js to end a match on score, match-start.js to
-   * recognise a board that is already decided - and neither can import the
-   * other at the point it is read. A pair that drifts is silent: matches would
-   * end at one number and be suppressed as finished at another. */
+test("the winning score agrees between the lifecycle and the start decision", () => {
+  /* Both files need it - match-lifecycle.js to end a match on score,
+   * match-start.js to recognise a board that is already decided - and neither
+   * can import the other at the point it is read. A pair that drifts is silent:
+   * matches would end at one number and be suppressed as finished at another. */
   const winScore = (source, where) => {
     const hit = source.match(/const WIN_SCORE = (\d+)/);
     assert.ok(hit, where + " must declare WIN_SCORE as a numeric literal");
     return hit[1];
   };
   assert.equal(
-    winScore(content, "content.js"),
+    winScore(read("capture/match-lifecycle.js"), "capture/match-lifecycle.js"),
     winScore(read("capture/match-start.js"), "capture/match-start.js")
   );
 });
 
-/* The two fixes below cannot be reached from a test: both live inside the IIFE,
- * behind a MutationObserver and a rAF. Their shape is asserted instead, because
- * both regressed silently once already. */
+/* The fix below cannot be reached from a test: it lives inside content.js's
+ * IIFE, behind a MutationObserver and a rAF. Its shape is asserted instead,
+ * because it regressed silently once already. (Its counterpart, the lean
+ * dirty-check, moved into capture/match-lifecycle.js when the record did and is
+ * now driven for real - see test/match-lifecycle.test.js.) */
 
 test("the observer keeps every mutation batch, not just the one that scheduled the frame", () => {
   /* The observer can deliver several batches inside one frame and only the
@@ -124,8 +126,11 @@ test("the record stored in the matches array never carries the game log", () => 
    * log inside it is ~21 KB per match rewritten per captured line. The
    * dirty-check compares the same lean shape for the same reason: comparing
    * currentMatch sees `log` grow on every line and rewrites the whole array to
-   * store bytes that never changed. Logs live under log_<id>. */
-  const source = code(content);
+   * store bytes that never changed. Logs live under log_<id>.
+   *
+   * Both halves are now driven behaviourally in test/match-lifecycle.test.js.
+   * The shape check stays because it is the one that names the mistake. */
+  const source = code(read("capture/match-lifecycle.js"));
   assert.ok(/function leanRecord\(record\)[\s\S]{0,200}delete lean\.log/.test(source),
     "leanRecord must strip the log before a record is stored");
   assert.ok(/JSON\.stringify\(leanRecord\(currentMatch\)\)/.test(source),
