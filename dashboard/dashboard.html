@@ -405,6 +405,11 @@
 <script src="../vendor/rrweb-replay.min.js"></script>
 <script src="../replay/replay-timeline.js"></script>
 <script src="../replay/replay-core.js"></script>
+<!-- The transport row under a replay - play, step, seek, clock, chips, keys -
+     is the same on this page and on the share viewer's, so it is one file that
+     both load. The share viewer's copy is synced by share/worker/sync-assets.sh
+     and its three lists are held together by test/viewer-assets.test.js. -->
+<script src="../replay/replay-transport.js"></script>
 <script src="replay-html.js"></script>
 <!-- Sharing. css-assets.js is loaded here as well as in the service worker: a
      share re-strips the CSS that get() rehydrated, using the same pure function

@@ -18,6 +18,7 @@ for rel in \
   vendor/rrweb.min.css \
   replay/replay-timeline.js \
   replay/replay-core.js \
+  replay/replay-transport.js \
   share/payload.js \
   share/hosts.js \
   share/viewer-support.js \
