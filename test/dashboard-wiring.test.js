@@ -110,6 +110,13 @@ test("the share modules load before legacy.js, which reads them as it evaluates"
   // And all of them read share/share-ui-support.js and share/hosts.js.
   assert.ok(at("share-ui-support.js") < at("share-panel.js"));
   assert.ok(at("hosts.js") < at("share-panel.js"));
+  /* share-pipeline.js binds RATrackerSettingsClamps as it evaluates, to clamp
+   * the endpoint the upload goes to. Load it later and CLAMP is undefined for
+   * the life of the page - which is the failure this whole test exists for. */
+  assert.ok(
+    at("settings-clamps.js") < at("share-pipeline.js"),
+    "settings-clamps.js must load before share-pipeline.js, which reads it at eval time"
+  );
 });
 
 test("the module entry point is loaded as a module, and last", () => {

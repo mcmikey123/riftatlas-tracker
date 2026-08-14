@@ -102,7 +102,6 @@
    */
   function listRowHtml(record, now, label, recheck) {
     const expired = SHARE.isExpired(record, now);
-    const created = new Date(record.createdAt);
     const oid = esc(record.objectId);
     return `<tr class="${expired ? "sh-expired-row" : ""}">
         <td>${esc(label)}</td>
