@@ -321,14 +321,22 @@
            * The wipe is therefore limited to what the archive actually holds. */
           const stragglers = store.matches().filter((m) => !archivedIds.has(m.id));
           chrome.storage.local.get(null, (data) => {
-            STORE().removeKeys(clearableKeys(Object.keys(data || {}), archivedIds), () => {
-              store.setMatches(stragglers);
-              store.clearLogs();
+            /* Same order as the single-match delete in legacy.js, and for the
+             * same reason: the array is written FIRST, and the dependent keys
+             * and recordings are torn down only once that write has landed.
+             * This ran the other way round, with forgetAllVisual - which sends
+             * to the service worker and repaints - sitting between the removal
+             * of every log_<id> / deckcards_<id> and the write. A throw there
+             * left `matches` holding every archived match with its log, its
+             * cards and its share records already deleted. */
+            const clearable = clearableKeys(Object.keys(data || {}), archivedIds);
+            store.setMatches(stragglers);
+            store.clearLogs();
+            STORE().writeMatches(stragglers, () => {
+              repaint();
+              say(clearedMessage(stragglers.length), "success");
+              STORE().removeKeys(clearable);
               root.RATrackerViewReplays.forgetAllVisual();
-              STORE().writeMatches(stragglers, () => {
-                repaint();
-                say(clearedMessage(stragglers.length), "success");
-              });
             });
           });
         });
@@ -368,12 +376,17 @@
         if (!ok) return;
         store.setMatches([]);
         store.clearLogs();
-        root.RATrackerViewReplays.forgetAllVisual();
-        chrome.storage.local.get(null, (data) => {
-          const keys = clearableKeys(Object.keys(data || {}), null);
-          if (keys.length) STORE().removeKeys(keys);
+        // Write-then-tear-down, as above. Nothing here can lose a match the way
+        // the two paths above could - this one is clearing everything - but the
+        // order is the one all three now follow.
+        store.persist(store.matches(), () => {
+          repaint();
+          chrome.storage.local.get(null, (data) => {
+            const keys = clearableKeys(Object.keys(data || {}), null);
+            if (keys.length) STORE().removeKeys(keys);
+          });
+          root.RATrackerViewReplays.forgetAllVisual();
         });
-        store.persist(store.matches(), repaint);
       });
     });
   }

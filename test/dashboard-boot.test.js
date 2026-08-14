@@ -455,6 +455,83 @@ test("every control the dashboard still owns can be operated", async () => {
   );
 });
 
+// ---- deleting -------------------------------------------------------------
+
+test("deleting a match takes its log and cards with it", async () => {
+  const h = boot({
+    matches: HISTORY,
+    replays: [replayRecord({ matchId: "m2" })],
+    storage: { shares: [], log_m2: { id: "m2", log: ["10:00 you played a card"] }, deckcards_m2: { codes: [] } },
+  });
+  h.document.querySelector("[data-matches]").innerHTML = matchRowHtml("m2");
+
+  h.click("[data-del='m2']");
+  await h.quiet("deleting a match");
+
+  assert.deepEqual(
+    h.storage.matches.map((m) => m.id),
+    ["m1", "m3"],
+    "the match must be gone from the stored array"
+  );
+  assert.ok(h.removed.includes("log_m2") && h.removed.includes("deckcards_m2"), "and its keys with it");
+  assert.ok(
+    h.sent.some((m) => m.type === "ra:visual:delete" && m.matchId === "m2"),
+    "the service worker must be told to drop the recording"
+  );
+});
+
+test("a delete that fails part way never leaves a match without its log", async () => {
+  /* The confirm says "This cannot be undone", and until the ordering was fixed
+   * it could leave a state worse than either outcome it offered.
+   *
+   * legacy.js used to delete log_<id> and deckcards_<id>, then call
+   * REPLAYS.forgetVisual, then write the array. forgetVisual sends to the
+   * service worker and repaints the replay panel, so it throws for reasons that
+   * have nothing to do with this delete - most plainly an extension context
+   * invalidated by a reload, which is what is simulated here. The throw landed
+   * between the removal and the write: the keys were gone, the match was not,
+   * and the next reload brought the row back with its log and card list
+   * permanently empty.
+   *
+   * Writing the array first makes that state unreachable. Whatever throws
+   * afterwards can only orphan bytes nothing references. */
+  const h = boot({
+    matches: HISTORY,
+    replays: [replayRecord({ matchId: "m2" })],
+    storage: { shares: [], log_m2: { id: "m2", log: ["10:00 you played a card"] }, deckcards_m2: { codes: [] } },
+  });
+  h.document.querySelector("[data-matches]").innerHTML = matchRowHtml("m2");
+
+  const boom = new Error("Extension context invalidated.");
+  h.sandbox.RATrackerViewReplays.forgetVisual = () => {
+    throw boom;
+  };
+
+  /* In a browser the throw becomes a rejected promise nobody holds, and the
+   * page carries on with whatever state it was left in - which is the point.
+   * Here it has to be caught, or the runner attributes it to this test instead
+   * of letting the assertions below read the wreckage. legacy.js does
+   * `ask({...}).then(run)` and discards the result, so a thenable that hands
+   * back a caught chain is the whole seam. */
+  const swallowed = [];
+  h.sandbox.RATrackerDialog.confirm = () => ({
+    then: (run) => Promise.resolve(true).then(run).catch((err) => swallowed.push(err)),
+  });
+
+  h.click("[data-del='m2']");
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(swallowed, [boom], "the delete must have reached forgetVisual and thrown there");
+
+  // The delete really did run: without this the assertion below is vacuous.
+  assert.ok(h.removed.includes("log_m2"), "the log key must have been removed");
+  assert.ok(
+    !h.storage.matches.some((m) => m.id === "m2"),
+    "m2 is still in the stored matches array while log_m2 has already been deleted - " +
+      "the next reload brings the match back with its log and cards gone for good"
+  );
+  assert.deepEqual(h.warnings, []);
+});
+
 test("clearing everything drops the recordings with the matches", async () => {
   /* The one that has to hold together: data-io.js empties the array in memory,
    * tells the Replays view to forget every recording, and only then writes. A
@@ -487,6 +564,36 @@ test("archiving and clearing keeps what the archive file does not hold", async (
   );
   assert.deepEqual([...h.storage.matches], []);
   assert.ok(h.toasts.some((t) => /Cleared|cleared/.test(t.message)));
+});
+
+test("an archive-and-clear that fails part way never strips a match it left behind", async () => {
+  /* data-io.js had the delete path's shape: remove every clearable key, then
+   * forgetAllVisual, then write the array. A throw in the middle left `matches`
+   * holding every archived match with its log, its cards and its share records
+   * already gone. The archive file makes that recoverable rather than fatal,
+   * which is the only reason it is not the same severity - not a reason to keep
+   * the order. */
+  const h = boot({ matches: HISTORY, storage: { shares: [], log_m1: { id: "m1", log: [] } } });
+
+  const boom = new Error("Extension context invalidated.");
+  h.sandbox.RATrackerViewReplays.forgetAllVisual = () => {
+    throw boom;
+  };
+  const swallowed = [];
+  h.sandbox.RATrackerDialog.confirm = () => ({
+    then: (run) => Promise.resolve(true).then(run).catch((err) => swallowed.push(err)),
+  });
+
+  h.click("#archiveClear");
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+
+  assert.deepEqual(swallowed, [boom], "the clear must have reached forgetAllVisual and thrown there");
+  assert.ok(h.removed.includes("log_m1"), "the log keys must have been removed");
+  assert.deepEqual(
+    h.storage.matches.map((m) => m.id),
+    [],
+    "the archived matches are still in storage with their logs and share records deleted"
+  );
 });
 
 // ---- backups -------------------------------------------------------------

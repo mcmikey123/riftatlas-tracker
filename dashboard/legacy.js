@@ -474,10 +474,31 @@
          * stops a surviving pair reading G1 and G3, and dissolves a series left
          * with a single game rather than leaving it wearing a G1 badge. */
         if (gone && gone.seriesId) all = SERIES.renumber(all, gone.seriesId);
-        logCache.delete(del);
-        STORE.removeKeys(["deckcards_" + del, "log_" + del]);
-        REPLAYS.forgetVisual(del);
-        persist(all, repaint);
+        /* The array is written FIRST, and the match's dependent data is torn
+         * down only once that write has landed.
+         *
+         * This ran the other way round - removeKeys, then forgetVisual, then
+         * persist - and the two orders fail very differently. forgetVisual
+         * sends a message to the service worker and re-renders the replay
+         * panel, so it can throw for reasons that have nothing to do with this
+         * delete (an invalidated extension context after a reload, a paint
+         * against markup that has moved). Under the old order that throw landed
+         * between the deletion of log_<id> / deckcards_<id> and the write of
+         * the array: the keys were gone, the match was not, and the next reload
+         * brought it back stripped of its log and its card list - permanently,
+         * on the other side of a dialog that said it could not be undone.
+         *
+         * Persist-first cannot lose anything. If a later step throws, the worst
+         * state is an orphaned log_<id>, deckcards_<id> or visual recording:
+         * bytes nothing references, which archive-and-clear reclaims. The
+         * repaint goes first inside the callback for the same reason - the list
+         * must not keep showing a row that storage no longer has. */
+        persist(all, () => {
+          repaint();
+          logCache.delete(del);
+          STORE.removeKeys(["deckcards_" + del, "log_" + del]);
+          REPLAYS.forgetVisual(del);
+        });
       });
     }
   });
