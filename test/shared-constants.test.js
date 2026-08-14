@@ -78,3 +78,27 @@ test("the log cap the recorder enforces is the one the dashboard tells the user 
       "- the copy and the constant have drifted"
   );
 });
+
+test("the version the dashboard shows is the version the extension is", () => {
+  /* The version lives in two places: manifest.json, which is what Chrome
+   * installs and what decides whether a user gets an update at all, and the
+   * badge in the dashboard header that tells them which one they are running.
+   *
+   * They were in sync by hand and by luck. A release that bumps the manifest
+   * and forgets the badge leaves every user looking at a number that says they
+   * did not get the release they did get - which is the one piece of evidence
+   * they have when a fix does not appear to have landed. Bumping 0.13.0 to
+   * 0.14.0 meant editing both, which is the drift this pins. */
+  const manifest = JSON.parse(read("manifest.json"));
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/, "manifest.json needs a semver version");
+
+  const badge = read("dashboard/dashboard.html").match(
+    /<span class="brand-version">([^<]+)<\/span>/
+  );
+  assert.ok(badge, "dashboard.html must show a version in .brand-version");
+  assert.equal(
+    badge[1].trim(),
+    manifest.version,
+    "the dashboard's version badge and manifest.json disagree - one of them was not bumped"
+  );
+});
