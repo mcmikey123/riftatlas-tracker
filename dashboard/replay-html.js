@@ -14,7 +14,8 @@
   "use strict";
 
   const { esc, fmtClock } = root.RATrackerFormat;
-  const { MAX_CHIPS, SEEK, timeline, evenly, truncationText, targetOwnsKey } = root.RAReplayTimeline;
+  const { MAX_CHIPS, SEEK, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
+    root.RAReplayTimeline;
 
   /**
    * Escape is consumed by the browser to leave fullscreen, but not every engine
@@ -55,6 +56,9 @@
         <button class="rp-btn vr-next" title="Next board state (→)">▶|</button>
         <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
         <span class="rp-meta vr-time"></span>
+        <select class="rp-btn rp-speed vr-speed" title="Playback speed" aria-label="Playback speed">${SPEEDS.map(
+          (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
+        ).join("")}</select>
         <button class="rp-btn vr-full" title="Fullscreen (f)" aria-pressed="false">⛶ Fullscreen</button>
         ${
           withMoment
@@ -87,6 +91,7 @@
       prevBtn: container.querySelector(".vr-prev"),
       nextBtn: container.querySelector(".vr-next"),
       fullBtn: container.querySelector(".vr-full"),
+      speedSel: container.querySelector(".vr-speed"),
       momentBtn: container.querySelector(".vr-moment"),
       momentPanel: container.querySelector(".vr-share"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
@@ -100,7 +105,8 @@
    * for everything wired here and for the core underneath.
    */
   function wireControls(handles, meta, events, marks, chips, shareMoment) {
-    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, chapterEls } = handles;
+    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
+      handles;
 
     function paint(at, total) {
       // The range is set on every paint, not once after create(): create() fires
@@ -244,6 +250,13 @@
     playBtn.addEventListener("click", playback.togglePlay);
     prevBtn.addEventListener("click", () => playback.stepTo(-1));
     nextBtn.addEventListener("click", () => playback.stepTo(1));
+    // The select is written back from what the core actually accepted, so the
+    // control never claims a rate the engine is not running at.
+    if (speedSel) {
+      speedSel.addEventListener("change", () => {
+        speedSel.value = String(playback.setSpeed(parseFloat(speedSel.value)));
+      });
+    }
     // `input` fires all the way through a drag, so the drag holds playback and
     // the end of the drag is what puts it back. The end is taken from the events
     // that always fire — never from `change`, which Gecko withholds when the

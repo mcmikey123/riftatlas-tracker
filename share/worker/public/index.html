@@ -51,6 +51,13 @@
       <label class="seek-label" for="seek">Position</label>
       <input class="seek" id="seek" type="range" min="0" max="1000" value="0" step="1">
       <span class="clock" id="clock">0:00 / 0:00</span>
+      <select class="btn speed" id="speed" title="Playback speed" aria-label="Playback speed">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+        <option value="6">6×</option>
+      </select>
       <button class="btn moment" id="copyAt" type="button"
               title="Copy a link that opens this replay at the moment it is showing now">Copy link to this moment</button>
     </div>
