@@ -32,36 +32,84 @@ const idsInHtml = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
 const stripComments = (text) =>
   text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
-test("every element id legacy.js reaches for is still in the markup", () => {
-  const legacyPath = path.join(DIR, "legacy.js");
-  if (!fs.existsSync(legacyPath)) return; // fully drained
-  const legacy = stripComments(read("legacy.js"));
+/* legacy.js and the files drained out of it. A module that took a view out of
+ * legacy.js took that view's element lookups with it, and they are exactly as
+ * exposed to a markup rename as they were before the move - so the scan follows
+ * them rather than quietly checking less than it used to. Each of these uses
+ * legacy.js's null-guarded `$("#id")` idiom, which is what the scan below
+ * knows how to read; the ES modules use `document.querySelector` and are not
+ * part of this. */
+const DRAINED = ["legacy.js", "shares-view.js"];
+
+test("every element id legacy.js and its offspring reach for is still in the markup", () => {
+  const present = DRAINED.filter((f) => fs.existsSync(path.join(DIR, f)));
+  if (!present.length) return; // fully drained
 
   const wanted = new Set();
-  for (const m of legacy.matchAll(/\bon\("#([a-zA-Z][\w-]*)"/g)) wanted.add(m[1]);
-  for (const m of legacy.matchAll(/\$\("#([a-zA-Z][\w-]*)["\s]/g)) wanted.add(m[1]);
-  for (const m of legacy.matchAll(/\b(?:val|isChecked|setText|setHtml)\("#([a-zA-Z][\w-]*)"/g)) {
-    wanted.add(m[1]);
-  }
+  for (const file of present) {
+    const source = stripComments(read(file));
+    const found = new Set();
+    for (const m of source.matchAll(/\bon\("#([a-zA-Z][\w-]*)"/g)) found.add(m[1]);
+    for (const m of source.matchAll(/\$\("#([a-zA-Z][\w-]*)["\s]/g)) found.add(m[1]);
+    for (const m of source.matchAll(/\b(?:val|isChecked|setText|setHtml)\("#([a-zA-Z][\w-]*)"/g)) {
+      found.add(m[1]);
+    }
 
-  /* Without this the test is vacuous, not passing. It works by matching the
-   * accessor idioms legacy.js happens to use today; the moment a port rewrites
-   * them - which is exactly what draining this file means - `wanted` goes empty
-   * and the assertion below succeeds having checked nothing. Same guard, and
-   * same reason, as test/vendor-contract.test.js. */
-  assert.ok(
-    wanted.size > 0,
-    "no #id lookups found in legacy.js - the accessor idiom this scan knows about " +
-      "has changed, so it is no longer checking anything. Teach it the new one."
-  );
+    /* Per file, or this is vacuous rather than passing. It works by matching the
+     * accessor idioms these files happen to use today; the moment a port
+     * rewrites them - which is exactly what draining legacy.js means - the set
+     * goes empty and the assertion below succeeds having checked nothing.
+     * Checking only the union would hide that for every file but the last one
+     * left. Same guard, and same reason, as test/vendor-contract.test.js. */
+    assert.ok(
+      found.size > 0,
+      `no #id lookups found in ${file} - the accessor idiom this scan knows about has ` +
+        "changed, so it is no longer checking anything. Teach it the new one, or drop " +
+        "the file from DRAINED if it has stopped reaching for elements by id."
+    );
+    for (const id of found) wanted.add(id);
+  }
 
   const missing = [...wanted].filter((id) => !idsInHtml.has(id)).sort();
   assert.deepEqual(
     missing,
     [],
-    "legacy.js still uses these ids but the markup no longer has them, so those " +
+    "these files still use these ids but the markup no longer has them, so those " +
       "features are silently dead: " + missing.join(", ")
   );
+});
+
+test("the share modules load before legacy.js, which reads them as it evaluates", () => {
+  /* legacy.js takes all four off the global at eval time - the share panel it
+   * draws inside a Replays row, the busy flag the delete confirm checks, the
+   * shares list, the modal's share entry point - and mounts two of their click
+   * listeners. Load one of them after legacy.js and every one of those bindings
+   * is undefined for the life of the page.
+   *
+   * Being classic scripts is load-bearing too, and not only for the requires
+   * the tests use: their listeners must be registered before view-matches.js's,
+   * a deferred module, whose own [data-share] branch expands the row the panel
+   * is drawn in. */
+  const order = [...html.matchAll(/<script (?:type="module" )?src="([^"]+)"/g)].map((m) => m[1]);
+  const at = (file) => order.findIndex((src) => src.endsWith(file));
+  const legacy = at("legacy.js");
+  assert.notEqual(legacy, -1, "legacy.js is not loaded");
+
+  for (const file of ["share-panel.js", "share-pipeline.js", "share-moment.js", "shares-view.js"]) {
+    assert.ok(at(file) !== -1, `dashboard.html must load ${file}`);
+    assert.ok(at(file) < legacy, `${file} must load before legacy.js`);
+    assert.ok(
+      !new RegExp(`<script type="module" src="[^"]*${file}"`).test(html),
+      `${file} must stay a classic script, or its click listeners register after view-matches.js's`
+    );
+  }
+  // Each reads the one above it off the global as it evaluates.
+  assert.ok(at("share-panel.js") < at("share-pipeline.js"));
+  assert.ok(at("share-pipeline.js") < at("share-moment.js"));
+  assert.ok(at("share-pipeline.js") < at("shares-view.js"));
+  // And all of them read share/share-ui-support.js and share/hosts.js.
+  assert.ok(at("share-ui-support.js") < at("share-panel.js"));
+  assert.ok(at("hosts.js") < at("share-panel.js"));
 });
 
 test("the module entry point is loaded as a module, and last", () => {

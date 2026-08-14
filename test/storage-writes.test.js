@@ -75,25 +75,36 @@ test("storage.js loads after the config whose default endpoint it embeds", () =>
   assert.ok(config < storage, "storage.js must be loaded after share/config.js");
 });
 
-test("legacy.js never dereferences a query result it did not check", () => {
-  // It is being drained one view at a time, so any element it reaches for may
-  // already be gone - and one unguarded access throws during the initial run,
-  // aborting the IIFE and taking load() and the storage listener with it.
-  const legacy = sources.find((f) => f.name === "legacy.js");
-  if (!legacy) return; // fully drained; nothing left to check
+test("legacy.js and the files drained out of it never dereference a query result they did not check", () => {
+  /* legacy.js is being drained one view at a time, so any element it reaches
+   * for may already be gone - and one unguarded access throws during the
+   * initial run, aborting the IIFE and taking load() and the storage listener
+   * with it. A module carved out of it renders into that same moving markup and
+   * carries the same rule with it, so the scan follows the code rather than
+   * staying behind on the file it started in. */
+  const drained = ["legacy.js", "shares-view.js"]
+    .map((name) => sources.find((f) => f.name === name))
+    .filter(Boolean);
+  if (!drained.length) return; // fully drained; nothing left to check
 
-  /* The scan below looks for `$("#id").prop`, so it only says anything while
-   * legacy.js still reaches for elements that way. A port that changes the
-   * idiom empties the match set and turns the assertion green without checking
-   * a thing, so the presence of the idiom is asserted first. */
-  assert.ok(
-    /\$\("#[^"]+"\)/.test(legacy.text),
-    "legacy.js no longer looks up elements as $(\"#id\") - this guard has stopped " +
-      "matching the code it exists to check, and must be taught the new idiom."
-  );
+  for (const file of drained) {
+    /* The scan below looks for `$("#id").prop`, so it only says anything while
+     * the file still reaches for elements that way. A port that changes the
+     * idiom empties the match set and turns the assertion green without
+     * checking a thing, so the presence of the idiom is asserted first - per
+     * file, because the union would stay true for as long as any one of them
+     * still used it. */
+    assert.ok(
+      /\$\("#[^"]+"\)/.test(file.text),
+      `${file.name} no longer looks up elements as $("#id") - this guard has stopped ` +
+        "matching the code it exists to check, and must be taught the new idiom."
+    );
 
-  const bare = legacy.text.match(/\$\("#[^"]+"\)\.(textContent|innerHTML|value|checked|click|hidden|min|max)/g);
-  assert.deepEqual(bare || [], [], "unguarded element access in legacy.js: " + (bare || []).join(", "));
+    const bare = file.text.match(
+      /\$\("#[^"]+"\)\.(textContent|innerHTML|value|checked|click|hidden|min|max)/g
+    );
+    assert.deepEqual(bare || [], [], `unguarded element access in ${file.name}: ` + (bare || []).join(", "));
+  }
 });
 
 test("reading the share list is never cached", () => {

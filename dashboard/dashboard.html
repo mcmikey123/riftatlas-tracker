@@ -432,6 +432,16 @@
 <!-- The dashboard's only writer. After share/config.js, whose default endpoint
      is part of the settings shape, and before anything that could write. -->
 <script src="storage.js"></script>
+<!-- Sharing a replay, in four files: the panel's state and wording, the upload
+     that fills it in, the replay modal's "copy link to this moment", and the
+     register of what has been shared. Each depends on the one above it, and all
+     four are classic scripts loaded before legacy.js - which is what keeps the
+     share panel's click branches ahead of view-matches.js's, in a deferred
+     module, that expands the row the panel is drawn in. -->
+<script src="share-panel.js"></script>
+<script src="share-pipeline.js"></script>
+<script src="share-moment.js"></script>
+<script src="shares-view.js"></script>
 <!-- Being drained one view at a time. Every element it reaches for may already
      have been ported, so nothing in it dereferences a query result directly. -->
 <script src="legacy.js"></script>
