@@ -127,10 +127,9 @@ test("every global content.js reaches for is published by the time it runs", () 
   assert.deepEqual(h.warnings, [], "a swallowed throw here is a capture that never runs");
 });
 
-test("a board in play starts a match, and the sweep keeps it", () => {
-  // The whole stack, wired as the manifest wires it: the tick reads the board
-  // through RATBoard, starts a record through RATLifecycle, and the sweep saves
-  // it. Any missing wire shows up as no match at all.
+/** The board the tests below play a whole match on, plus its score track. */
+function boardInPlay(scoreText) {
+  const score = el({ sel: ['[aria-pressed="true"] span'], text: scoreText });
   const page = el({
     kids: [
       el({
@@ -138,9 +137,17 @@ test("a board in play starts a match, and the sweep keeps it", () => {
         dataset: { roomPhase: "in_game", roomMode: "ranked", turnNumber: "3" },
       }),
       el({ sel: ['[data-testid="room-code"]'], dataset: { roomCode: "ABC123" } }),
+      el({ sel: ['[role="group"][aria-label="Your score track"]'], kids: [score] }),
     ],
   });
-  const h = boot(page);
+  return { page, score };
+}
+
+test("a board in play starts a match, and the sweep keeps it", () => {
+  // The whole stack, wired as the manifest wires it: the tick reads the board
+  // through RATBoard, starts a record through RATLifecycle, and the sweep saves
+  // it. Any missing wire shows up as no match at all.
+  const h = boot(boardInPlay("0").page);
   h.sweep();
 
   const live = h.sandbox.RATLifecycle.current();
@@ -148,4 +155,42 @@ test("a board in play starts a match, and the sweep keeps it", () => {
   assert.equal(live.roomCode, "ABC123");
   assert.equal(live.turns, 3);
   assert.deepEqual(h.warnings, []);
+});
+
+test("ending a match, resuming it and ending it again drives the toast both ways", () => {
+  /* Everything above stops at a match that is still being played, and the two
+   * things drawn on the page when one FINISHES - the confirmation toast, and
+   * the removal of it when an end turns out to have been false - are reached
+   * only from here, through RATPageUI. test/match-lifecycle.test.js stubs that
+   * module wholesale, so neither name was executed by anything: renaming either
+   * left the suite green and every finished match throwing inside the tick,
+   * where content.js catches it and prints one warning per frame.
+   *
+   * So the score track is on the board and the match is played to its end:
+   *
+   *   a "VICTORY" banner ends it, and raises the toast;
+   *   the next sweep sees the same room at the same turn with nothing decisive
+   *   behind that end, reads it as false, and takes the toast down again;
+   *   the score track then reaches 8, which ends it for real.
+   */
+  const { page, score } = boardInPlay("0");
+  const h = boot(page);
+
+  h.sweep();
+  assert.ok(h.sandbox.RATLifecycle.current(), "the match must be live before it can end");
+
+  h.mutate([{ nodeType: 1, textContent: "VICTORY" }]);
+  assert.equal(h.sandbox.RATLifecycle.current(), null, "a victory banner ends the match");
+
+  h.sweep();
+  assert.ok(
+    h.sandbox.RATLifecycle.current(),
+    "the same board at the same turn is a false end, and the record is reopened"
+  );
+
+  score.ownText = "8";
+  h.sweep();
+  assert.equal(h.sandbox.RATLifecycle.current(), null, "first to 8 ends it for good");
+
+  assert.deepEqual(h.warnings, [], "a swallowed throw here is a warning per frame, forever");
 });

@@ -276,12 +276,29 @@ test("the dashboard loads the replay store, and loads css-assets.js before it", 
 });
 
 test("the dashboard reads replays directly, not over sendMessage", () => {
-  // The whole point of the page-side reader: a payload this large cannot cross
-  // chrome.runtime.sendMessage, so a reintroduced ra:visual:get here would fail
-  // on exactly the largest replays and nowhere else.
-  const legacy = stripComments(read("legacy.js"));
-  assert.ok(
-    !/ra:visual:get/.test(legacy),
-    "legacy.js must not fetch replays over sendMessage - payloads exceed the 64 MiB message ceiling"
-  );
+  /* The whole point of the page-side reader: a payload this large cannot cross
+   * chrome.runtime.sendMessage, so a reintroduced ra:visual:get would fail on
+   * exactly the largest replays and nowhere else.
+   *
+   * Every classic script the page loads, not legacy.js alone: the [data-visual]
+   * handler that opens a replay - the one branch that could reintroduce the
+   * message - has already moved out to view-replays.js, and a scan pinned to
+   * the file it used to live in guards nothing the moment it moves again. Same
+   * widening, and same reason, as the injected-element check in
+   * test/vendor-contract.test.js. */
+  const scripts = [...html.matchAll(/<script (?:type="module" )?src="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((src) => !src.includes("vendor/"));
+  assert.ok(scripts.includes("view-replays.js"), "view-replays.js owns the replay-opening branch");
+
+  for (const src of scripts) {
+    // Relative to dashboard/, so ../store, ../share and ../replay come too:
+    // the read is theirs as much as this folder's.
+    const file = path.join(DIR, src);
+    assert.ok(fs.existsSync(file), `dashboard.html loads ${src}, which is not in the repo`);
+    assert.ok(
+      !/ra:visual:get/.test(stripComments(fs.readFileSync(file, "utf8"))),
+      `${src} must not fetch replays over sendMessage - payloads exceed the 64 MiB message ceiling`
+    );
+  }
 });

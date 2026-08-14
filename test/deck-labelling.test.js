@@ -17,6 +17,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const D = require("../dashboard/deck-labelling.js");
+// The champion field as the labelling flows read it, so the fixtures below say
+// what champ() actually makes of a name rather than assuming it.
+const { champ } = require("../dashboard/format.js");
 
 const match = (over) =>
   Object.assign({ id: "m" + Math.random(), myChampion: "Alba, the Dawnbreaker" }, over);
@@ -56,6 +59,32 @@ test("a match with no champion at all is grouped under Unknown, not dropped", ()
   const all = [match({ id: "x", myChampion: null })];
   assert.equal(D.unlabelled(all, "Unknown").length, 1);
   assert.equal(D.unlabelled(all, "Alba").length, 0);
+});
+
+test("the two bulk paths mean different things by an empty champion", () => {
+  /* One predicate, two callers. The bulk-label button passes the My champion
+   * FILTER, where empty is "no filter"; "apply to unlabelled X games" passes
+   * one match's own champion, which is the scope and narrows whatever it reads.
+   *
+   * champ() floors at "Unknown", so the only champion that reads empty is one
+   * that is truthy but degenerate - which takes an imported record. Small, but
+   * it is the whole difference between the two flows, and merging them into a
+   * predicate that skips its clause on any falsy champion loses it.
+   */
+  const all = [
+    match({ id: "alba" }),
+    match({ id: "comma", myChampion: ", x" }),
+    match({ id: "space", myChampion: " " }),
+  ];
+  assert.equal(champ(", x"), "", "the one champion the two paths disagree about");
+
+  // Bulk label, no filter set: every unlabelled match, whatever its champion.
+  assert.deepEqual(D.unlabelled(all, "").map((m) => m.id), ["alba", "comma", "space"]);
+
+  // Apply-to-unlabelled from the "comma" match: only what shares its champion.
+  assert.deepEqual(D.unlabelled(all, champ(", x"), true).map((m) => m.id), ["comma", "space"]);
+  // And a real champion narrows the same way from either path.
+  assert.deepEqual(D.unlabelled(all, "Alba", true).map((m) => m.id), ["alba"]);
 });
 
 test("nothing to label is an empty list, not a throw", () => {

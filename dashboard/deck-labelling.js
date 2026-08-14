@@ -54,17 +54,27 @@
   /**
    * The matches a bulk label would touch: those with no name of their own.
    *
-   * `champion` narrows it to one champion, which is what the My champion filter
-   * does and what "apply to unlabelled X games" means. Empty means all of them.
-   *
    * Asked twice per flow - once to size the dialog, once after it closes - so
-   * it is one function rather than four copies of the predicate.
+   * it is one function rather than four copies of the predicate. The two flows
+   * do not mean the same thing by `champion`, though, which is what
+   * `narrowAlways` carries:
+   *
+   *   the bulk-label button passes the My champion FILTER, where empty means
+   *   "no filter" and must not narrow anything;
+   *
+   *   "apply to unlabelled X games" passes one match's own champion, which is
+   *   the scope rather than a filter, so it narrows whatever it reads.
+   *
+   * The two only diverge on an empty champion, and `champ()` floors at
+   * "Unknown", so that takes a name which is truthy but degenerate - " " or
+   * ", x", i.e. an imported record. Merging the predicates dropped the second
+   * meaning; this keeps both.
    */
-  const unlabelled = (all, champion) =>
+  const unlabelled = (all, champion, narrowAlways) =>
     (all || []).filter(
       (m) =>
         !(m.deckName || "").trim() &&
-        (!champion || champ(m.myChampion || m.myLegend) === champion)
+        ((!champion && !narrowAlways) || champ(m.myChampion || m.myLegend) === champion)
     );
 
   const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "es"}`;
@@ -92,9 +102,9 @@
    * makes "after the dialog, by id" true of every caller: the objects mutated
    * are the ones in the array being written.
    */
-  function applyName(champion, name) {
+  function applyName(champion, name, narrowAlways) {
     const all = matches();
-    const now = unlabelled(all, champion);
+    const now = unlabelled(all, champion, narrowAlways);
     if (!now.length) return say("Those matches have already been labelled.");
     now.forEach((m) => {
       m.deckName = name;
@@ -300,8 +310,12 @@
       // The picker commits on change, so the record is already the truth.
       const name = (src?.deckName || "").trim();
       if (!name) return say("Give this match a deck name first.", "error");
+      /* Always narrowed to this match's champion. Here the champion is the
+       * scope the button offers, not a filter that can be left unset, so an
+       * empty one means "the matches whose champion reads the same way" rather
+       * than "all of them". */
       const champion = champ(src.myChampion || src.myLegend);
-      const targets = unlabelled(matches(), champion);
+      const targets = unlabelled(matches(), champion, true);
       if (!targets.length) return say(`No unlabelled ${champion} matches to update.`);
       ask({
         title: `Label ${plural(targets.length, "match")} as “${name}”?`,
@@ -309,7 +323,7 @@
                here is marked manual, so detection will not overwrite it.</p>`,
         confirmLabel: `Label ${targets.length}`,
       }).then((ok) => {
-        if (ok) applyName(champion, name);
+        if (ok) applyName(champion, name, true);
       });
     });
   }
