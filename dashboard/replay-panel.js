@@ -15,7 +15,7 @@
 
   // format.js is loaded first by dashboard.html; the require is for node.
   const FORMAT = root.RATrackerFormat || require("./format.js");
-  const { esc, champ, fmtStamp, DASH } = FORMAT;
+  const { esc, champ, fmtStamp } = FORMAT;
 
   /**
    * One capture counter off a record, or null.

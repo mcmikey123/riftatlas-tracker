@@ -21,7 +21,7 @@
 (function (root) {
   "use strict";
 
-  const { esc, champ, fmtStamp, DASH } = root.RATrackerFormat || require("./format.js");
+  const { esc, champ, fmtStamp } = root.RATrackerFormat || require("./format.js");
   const SHARE = root.RAShareUI || require("../share/share-ui-support.js");
   const PANEL = root.RATrackerSharePanel || require("./share-panel.js");
   const PIPELINE = root.RATrackerSharePipeline || require("./share-pipeline.js");

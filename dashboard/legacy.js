@@ -474,8 +474,8 @@
   }
 
 
-  // DASH left with the shares list, which was the last thing here to date a row
-  // by hand; every other "not recorded" in this file goes through fmtCount/fmtMs.
+  // Every "not recorded" in this file goes through fmtCount/fmtMs, which carry
+  // the dash themselves.
   const { esc, champ, fmtDuration, deckOf, fmtBytes, fmtCount, fmtMs } =
     window.RATrackerFormat;
 

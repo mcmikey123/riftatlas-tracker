@@ -97,8 +97,14 @@
    * match they came from, and "Yesterday" on a share that expires in six days
    * tells you nothing about when it lapses.
    */
-  function fmtStamp(iso) {
-    const t = Date.parse(iso || "");
+  function fmtStamp(when) {
+    /* Takes epoch milliseconds as well as an ISO string, because its callers
+     * genuinely hold both: a match dates from `startedAt`, an ISO string, while
+     * a replay record and a share record both date from a Date.now() number
+     * (store/replay-store.js and share/share-ui-support.js). The hand-written
+     * code this replaced used `new Date(x)`, which takes either - so parsing
+     * only strings silently blanked two whole columns. */
+    const t = typeof when === "number" ? when : Date.parse(when || "");
     if (!Number.isFinite(t)) return DASH;
     const d = new Date(t);
     return d.toLocaleDateString() + " " + d.toLocaleTimeString([], HOUR_MINUTE);

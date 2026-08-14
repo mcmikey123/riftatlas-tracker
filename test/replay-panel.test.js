@@ -65,7 +65,14 @@ test("a row is labelled with when it was recorded and who was in it", () => {
   // The clock is the platform's own locale formatting, so what is asserted is
   // the shape around it: the champions, trimmed to their first field.
   assert.match(label, / · Lux vs Darius$/);
-  assert.ok(!label.startsWith(" ·"), "the timestamp must be there too");
+  /* Positively, not just "does not start with a separator". A record's
+   * startedAt is epoch MILLISECONDS, not an ISO string, and a formatter that
+   * only parses strings returns the em dash for every row - which the weaker
+   * assertion happily accepted. */
+  assert.ok(
+    label.startsWith(new Date(STARTED).toLocaleDateString()),
+    `expected the recording date at the front of ${label}`
+  );
 });
 
 test("legend fields stand in when a champion was never recorded", () => {
@@ -84,6 +91,12 @@ test("a recording whose match is gone is labelled by its timestamp alone", () =>
   const record = { matchId: "vanished", startedAt: STARTED };
   const label = P.visualLabel(record, null);
   assert.ok(!label.includes("·"), "with no match there is nobody to name");
+  // And it is still the timestamp, not the dash a broken formatter would give -
+  // this row has nothing else left to identify it by.
+  assert.ok(
+    label.startsWith(new Date(STARTED).toLocaleDateString()),
+    `expected the recording date, got ${label}`
+  );
   assert.equal(label, P.visualLabel(record, undefined));
 });
 

@@ -109,6 +109,24 @@ test("each re-check outcome is shown with its own label and message", () => {
 
 const row = (rec, recheck) => V.listRowHtml(rec, NOW, "2 May · Alba vs Corin", recheck);
 
+/* The one column nothing else here asserts. createdAt is epoch milliseconds,
+ * and a formatter that only parses ISO strings blanks this cell for every row
+ * in the table while every other assertion in this file still passes. */
+test("a row says when the share was created", () => {
+  const created = NOW - DAY;
+  const html = row(record({ createdAt: created }));
+  assert.ok(
+    html.includes(new Date(created).toLocaleDateString()),
+    "the created date is missing from the row"
+  );
+});
+
+test("a share whose creation time was lost reads as a dash, not as Invalid Date", () => {
+  const html = row(record({ createdAt: undefined }));
+  assert.ok(html.includes(DASH), "expected the em dash the rest of the dashboard uses");
+  assert.ok(!html.includes("Invalid Date"));
+});
+
 test("a live share offers a re-check and a copy, and nothing that forgets it", () => {
   const html = row(record());
   assert.match(html, new RegExp(`data-sharerecheck="${OBJECT_ID}"`));

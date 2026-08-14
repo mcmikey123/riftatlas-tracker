@@ -341,6 +341,16 @@ test("a stamp carries both the date and the wall-clock time of that instant", ()
   assert.ok(out.includes(at.toLocaleDateString()), `expected the local date in ${out}`);
 });
 
+/* Its callers hold both shapes: a match dates from an ISO startedAt, while a
+ * replay record and a share record both date from a Date.now() number. Parsing
+ * only strings blanked two whole columns and every other assertion still
+ * passed, so the number case is pinned explicitly. */
+test("a stamp takes epoch milliseconds as readily as an ISO string", () => {
+  const at = new Date(2026, 4, 9, 20, 14);
+  assert.equal(F.fmtStamp(at.getTime()), F.fmtStamp(at.toISOString()));
+  assert.notEqual(F.fmtStamp(at.getTime()), F.DASH, "a numeric timestamp must not read as unrecorded");
+});
+
 test("a stamp uses the same wall clock as a start time, so two rows cannot disagree", () => {
   const at = new Date(2026, 4, 9, 20, 14);
   assert.ok(
