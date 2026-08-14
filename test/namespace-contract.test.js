@@ -29,8 +29,9 @@
  * ------------------------------------------------------------------------
  * WHY THIS FILE IS SHAPED THE WAY IT IS
  *
- * Five audits have defeated five versions of this guard, each by writing a
- * reference in a syntax the previous version did not enumerate:
+ * Six audits have defeated six versions of this guard. The first five each
+ * wrote a reference in a syntax the previous version did not enumerate; the
+ * sixth wrote no reference at all, and is the interesting one:
  *
  *   1. nine renames found by eye, which was a sample and not a sweep; the
  *      mechanical sweep found 19.
@@ -50,15 +51,51 @@
  *      attacking it and attacked what counts as a namespace value in the first
  *      place. Renaming `writeShares` afterwards passed 809/809 with both
  *      production consumers calling `undefined`.
+ *   6. THE LEXER, which is upstream of all three closed lists below.
+ *      `maskLiterals` decided regex-from-division by the last non-space
+ *      CHARACTER, so any `/` after a word character read as division - and
+ *      `return /[",\n]/.test(s) ? ...`, which dashboard/bundle.js:112 has
+ *      carried all along, is a regex after a keyword. Read as division, the `"`
+ *      inside it opened a STRING, and everything to the next matching quote was
+ *      blanked: 164 characters over lines 112-126, `function parseBundle`
+ *      included. Two edits then took the guard - rename `defer` on
+ *      RATrackerDialog, and copy that same one-line helper into
+ *      dashboard/legacy.js some twenty lines above `dlg.defer(load)`. Both are
+ *      valid JavaScript and both look ordinary. `problems` stayed empty,
+ *      `unresolvable` byte-identical, every floor held, 811/811 green, and
+ *      `dlg.defer(load)` called a function that no longer existed. Copied into
+ *      other dashboard files the same helper drops references at 331 insertion
+ *      points in view-matches.js and 178 in legacy.js, up to 31 at a stroke; a
+ *      big drop trips the floors, but the two-edit version fits in their slack.
  *
- * All five are one bug in two places. The resolver was a set of regexes for
- * enumerated syntaxes with an OPEN BOTTOM: something that no pattern matched
+ * The first five are one bug in two places. The resolver was a set of regexes
+ * for enumerated syntaxes with an OPEN BOTTOM: something that no pattern matched
  * fell through to a cheaper check, or to nothing at all, and was counted as
  * RESOLVED either way. An unread syntax therefore did not merely vanish - it was
  * reported as coverage, which is why every floor stayed satisfied while the
  * members went unchecked.
  *
- * So the shape of this version is not "one more syntax". It is that the same
+ * The sixth is NOT that bug. Nothing fell through an enumeration, because
+ * nothing arrived: the code was gone before entry, access or propagation ran.
+ * Deletion is the one failure a closed list cannot report - a list classifies
+ * what it is shown, and it was not shown anything - so no amount of further
+ * closing downstream would have caught it. What made it possible is plainer than
+ * a missing syntax: the masker is the stage every other stage depends on, it had
+ * a private character-level copy of a rule the rest of the file already stated
+ * properly for `(`, and it was the one stage with no test of its own. Every
+ * proof this file was proudest of sat below it.
+ *
+ * So the masker now asks `startsExpression` - the same rule `opensGroup` asks of
+ * `(`, one rule in one place rather than two copies free to drift - and it is
+ * built so that a misreading cannot delete: a regex body is blanked as a regex
+ * body, where a quote is just a character, and a quote with no partner before
+ * the end of its line is not a string opener at all. Nothing that is GUESSED at
+ * can blank a newline away, so the worst any future misreading here can cost is
+ * the rest of one line, and that shows up as a reference which fails to resolve
+ * rather than one which was never seen. `maskLiterals` has its own tests now,
+ * both synthetic and over all 62 shipped files.
+ *
+ * The shape of the rest is not "one more syntax" either. It is that the same
  * inversion is applied at all three places a value can be lost:
  *
  *   a. ACCESS. Whether there IS a member access on a namespace value is decided
@@ -96,16 +133,26 @@
  *      member checks are lost cannot also be what proves they are not.
  *
  * WHAT IS GUARANTEED, stated to match the code and no wider, because a claim
- * ahead of the code is the defect that keeps recurring here:
+ * ahead of the code is the defect that keeps recurring here - and the previous
+ * wording was exactly that. It said "every mention of the global object in a
+ * scanned file", which is a claim about the FILES, and the scan does not read
+ * files: it reads what the masker leaves standing. Every character the masker
+ * blanked was outside the claim while appearing to be inside it, and that gap is
+ * where the sixth defeat lived. So the subject of the sentence is now the text
+ * the scan actually sees:
  *
- *   In the files this scan reads, every mention of the global object and every
- *   mention of a local this file bound to a namespace or to the global object is
- *   classified exactly once, into one of: the name being BOUND rather than read
- *   (a parameter, an object key - not a read at all), a RESOLVED check against
- *   what the other file publishes, or a line in `unresolvable`. So: no member
- *   access on such a value is silently dropped, and no such value is bound,
- *   stored, passed or returned without either being followed to another name
- *   this file tracks or being named in that list.
+ *   IN THE CODE THE MASKER LEAVES STANDING - every shipped .js file with its
+ *   comment bodies, string bodies, regex bodies and template TEXT blanked, and
+ *   nothing else blanked (which the masker's own tests check, offset by offset,
+ *   over all 62 files) - every mention of the global object and every mention of
+ *   a local this file bound to a namespace or to the global object is classified
+ *   exactly once, into one of: the name being BOUND rather than read (a
+ *   parameter, an object key - not a read at all), a RESOLVED check against what
+ *   the other file publishes, or a line in `unresolvable`. So: no member access
+ *   on such a value is silently dropped, and no such value is bound, stored,
+ *   passed or returned - directly, through an alias, or through a thunk and its
+ *   call - without either being followed to another name this file tracks or
+ *   being named in that list.
  *
  * What that does NOT claim, all of which is real:
  *   - it says nothing about what a CALLEE does with a namespace handed to it.
@@ -117,7 +164,22 @@
  *     wholesale move.
  *   - `unresolvable` is total for what the scan SEES. It is not a claim that
  *     nothing else exists, and the list is the place to argue about that.
- * The three known limits above are the whole of it; each is checked or listed
+ *   - IT IS NOT A CLAIM ABOUT THE MASKER BEING RIGHT. A reference the masker
+ *     blanks is outside the guarantee, not covered by it. What is claimed of the
+ *     masker is narrower and is tested rather than asserted: it only ever blanks
+ *     characters, never rewrites or moves them; it preserves every newline, so
+ *     line numbers hold; the code it leaves has balanced brackets in all 62
+ *     files; and its two guessing rules - regex-or-division, and where a string
+ *     begins - are bounded so that being wrong costs at most the rest of one
+ *     line and can never blank across a newline. A misreading is therefore a
+ *     reference that fails to resolve, not one that disappears. Deliberately
+ *     outside: a `root.RAThing` written inside a comment or a string is not a
+ *     reference and is not counted as one.
+ *   - the publication of a thunk is followed rather than reported
+ *     (`publishedThunkValues`), because `readPublished` records what it defers
+ *     to and consumers resolve through that record. A thunk that leaves the file
+ *     any OTHER way is an escape and is named.
+ * The four known limits above are the whole of it; each is checked or listed
  * below rather than left to prose.
  */
 
@@ -144,12 +206,36 @@ const repo = path.join(__dirname, "..");
  * dashboard/view-matches.js alone - so blanking the interpolations too, which is
  * what treating a backtick as a quote did, dropped them all before any of the
  * resolution below could see them. Interpolations nest (a template inside `${}`
- * inside a template), hence the stack rather than a flag. */
+ * inside a template), hence the stack rather than a flag.
+ *
+ * THE MASKER IS UPSTREAM OF EVERY OTHER CHECK IN THIS FILE, which is why the
+ * regex/division decision below is made from the last TOKEN and not, as it was,
+ * from the last non-space CHARACTER. The sixth audit went through exactly there.
+ * `return /[",\n]/.test(s) ? ...` - dashboard/bundle.js:112, live in the repo -
+ * has a `/` after the `n` of `return`, and a character-level rule reads any `/`
+ * after a word character as division. The regex was then not a regex, its `"`
+ * opened a STRING, and everything to the next quote was blanked: 164 characters
+ * of real code on lines 112-126, `function parseBundle` among them, gone before
+ * entry, access or propagation ever ran.
+ *
+ * That failure mode is DELETION, and deletion is the one thing none of the three
+ * closed lists downstream can report: they classify what they are shown, and
+ * they were not shown it. So the decision is made once, by `startsExpression`,
+ * which is the same rule `opensGroup` already applies to `(` - a value has
+ * ended, or an expression begins - rather than a second copy free to diverge
+ * from it. Two tests below hold it to that: one over written-out cases, one over
+ * all 62 shipped files. */
 function maskLiterals(source) {
   const out = source.split("");
   const n = source.length;
   let i = 0;
-  let prev = ""; // last non-space code character, for the regex/divide decision
+  /* The last TOKEN, as `startsExpression` wants it: an identifier or keyword as
+   * written, a punctuator as written, LITERAL_TOKEN for a string, template or
+   * regex that just ended, and "" at the start of the file. */
+  let prev = "";
+  /* The token in front of each `(` still open, so a `)` can be told from the `)`
+   * of `if (...)`, after which a `/` starts a regex rather than dividing. */
+  const parens = [];
   const blank = (at) => {
     if (source[at] !== "\n") out[at] = " ";
   };
@@ -173,7 +259,7 @@ function maskLiterals(source) {
       if (c === "`") {
         i++;
         stack.pop();
-        prev = "`";
+        prev = LITERAL_TOKEN;
         continue;
       }
       if (c === "$" && d === "{") {
@@ -200,18 +286,37 @@ function maskLiterals(source) {
       continue;
     }
     if (c === '"' || c === "'") {
-      i++;
-      while (i < n) {
-        if (source[i] === "\\") {
-          blank(i++);
-          blank(i++);
+      /* A quoted string does not cross a line in JavaScript, so a quote with no
+       * partner before the newline is NOT a string opener - and refusing to
+       * treat it as one is what bounds the damage of any misreading here.
+       *
+       * That is the second half of the lexer fix, and the half that matters
+       * most. A `/` misread as division put a quote from inside a regex into
+       * code position; the quote then opened a string that ran to the next
+       * quote FIFTEEN LINES LATER, and everything between was blanked. Deletion
+       * at that scale is invisible to every check downstream, which can only
+       * classify what it is shown. With this, a misreading of any kind can cost
+       * at most the rest of one line, because nothing except a block comment or
+       * a template literal - both of which are delimited, not guessed - can
+       * blank a newline away. */
+      let j = i + 1;
+      while (j < n && source[j] !== "\n") {
+        if (source[j] === "\\") {
+          j += 2;
           continue;
         }
-        if (source[i] === c) break;
-        blank(i++);
+        if (source[j] === c) break;
+        j++;
       }
-      i++;
-      prev = c;
+      if (source[j] !== c) {
+        // An unpartnered quote: read it as the stray character it is, blank nothing.
+        prev = c;
+        i++;
+        continue;
+      }
+      for (let k = i + 1; k < j; k++) blank(k);
+      i = j + 1;
+      prev = LITERAL_TOKEN;
       continue;
     }
     if (c === "`") {
@@ -230,9 +335,17 @@ function maskLiterals(source) {
       }
       frame.depth--;
     }
-    // A `/` after a value is division; after an operator or an opener it starts
-    // a regex. Only the regex case needs blanking.
-    if (c === "/" && /[(,=:[!&|?{};+\-*%<>~^]/.test(prev || "(")) {
+    /* A `/` after a value is division; where an expression begins it opens a
+     * regex, and only that case needs blanking. The decision is the last TOKEN's
+     * - `return /re/` is a regex and `count / 2` is not - and it is
+     * `startsExpression` that says so, the same rule `opensGroup` asks of `(`.
+     *
+     * The body is then read as a regex body and NOTHING ELSE: a `"` in it is one
+     * more character to blank, never the start of a string, and a `/` inside a
+     * `[...]` class does not end it. That is the whole of why a mis-lex here can
+     * no longer delete code past the literal - it can only misread the literal
+     * itself. */
+    if (c === "/" && startsExpression(prev)) {
       const start = i++;
       let inClass = false;
       let closed = false;
@@ -252,15 +365,70 @@ function maskLiterals(source) {
       if (closed) {
         for (let k = start + 1; k < i; k++) blank(k);
         i++;
-        prev = "/";
+        while (i < n && /[a-z]/.test(source[i])) i++; // flags
+        prev = LITERAL_TOKEN;
         continue;
       }
-      i = start; // not a regex after all
+      /* No closing `/` before the line ended, so it was not a regex after all.
+       * The line is re-read as ordinary code rather than blanked to its end:
+       * being wrong about one operator is a local misreading, and blanking is
+       * the failure this whole decision exists to prevent. */
+      i = start;
     }
-    if (!/\s/.test(c)) prev = c;
+
+    // An identifier, a keyword or a number: one token, however many characters.
+    if (/[\w$]/.test(c)) {
+      let j = i;
+      while (j < n && /[\w$]/.test(source[j])) j++;
+      prev = source.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (c === "(") {
+      parens.push(prev);
+      prev = "(";
+    } else if (c === ")") {
+      /* `if (ok) /re/.test(s)`: the `)` of a statement head closes a test, not a
+       * value, so an expression - and a regex - can begin right after it. */
+      const head = parens.length ? parens.pop() : "";
+      prev = STATEMENT_KEYWORDS.has(head) ? head : ")";
+    } else if ((c === "+" || c === "-") && prev === c) {
+      prev = c + c; // `n++ / 2` divides
+    } else if (!/\s/.test(c)) {
+      prev = c;
+    }
     i++;
   }
   return out.join("");
+}
+
+/* A string, template or regex literal that just ended, reported as one token
+ * whatever its spelling was: what matters downstream is only that a VALUE ended
+ * there. It is not a substring of any source token, so it can never be confused
+ * with one. */
+const LITERAL_TOKEN = "<literal>";
+
+/* The value ends, or an expression begins - and the two `/` and `(` questions
+ * this file asks are the same question.
+ *
+ * An expression begins at the start of the file, after an operator, after a
+ * separator or an opener, and after a keyword that takes an expression
+ * (EXPRESSION_KEYWORDS). A value has just ended after an identifier, after a
+ * literal, after `)` or `]`, and after `++`/`--`. There is no third answer: a
+ * `/` where an expression begins is a regex and one after a value is division,
+ * and a `(` where an expression begins groups while one after a value calls.
+ *
+ * `maskLiterals` asks it of the token it just read; `opensGroup` asks it of the
+ * token before a `(`. One rule, so the masker cannot drift from the reader that
+ * depends on it - which is exactly how the sixth defeat became possible, the
+ * masker having had a private character-level copy of it. */
+const VALUE_ENDS = new Set([")", "]", "++", "--"]);
+
+function startsExpression(token) {
+  if (token === "") return true;
+  if (token === LITERAL_TOKEN) return false;
+  if (/^[\w$]/.test(token)) return EXPRESSION_KEYWORDS.has(token);
+  return !VALUE_ENDS.has(token);
 }
 
 /** Walks a balanced `{...}` from `open`, returning its top-level segments. */
@@ -345,10 +513,7 @@ function wordBefore(masked, at) {
 }
 
 function opensGroup(masked, open) {
-  const before = wordBefore(masked, open);
-  if (before === "") return true;
-  if (/^[\w$]/.test(before)) return EXPRESSION_KEYWORDS.has(before);
-  return !")]".includes(before);
+  return startsExpression(wordBefore(masked, open));
 }
 
 /** A `{` that holds an object literal rather than a block. */
@@ -572,7 +737,14 @@ function handedToModuleWrapper(masked, at) {
   const calleeOpen = enclosingOpen(masked, head.length - 1);
   if (calleeOpen === null) return false;
   const inner = masked.slice(calleeOpen + 1, head.length - 1);
-  const m = /^\s*(?:async\s+)?function\s*[A-Za-z_$]*\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/.exec(inner);
+  /* Both spellings of the wrapper. `wrapperFeeding` - the same seam checked from
+   * the inside - reads the arrow form through `opensParameterList` already, so
+   * matching only `function` here reported the arrow wrapper as an escape while
+   * agreeing it was not one. Noise rather than silence, but a guard whose two
+   * halves disagree is a guard nobody reads. */
+  const m =
+    /^\s*(?:async\s+)?function\s*[A-Za-z_$]*\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/.exec(inner) ||
+    /^\s*(?:async\s+)?\(\s*([A-Za-z_$][\w$]*)\s*\)\s*=>/.exec(inner);
   return !!m && ROOT_NAMES.has(m[1]);
 }
 
@@ -1108,6 +1280,45 @@ function readPublished(sources) {
   return { published, shapeErrors };
 }
 
+/**
+ * The object literals this file PUBLISHES, and which of their top-level values
+ * are thunks declared here.
+ *
+ * `root.RATrackerNotify = { say, dialog }` in dashboard/notify.js hands the
+ * local `dialog` - `() => root.RATrackerDialog` - out of the file, which is what
+ * a publication is for; `readPublished` records it as that namespace's exported
+ * thunk, and a consumer's `NOTIFY.dialog().textPrompt(...)` is resolved through
+ * the record. So this one hand-over IS followed, and naming it as an escape
+ * would be reporting the very thing the resolver reads.
+ *
+ * Both publication spellings are covered - the literal written inline and the
+ * `const api = { ... }; root.RAShareUI = api;` one - because the record made
+ * from them is the same. A thunk anywhere else in the literal, nested inside a
+ * property's value rather than being one, is NOT in the record and NOT exempt.
+ */
+function publishedThunkValues(masked, locals) {
+  const ranges = [];
+  PUBLICATION.lastIndex = 0;
+  let hit;
+  while ((hit = PUBLICATION.exec(masked))) {
+    const at = hit.index + hit[0].length;
+    let open = at;
+    if (masked[at] !== "{") {
+      const ident = /^([A-Za-z_$][\w$]*)\s*;/.exec(masked.slice(at));
+      if (!ident) continue;
+      const decl = new RegExp("\\b(?:const|let|var)\\s+" + ident[1] + "\\s*=\\s*\\{").exec(masked);
+      if (!decl) continue;
+      open = masked.indexOf("{", decl.index);
+    }
+    const literal = objectLiteralKeys(masked, open);
+    const close = matchingClose(masked, open);
+    if (literal.error || close === null) continue;
+    const names = new Set([...literal.values.values()].filter((name) => locals.thunks.has(name)));
+    if (names.size) ranges.push({ from: open, to: close, names });
+  }
+  return ranges;
+}
+
 /* ------------------------------------------------------------------ *
  * Who reaches into them
  * ------------------------------------------------------------------ */
@@ -1306,12 +1517,21 @@ function resolveReferences(sources, published) {
       if (!member || !entry || !entry.thunks.has(member)) return;
       const called = callEnd(masked, acc.end);
       if (called === null) return;
-      readAccess(
-        entry.thunks.get(member),
-        accessOn(masked, called, about(start)),
-        reference + "." + member + "()",
-        "thunk"
-      );
+      const far = entry.thunks.get(member);
+      const inner = accessOn(masked, called, about(start));
+      const ref = reference + "." + member + "()";
+      /* `state.dlg = NOTIFY.dialog();` and `use(dialog())`: the CALL of an
+       * exported thunk hands back the far namespace, and a far namespace that
+       * goes somewhere without a member being read off it here is the same
+       * escape as `state.t = root.RAThing`. It used to be silent, because the
+       * only question asked after the call was "what member is read", and "none"
+       * was an answer. */
+      if (inner.kind === "none" || inner.kind === "call") {
+        const escape = dispositionOf(masked, start, inner, about(start));
+        if (escape) unresolvable.push(rel + ": " + ref + " is " + escape + ", so its members are not checked here");
+        return;
+      }
+      readAccess(far, inner, ref, "thunk");
     };
 
     const params = parameterNames(masked);
@@ -1461,16 +1681,52 @@ function resolveReferences(sources, published) {
       }
     }
 
-    // THUNK().member
+    /* THUNK().member - and the two things a thunk can do OTHER than have a
+     * member read off its result, both of which used to be nothing at all. */
+    const exported = publishedThunkValues(masked, locals);
     for (const [local, ns] of thunks) {
       for (const hit of masked.matchAll(new RegExp("(?<![.\\w$])" + local + "(?![\\w$])", "g"))) {
         // `function store() { return root.RANs; }` is the thunk being declared,
         // not called: its `()` belongs to the parameter list.
         if (wordBefore(masked, hit.index) === "function") continue;
-        const called = callEnd(masked, hit.index + local.length);
-        if (called === null) continue; // the declaration, the export, `const x = T()`
+        const end = hit.index + local.length;
+        const called = callEnd(masked, end);
         const reference = local + "()  (" + local + " = () => " + ns + ")";
+        if (called === null) {
+          /* The thunk ITSELF, not its result: `mount({ store: STORE })`, which
+           * is this repo's universal deps-object handover. Deferring the read
+           * does not make it local - the callee calls it and reads members off
+           * what comes back, where no name resolution reaches - so it is the
+           * same escape as passing the namespace, and it is reported as one.
+           *
+           * Except at the publication, which is where a thunk is MEANT to leave
+           * the file: `root.RATrackerNotify = { dialog }` is recorded by
+           * `readPublished`, and `NOTIFY.dialog().textPrompt(...)` two files away
+           * resolves through that record. Only the top-level values of a
+           * published literal are exempt; a thunk buried deeper is not followed
+           * by anything, so it reports like the rest. */
+          // `mount({ dialog: dialog() })` names the thunk twice and hands it on
+          // once: the first is a KEY, which is not a read of anything.
+          if (bindsTheName(masked, hit.index, end)) continue;
+          const acc = accessOn(masked, end, about(hit.index));
+          if (acc.kind !== "none") continue; // a property of the function object, not of the namespace
+          if (exported.some((r) => hit.index > r.from && hit.index < r.to && r.names.has(local))) continue;
+          const escape = dispositionOf(masked, hit.index, acc, about(hit.index));
+          if (escape) {
+            unresolvable.push(
+              rel + ": " + local + "  (" + local + " = () => " + ns + ") is " + escape +
+                ", so its members are not checked here"
+            );
+          }
+          continue;
+        }
         const acc = accessOn(masked, called, about(hit.index));
+        // `use(dialog())` - the far namespace handed on, with no member read here.
+        if (acc.kind === "none" || acc.kind === "call") {
+          const escape = dispositionOf(masked, hit.index, acc, about(hit.index));
+          if (escape) unresolvable.push(rel + ": " + reference + " is " + escape + ", so its members are not checked here");
+          continue;
+        }
         chain(ns, readAccess(ns, acc, reference, "thunk"), acc, reference, hit.index);
       }
     }
@@ -1583,6 +1839,13 @@ test("every namespace member the extension reads is published under that name", 
  * - which is the check that closing the door changed what is SEEN rather than
  * what is resolved.
  *
+ * Fixing the LEXER moved no count either, and that is worth writing down rather
+ * than being relieved about. The span dashboard/bundle.js:112 was blanking held
+ * no cross-file reference, so nothing was being lost yet - the defeat was
+ * constructed by MOVING a reference into such a span, not by finding one there.
+ * A count that does not move when a stage upstream of the counting is repaired
+ * means the repo was lucky, not that the stage was sound.
+ *
  * MEMBER floors and NAME floors are kept apart on purpose. `global` counts
  * name-level reads - "something publishes this name" - and the other four count
  * member-level ones - "that namespace publishes this key". The optional-chaining
@@ -1651,6 +1914,16 @@ test("the references that cannot be resolved statically are these, and only thes
    *   - a namespace bound, returned or stored by an expression `namespaceValue`
    *     cannot decide - the arrow-thunk hole, had this net existed when it
    *     opened;
+   *   - a THUNK leaving the file: the thunk itself handed on
+   *     (`mount({ store: STORE })`, this repo's universal deps-object idiom) or
+   *     what its CALL returned handed on (`state.dlg = NOTIFY.dialog();`,
+   *     `use(dialog())`). Both were silent until the sixth round: the only
+   *     question asked after a thunk call was which member is read, and "none"
+   *     was an answer rather than a report. Deferring a read does not keep it
+   *     local - the callee calls the thunk and reads members off what comes
+   *     back, which is the same seam as handing the namespace over directly.
+   *     The publication `root.RATrackerNotify = { dialog }` is not that, and is
+   *     the one exemption: it IS followed, through `entry.thunks`;
    *   - a namespace or the global object reaching a BINDING the resolver did
    *     not read: `const T = (0, root.RAThing);`, `let T; T = root.RAThing;`, a
    *     class field, or whatever is invented next. The resolver does not have to
@@ -1958,6 +2231,17 @@ test("the global object crossing a boundary is named, and the module wrapper is 
   assert.deepEqual(closed.problems, []);
   assert.deepEqual(closed.unresolvable, [], "the module wrapper is not an escape: its parameter IS the global object");
 
+  /* The same wrapper written as an arrow. `wrapperFeeding` - this seam checked
+   * from the INSIDE - reads that form already, so matching only `function` on
+   * the outside reported an escape the other half agreed was not one. Noise
+   * rather than silence, but a guard whose two halves contradict each other is a
+   * guard people learn to skim. */
+  const arrow = scan({ "a.js": publish, "b.js": "((root) => {\n  root.RAThing.wanted();\n})(window);\n" });
+  assert.deepEqual(arrow.problems, []);
+  assert.deepEqual(arrow.unresolvable, [], "the arrow spelling of the wrapper is the same seam");
+  const arrowWrong = scan({ "a.js": publish, "b.js": "((root) => {\n  root.RAThing.wanted();\n})(other);\n" });
+  assert.equal(arrowWrong.unresolvable.length, 1, "an arrow wrapper handed something else must be reported");
+
   const wrong = scan({ "a.js": publish, "b.js": wrapper("someOtherObject") });
   assert.equal(wrong.unresolvable.length, 1, "a wrapper handed something else must be reported");
   assert.match(wrong.unresolvable[0], /handed something other than the global object/);
@@ -2072,6 +2356,44 @@ test("a thunk exported by one file and picked up by another resolves to the far 
   // the namespace: `dialog().confirm(opts)` returns a promise, not the dialog.
   const chained = "const { dialog } = root.RANotify;\ndialog().wanted().then(run);";
   assert.deepEqual(scan({ "a.js": publish, "b.js": chained }).problems, []);
+
+  /* A thunk that leaves the file, in both halves: the thunk itself, and what its
+   * call returned. Every one of these was silent - the far namespace crossed a
+   * boundary and nothing said so - because the only question asked after a thunk
+   * call was which member is read, and "none" was an answer. Deferring the read
+   * does not make it local: the callee calls the thunk and reads members off the
+   * result, exactly where no name resolution reaches. */
+  const escapes = {
+    "the call's result stored on a field": "const N = root.RANotify;\nstate.d = N.dialog();",
+    "the call's result passed as an argument": "use(root.RANotify.dialog());",
+    "the call's result in a deps object": "const { dialog } = root.RANotify;\nmount({ dialog: dialog() });",
+    "the thunk itself passed as an argument": "const { dialog } = root.RANotify;\nuse(dialog);",
+    "the thunk itself in a deps object": "const { dialog } = root.RANotify;\nmount({ dialog });",
+    "a local thunk in a deps object": "const S = () => root.RADialog;\nmount({ dialog: S });",
+  };
+  for (const [form, use] of Object.entries(escapes)) {
+    const got = scan({ "a.js": publish, "b.js": use });
+    assert.deepEqual(got.problems, [], form + " is not a broken reference, only an unfollowable one: " + use);
+    assert.equal(got.unresolvable.length, 1, form + " must be named in unresolvable: " + use);
+  }
+
+  /* ...and the thunk idioms that stay put are not reported, including the
+   * PUBLICATION itself. `root.RANotify = { say, dialog }` is how a thunk is
+   * meant to leave its file and it is followed, not guessed at: `readPublished`
+   * records what `dialog` defers to and the cases above resolve through that
+   * record. Reporting it would be naming the one hand-over this file reads. */
+  const quiet = {
+    "the publication of a thunk": "const noop = 1;",
+    "a member read off the call": "root.RANotify.dialog().wanted();",
+    "the call bound to a local": "const d = root.RANotify.dialog();\nd.wanted();",
+    "the call as a statement": "root.RANotify.dialog();",
+    "destructured from the call": "const { wanted } = root.RANotify.dialog();",
+  };
+  for (const [form, use] of Object.entries(quiet)) {
+    const got = scan({ "a.js": publish, "b.js": use });
+    assert.deepEqual(got.unresolvable, [], form + " must not be reported: " + use);
+    assert.deepEqual(got.problems, [], form + " must not be a problem: " + use);
+  }
 });
 
 test("a bare global is checked by name, whoever publishes it and whatever it holds", () => {
@@ -2106,6 +2428,132 @@ test("a bare global is checked by name, whoever publishes it and whatever it hol
 
   // The platform's own names are not this guard's business.
   assert.deepEqual(scan({ "a.js": publish, "b.js": "window.document.title = x;\nself.crypto.subtle;" }).problems, []);
+});
+
+test("the masker tells a regex literal from a division, and a regex body opens no string", () => {
+  /* THE ONE TEST UPSTREAM OF EVERYTHING ELSE IN THIS FILE.
+   *
+   * Every other proof here - `?.` is not a terminator, a sequence expression is
+   * reported without being understood - is downstream of the masker: it argues
+   * about what happens to text the scan is SHOWN. This argues about what it is
+   * shown, and until the sixth audit nothing did. The only masker test was the
+   * template one below, and the regex/division decision the whole scan rests on
+   * had none at all.
+   *
+   * Every case is a `/` that a last-CHARACTER rule reads as division. If it is
+   * read that way, the quote inside the literal opens a string and the code
+   * after it is blanked - which no closed list downstream can report, because
+   * nothing is left to classify. So each case asserts the reference AFTER the
+   * literal survives masking. */
+  const NAMESPACE_READ = /(?<![.\w$])(?:root|window|globalThis|self)\s*\??\.\s*[A-Za-z_$][\w$]*/g;
+  const masks = (src) => {
+    const masked = maskLiterals(src);
+    assert.equal(masked.length, src.length, "offsets must survive masking: " + src);
+    for (let i = 0; i < src.length; i++) {
+      assert.ok(masked[i] === src[i] || masked[i] === " ", "masking may only blank characters: " + src);
+      if (src[i] === "\n") assert.equal(masked[i], "\n", "line numbering must survive masking: " + src);
+    }
+    /* The stronger form, and the one that reports rather than deletes: a
+     * `root.RA*` the source contains must still be there afterwards. A masker
+     * bug then shows up as a reference that fails to resolve, not as one that
+     * was never seen. */
+    for (const hit of src.matchAll(NAMESPACE_READ)) {
+      assert.equal(
+        masked.slice(hit.index, hit.index + hit[0].length),
+        hit[0],
+        "masking removed a read the source contains: " + JSON.stringify(hit[0]) + " in " + src
+      );
+    }
+    return masked;
+  };
+
+  const regexes = {
+    // dashboard/bundle.js:112, as it is written in the repo today. This is the
+    // one that lost the sixth round: 164 characters blanked, lines 112-126.
+    "a quote-bearing regex after `return`":
+      'const cell = (s) => {\n' +
+      '  return /[",\\n]/.test(s) ? \'"\' + s.replace(/"/g, \'""\') + \'"\' : s;\n' +
+      '};\n' +
+      'root.RAThing.wanted();\n',
+    // The `)` of a statement head closes a test, not a value.
+    "after the `)` of an if": 'if (ok) /"/.test(s);\nroot.RAThing.wanted();\n',
+    "after the `)` of a while": 'while (ok) /"/.test(s);\nroot.RAThing.wanted();\n',
+    // A `/` inside a character class does not end the literal, and a quote in
+    // there is one more character of the body.
+    "a `/` and a quote inside a character class": 'const re = /[/"]/;\nroot.RAThing.wanted();\n',
+    "an escaped quote in the body": 'const re = /\\"x/;\nroot.RAThing.wanted();\n',
+    "after `typeof`, `case` and `in`": 'switch (t) {\n  case /"/.test(s):\n    break;\n}\nroot.RAThing.wanted();\n',
+    "after a `}`": 'function f() {}\n/"/.test(s);\nroot.RAThing.wanted();\n',
+    "a regex with flags": 'const re = /"/gi;\nroot.RAThing.wanted();\n',
+  };
+  for (const [form, src] of Object.entries(regexes)) {
+    const masked = masks(src);
+    assert.ok(masked.includes("root.RAThing.wanted"), form + " must not swallow the code after it: " + src);
+    assert.ok(!masked.includes('",'), form + " must blank the regex body itself: " + src);
+  }
+
+  /* ...and the decision has to go the OTHER way where it is a division, or the
+   * masker blanks real code between two of them. */
+  const divisions = {
+    "between identifiers": "const r = a / c / d;\nroot.RAThing.wanted();\n",
+    "after a `)`": "const r = (a + b) / c / d;\nroot.RAThing.wanted();\n",
+    "after a `]`": "const r = xs[0] / c / d;\nroot.RAThing.wanted();\n",
+    "after `++`": "const r = n++ / c / d;\nroot.RAThing.wanted();\n",
+    "after a string literal": 'const r = "1" / c / d;\nroot.RAThing.wanted();\n',
+    "after a template literal": "const r = `1` / c / d;\nroot.RAThing.wanted();\n",
+    "after a regex literal's test": 'const r = /x/.test(s) / c / d;\nroot.RAThing.wanted();\n',
+  };
+  for (const [form, src] of Object.entries(divisions)) {
+    const masked = masks(src);
+    assert.ok(masked.includes("/ c / d"), form + " is a division, and its operands are code: " + src);
+  }
+
+  /* The bound on ANY misreading that gets past the two rules above, and the
+   * reason a seventh shape here would cost a wrong answer rather than a silent
+   * one: nothing that is guessed at can blank a newline. A quote with no partner
+   * before the end of its line is not a string opener, so the worst a misread
+   * operator can do is lose the rest of the line it is on. */
+  const stray = maskLiterals('const bad = ";\nroot.RAThing.wanted();\n');
+  assert.ok(stray.includes("root.RAThing.wanted"), "an unpartnered quote must blank nothing beyond its line");
+
+  /* And end to end, which is the defeat itself: the helper copied out of
+   * dashboard/bundle.js, with a live cross-file reference below it. Before the
+   * lexer was fixed this pair was silent - `problems` empty, every floor held -
+   * while the reference it deleted called a function that no longer existed. */
+  const publish = "root.RAThing = { wanted };\n";
+  const helper = 'const quoted = (s) => { return /[",\\n]/.test(s); };\n';
+  const renamed = scan({ "a.js": publish, "b.js": helper + "root.RAThing.wrong();\n" });
+  assert.equal(renamed.problems.length, 1, "a regex above a reference must not delete the reference");
+  const clean = scan({ "a.js": publish, "b.js": helper + "root.RAThing.wanted();\n" });
+  assert.deepEqual(clean.problems, []);
+  assert.deepEqual(clean.unresolvable, []);
+});
+
+test("masking the shipped tree blanks literals and leaves the code standing", () => {
+  /* The same properties over the 62 files this scan actually reads, because the
+   * synthetic cases above only prove what someone thought to write down.
+   *
+   * Bracket balance is the structural half: masking removes literals, and a
+   * literal contains no unmatched bracket, so masked code balances exactly when
+   * the file does. A span of real code blanked by a mis-lex takes its brackets
+   * with it and this stops being true - which is how the demonstrated defeat's
+   * second edit shows up here, nine unclosed brackets deep, quite apart from
+   * whichever reference it happened to delete. */
+  for (const full of shippedJs(repo)) {
+    const rel = path.relative(repo, full).split(path.sep).join("/");
+    const src = fs.readFileSync(full, "utf8");
+    const masked = sources.get(rel);
+    assert.equal(masked.length, src.length, rel + ": offsets must survive masking");
+    let depth = 0;
+    for (let i = 0; i < src.length; i++) {
+      assert.ok(masked[i] === src[i] || masked[i] === " ", rel + ": masking may only blank characters");
+      if (src[i] === "\n") assert.equal(masked[i], "\n", rel + ": line numbering must survive masking");
+      if (OPENERS.includes(masked[i])) depth++;
+      else if (CLOSERS.includes(masked[i])) depth--;
+      assert.ok(depth >= 0, rel + ": masked code closes a bracket it never opened, at offset " + i);
+    }
+    assert.equal(depth, 0, rel + ": masked code leaves " + depth + " bracket(s) open - masking has eaten code");
+  }
 });
 
 test("template literal text is masked but its interpolations are not", () => {
