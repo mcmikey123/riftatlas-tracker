@@ -142,9 +142,11 @@
  * the scan actually sees:
  *
  *   IN THE CODE THE MASKER LEAVES STANDING - every shipped .js file with its
- *   comment bodies, string bodies, regex bodies and template TEXT blanked, and
- *   nothing else blanked (which the masker's own tests check, offset by offset,
- *   over all 62 files) - every mention of the global object and every mention of
+ *   comment bodies, string bodies, regex bodies and template TEXT blanked (the
+ *   masker's own tests check, over all 62 files, that it blanks only, preserves
+ *   every offset and newline, leaves balanced brackets, and leaves output that
+ *   still PARSES - the last of which is what would catch a span of real code
+ *   going missing) - every mention of the global object and every mention of
  *   a local this file bound to a namespace or to the global object is classified
  *   exactly once, into one of: the name being BOUND rather than read (a
  *   parameter, an object key - not a read at all), a RESOLVED check against what
@@ -169,10 +171,21 @@
  *     masker is narrower and is tested rather than asserted: it only ever blanks
  *     characters, never rewrites or moves them; it preserves every newline, so
  *     line numbers hold; the code it leaves has balanced brackets in all 62
- *     files; and its two guessing rules - regex-or-division, and where a string
- *     begins - are bounded so that being wrong costs at most the rest of one
- *     line and can never blank across a newline. A misreading is therefore a
- *     reference that fails to resolve, not one that disappears. Deliberately
+ *     files; and it still parses in all 62.
+ *
+ *     Its two guessing rules are bounded UNEQUALLY, and the difference matters.
+ *     The string rule is hard-bounded: a quote with no partner before the line
+ *     ends opens nothing, so being wrong there costs at most the rest of one
+ *     line. The regex-or-division rule is NOT so bounded. A misread `/` closes
+ *     on the next `/`, and if the text between them contains a backtick it can
+ *     take the opening backtick of a template with it, promoting the closing
+ *     one to an opener and blanking several lines - brackets still balanced,
+ *     nothing reported. Reaching it needs a division whose left operand ends in
+ *     a token spelled like one of the expression keywords; the tree has none
+ *     today, and the parse check below is what makes it loud rather than silent
+ *     if one ever arrives. So: a misreading is USUALLY a reference that fails
+ *     to resolve, and the parse check is what stands behind the exception.
+ *     Deliberately
  *     outside: a `root.RAThing` written inside a comment or a string is not a
  *     reference and is not counted as one.
  *   - the publication of a thunk is followed rather than reported
@@ -187,6 +200,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const repo = path.join(__dirname, "..");
 
@@ -2553,6 +2567,28 @@ test("masking the shipped tree blanks literals and leaves the code standing", ()
       assert.ok(depth >= 0, rel + ": masked code closes a bracket it never opened, at offset " + i);
     }
     assert.equal(depth, 0, rel + ": masked code leaves " + depth + " bracket(s) open - masking has eaten code");
+
+    /* And it must still PARSE. Bracket balance is necessary, not sufficient:
+     * a mis-lexed `/` that closes on a `/` inside template text can swallow
+     * that template's opening backtick, promote its closing one to an opener,
+     * and blank whole lines with the brackets still even - silently, which is
+     * the one failure mode nothing downstream can see. Handing the masked text
+     * to the parser is what turns that back into a loud error. The masker is
+     * not claimed to be RIGHT; this is what bounds being wrong. */
+    /* The handful of ES modules cannot go to vm.Script as they stand, and
+     * vm.SourceTextModule needs a flag the suite does not run with. Their
+     * module syntax is blanked first - offset for offset, same rule as the
+     * masker itself - which leaves the body, where every reference lives. */
+    const script = masked
+      .replace(/^[ \t]*import\b[^;\n]*;?/gm, (m) => " ".repeat(m.length))
+      // `export default {…}` would leave a bare block, so it becomes `void`
+      // instead - same width, and an object literal is a valid operand.
+      .replace(/\bexport\s+default\b/g, (m) => "void" + " ".repeat(m.length - 4))
+      .replace(/^([ \t]*)export\b/gm, (m) => " ".repeat(m.length));
+    assert.doesNotThrow(
+      () => new vm.Script(script, { filename: rel }),
+      rel + ": masked code no longer parses - masking has eaten code"
+    );
   }
 });
 
