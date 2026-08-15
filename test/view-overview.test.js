@@ -354,3 +354,62 @@ test("a deck or opponent name cannot inject markup into a row", () => {
   assert.ok(!html.includes("<img"));
   assert.ok(html.includes("&lt;img"));
 });
+
+// ---- the trend chart's labels and its tooltip --------------------------
+
+/* The chart's arithmetic is stats.js's and is tested there. What is tested
+ * here is the three decisions the DRAWING makes on top of it, all of which
+ * state something to the user that can be wrong without throwing: which date a
+ * column is labelled with, which columns get a label at all, and what the
+ * tooltip claims about a week. */
+
+test("a week in the current year is labelled without one, and an older week with it", () => {
+  const now = new Date(2026, 7, 15).getTime();
+  assert.ok(!O.weekLabel(new Date(2026, 0, 5).getTime(), now).includes("2026"));
+  assert.ok(O.weekLabel(new Date(2025, 0, 6).getTime(), now).includes("2025"));
+});
+
+test("every column is labelled while there are few enough to read", () => {
+  for (const n of [1, 4, 8]) {
+    assert.equal(O.labelled(n).size, n, `${n} columns should all carry a label`);
+  }
+});
+
+test("a long chart keeps its first and last column labelled, and thins the rest", () => {
+  for (const n of [9, 17, 52]) {
+    const marks = O.labelled(n);
+    assert.ok(marks.has(0), "the first column is what the chart starts at");
+    assert.ok(marks.has(n - 1), "the last column is what it ends at");
+    assert.ok(marks.size <= 10, `${n} columns thinned to ${marks.size} labels`);
+    for (const i of marks) assert.ok(i >= 0 && i < n, "no label points off the end");
+  }
+});
+
+test("a week with no games says so rather than showing a rate", () => {
+  const tip = O.tipText({ start: Date.now(), games: 0, wins: 0, losses: 0, decided: 0, rate: null });
+  assert.match(tip, /no games/);
+  assert.ok(!tip.includes("%"));
+});
+
+test("a week whose games were all unread says that, not 0%", () => {
+  const week = { start: Date.now(), games: 3, wins: 0, losses: 0, decided: 0, rate: null };
+  const tip = O.tipText(week);
+  assert.match(tip, /none decided/);
+  assert.ok(!tip.includes("0%"), "0% here would read as having lost all three");
+});
+
+test("a week carries its record, and its game count only when it differs", () => {
+  const start = Date.now();
+  const decided = O.tipText({ start, games: 4, wins: 3, losses: 1, decided: 4, rate: 0.75 });
+  assert.match(decided, /75% \(3–1\)/);
+  assert.ok(!/4 games/.test(decided), "all four were decided, so the total says nothing new");
+
+  const partly = O.tipText({ start, games: 6, wins: 3, losses: 1, decided: 4, rate: 0.75 });
+  assert.match(partly, /75% \(3–1\)/);
+  assert.match(partly, /6 games/, "two games are not in the rate, so the total has to be stated");
+});
+
+test("one game is singular", () => {
+  const tip = O.tipText({ start: Date.now(), games: 1, wins: 0, losses: 0, decided: 0, rate: null });
+  assert.match(tip, /1 game,/);
+});

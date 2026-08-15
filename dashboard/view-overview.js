@@ -1,7 +1,7 @@
 /* Rift Atlas Stats Tracker - the Overview
  *
- * Five tiles and three aggregate tables over one filtered array, plus the
- * banner that says an archive file is open.
+ * Six tiles, the win-rate-by-week chart and three aggregate tables over one
+ * filtered array, plus the banner that says an archive file is open.
  *
  * Two things here are decidable from data alone and are therefore tested rather
  * than trusted: WHICH matches the view is describing (`overviewRows`) and what
@@ -9,6 +9,12 @@
  * wrong in ways nothing throws on - a filter this side never read, and a rate
  * of "0%" printed for a group with no decided games at all, which reads as
  * "lost them all" rather than "nothing to average".
+ *
+ * The recent-form tile and the trend chart arrived from #8 as a separate module
+ * with a filter predicate of its own. They are drawn here instead, off the same
+ * `filtered()` every other figure on this view uses: two predicates over one
+ * screen is how a tile and the chart beside it come to describe different sets
+ * of matches. Their arithmetic is stats.js, pure and tested; this file draws.
  *
  * The filter row itself is static markup shared by every view, so the controls
  * are READ here rather than owned: `filtered()` samples them and hands their
@@ -22,8 +28,10 @@
 
   // format.js and table.js are loaded first by dashboard.html; the requires are
   // for node.
-  const { esc, champ, fmtDuration, deckOf } = root.RATrackerFormat || require("./format.js");
+  const { esc, champ, fmtDuration, fmtPercent, deckOf, rateStep } =
+    root.RATrackerFormat || require("./format.js");
   const TABLE = root.RATrackerTable || require("./table.js");
+  const STATS = root.RATrackerStats || require("./stats.js");
 
   /* Nothing below dereferences a query result directly. This view renders into
    * markup that is itself mid-port, so an element it reaches for may already be
@@ -94,7 +102,8 @@
   // ---- the tiles ---------------------------------------------------------
 
   /**
-   * What the five tiles say about a set of matches.
+   * What the first five tiles say about a set of matches. The sixth is recent
+   * form, which is stats.js's and is painted by `paintForm` below.
    *
    * A win rate with no decided games is a dash rather than 0%, and the rate
    * carries its own denominator: 57% of 207 and 57% of 7 are not the same
@@ -126,10 +135,6 @@
    * opponents pushes the rows that carry weight off the screen. */
   const AGG_LIMIT = 8;
   const aggExpanded = new Set();
-
-  /* Four steps of one hue. The break points are quarters of the range rather
-   * than anything about good or bad: this encodes magnitude, not judgement. */
-  const rateStep = (rate) => (rate >= 0.75 ? 4 : rate >= 0.5 ? 3 : rate >= 0.25 ? 2 : 1);
 
   /**
    * One aggregate table's body: rows grouped by `keyFn`, most games first.
@@ -188,6 +193,154 @@
     tbody.innerHTML = aggHtml(rows, keyFn, key, aggExpanded.has(key));
   }
 
+  // ---- recent form -------------------------------------------------------
+
+  const FORM_SHORT = 10;
+  const FORM_LONG = 20;
+
+  function paintForm(rows) {
+    const value = $("#tForm");
+    const sub = $("#tFormSub");
+    if (!value || !sub) return;
+
+    const short = STATS.recentForm(rows, FORM_SHORT);
+    if (!short.decided) {
+      value.textContent = "–";
+      value.classList.add("dash");
+      sub.textContent = "";
+      return;
+    }
+    value.classList.remove("dash");
+    value.textContent = `${short.wins}–${short.losses}`;
+
+    const bits = [fmtPercent(short.rate)];
+    // Claim only the games that exist: "last 10" with seven decided games is a
+    // 7-game claim, and the tile says so.
+    if (short.decided < FORM_SHORT) bits.push(`of last ${short.decided} decided`);
+    const long = STATS.recentForm(rows, FORM_LONG);
+    if (long.decided > short.decided) bits.push(`last ${long.decided}: ${fmtPercent(long.rate)}`);
+    sub.textContent = bits.join(" · ");
+  }
+
+  // ---- win rate by week --------------------------------------------------
+
+  /* More weeks than this and each column is thinner than its own gap. The chart
+   * says what it dropped rather than dropping it silently. */
+  const MAX_WEEKS = 52;
+
+  function weekLabel(startMs, now) {
+    const d = new Date(startMs);
+    const label = d.getDate() + " " + d.toLocaleString(undefined, { month: "short" });
+    const thisYear = new Date(now === undefined ? Date.now() : now).getFullYear();
+    return d.getFullYear() === thisYear ? label : label + " " + d.getFullYear();
+  }
+
+  /** Roughly eight x-labels however many weeks there are, first and last kept. */
+  function labelled(count) {
+    if (count <= 8) return new Set(Array.from({ length: count }, (_, i) => i));
+    const step = Math.ceil(count / 8);
+    const out = new Set();
+    for (let i = 0; i < count; i += step) out.add(i);
+    out.add(count - 1);
+    return out;
+  }
+
+  function tipText(week, now) {
+    const head = "Week of " + weekLabel(week.start, now);
+    if (!week.games) return head + " · no games";
+    if (!week.decided) return head + ` · ${week.games} game${week.games === 1 ? "" : "s"}, none decided`;
+    const games = week.games === week.decided ? "" : ` · ${week.games} games`;
+    return `${head} · ${fmtPercent(week.rate)} (${week.wins}–${week.losses})${games}`;
+  }
+
+  /* The columns the tooltip describes, kept beside the render that drew them so
+   * a hover between renders never reads a stale index off fresh markup. */
+  let lastWeeks = [];
+
+  function renderTrend(rows) {
+    const box = $("[data-trend]");
+    const note = $("[data-trend-note]");
+    if (!box) return;
+
+    const { weeks, omitted, undated } = STATS.weeklyWinRate(rows, MAX_WEEKS);
+    lastWeeks = weeks;
+
+    const decidedWeeks = weeks.filter((w) => w.decided).length;
+    if (decidedWeeks < 2) {
+      box.innerHTML =
+        '<p class="trend-empty">Not enough decided games to draw a trend yet — it needs two different weeks with results.</p>';
+      if (note) note.textContent = "";
+      return;
+    }
+
+    // Nothing hidden silently: the cap and the unplaceable rows are both stated.
+    if (note) {
+      const bits = [];
+      if (omitted) bits.push(`last ${weeks.length} weeks — ${omitted} earlier not shown`);
+      if (undated) bits.push(`${undated} undated match${undated === 1 ? "" : "es"} not placed`);
+      note.textContent = bits.join(" · ");
+    }
+
+    const labels = labelled(weeks.length);
+    const cols = weeks
+      .map((w, i) => {
+        const fill =
+          w.rate === null
+            ? ""
+            : `<div class="trend-fill rate-${rateStep(w.rate)}" style="height:${Math.max(
+                2,
+                Math.round(w.rate * 100)
+              )}%"></div>`;
+        return `<div class="trend-col" data-wk="${i}" role="img" aria-label="${esc(tipText(w))}">
+        <div class="trend-track">${fill}</div>
+        <span class="trend-lab">${labels.has(i) ? esc(weekLabel(w.start)) : ""}</span>
+      </div>`;
+      })
+      .join("");
+
+    box.innerHTML = `
+    <div class="trend-chart">
+      <div class="trend-y" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div>
+      <div class="trend-plot">
+        <div class="trend-mid" aria-hidden="true"></div>
+        <div class="trend-cols">${cols}</div>
+      </div>
+    </div>
+    <div class="trend-tip" hidden></div>`;
+  }
+
+  function mountTrendTip() {
+    const box = $("[data-trend]");
+    if (!box) return;
+
+    const move = (e) => {
+      const tip = box.querySelector(".trend-tip");
+      if (!tip) return;
+      const col = e.target.closest?.(".trend-col");
+      if (!col || !box.contains(col)) {
+        tip.hidden = true;
+        return;
+      }
+      const week = lastWeeks[Number(col.dataset.wk)];
+      if (!week) {
+        tip.hidden = true;
+        return;
+      }
+      tip.textContent = tipText(week);
+      tip.hidden = false;
+      const boxRect = box.getBoundingClientRect();
+      const colRect = col.getBoundingClientRect();
+      const centre = colRect.left - boxRect.left + colRect.width / 2;
+      // Clamped after paint, when the tip has a width to clamp by.
+      const half = tip.offsetWidth / 2;
+      const left = Math.min(Math.max(centre, half), boxRect.width - half);
+      tip.style.left = left + "px";
+    };
+
+    box.addEventListener("mouseover", move);
+    box.addEventListener("mouseout", move);
+  }
+
   // ---- the paint ---------------------------------------------------------
 
   function renderOverview() {
@@ -199,6 +352,8 @@
     setText("#tWinrate", t.winrate);
     setText("#tDecided", t.decided);
     setText("#tDuration", t.duration);
+    paintForm(rows);
+    renderTrend(rows);
 
     renderAgg($("#vsTable tbody"), rows, (m) => champ(m.opponentChampion || m.opponentLegend));
     renderAgg($("#deckTable tbody"), rows, deckOf);
@@ -239,6 +394,8 @@
       else aggExpanded.add(aggMore);
       render();
     });
+
+    mountTrendTip();
   }
 
   root.RATrackerViewOverview = {
@@ -246,6 +403,13 @@
     tileText,
     aggHtml,
     AGG_LIMIT,
+    weekLabel,
+    labelled,
+    tipText,
+    /* The Matchups view is a module and cannot import this file, so it takes
+     * the filtered set from here rather than sampling the controls a second
+     * time. One predicate, one answer to "which matches are we describing". */
+    filtered,
     renderOverview,
     renderArchiveBanner,
     mount,

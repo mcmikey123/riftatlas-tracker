@@ -125,6 +125,7 @@
         next: nextBtn,
         slider,
         clock: timeEl,
+        speed: speedSel,
         chapterEls,
         chapterHost: container,
       },
@@ -250,15 +251,6 @@
       root.requestAnimationFrame(playback.refit);
     }
 
-    // Play, step, seek and the chapter chips are wired by wireTransport; only
-    // this chrome's own extra control is left here.
-    // The select is written back from what the core actually accepted, so the
-    // control never claims a rate the engine is not running at.
-    if (speedSel) {
-      speedSel.addEventListener("change", () => {
-        speedSel.value = String(playback.setSpeed(parseFloat(speedSel.value)));
-      });
-    }
     // Wired directly rather than through the dashboard's document-level click
     // delegation: the handler needs the transport's position, which only this
     // closure holds, and a data attribute the document also listens for would

@@ -192,9 +192,9 @@
     // pause does not.
     let finished = false;
     // The rate playback runs at. Held here as well as in the engine's config
-    // because getSpeed answers from it, and because a paused engine applies a
-    // new speed only when play() next runs - this is the value the viewer was
-    // promised either way.
+    // because a paused engine applies a new speed only when play() next runs,
+    // and this is the value the viewer was promised either way - it is what
+    // setSpeed hands back for the control to write itself from.
     let speed = 1;
 
     /** Refit, but never after teardown — deferred fits outlive the modal. */
@@ -356,7 +356,6 @@
     return {
       totalTime: total,
       getTime: () => at,
-      getSpeed: () => speed,
       setSpeed,
       seek,
       endDrag,

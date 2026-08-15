@@ -168,7 +168,8 @@
    * `play`, `prev`, `next`, `slider`, `clock`, `chapterEls` (the chips, in
    * `chips` order) and `chapterHost` (whichever ancestor their clicks are
    * delegated on - the surfaces differ, one delegating on the chip row and the
-   * other on the whole viewer).
+   * other on the whole viewer). `speed` is optional, for a chrome that draws
+   * the playback-rate control; a chrome without one keeps the core's 1x.
    *
    * Null comes back when the recording will not play. What to say about that is
    * the chrome's business and the two surfaces say quite different things.
@@ -214,6 +215,17 @@
       const ms = e.target && e.target.dataset ? e.target.dataset.ms : undefined;
       if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
     });
+    /* The control is written back from what the core ACCEPTED, not from what
+     * it was handed: the core owns what a readable speed is, and a select left
+     * showing a rate the engine refused would be the control lying about the
+     * replay underneath it. Both surfaces only offer valid speeds today, so
+     * the write-back is invisible - which is exactly why it belongs here and
+     * not in two chromes free to drift on it. */
+    if (els.speed) {
+      els.speed.addEventListener("change", () => {
+        els.speed.value = String(playback.setSpeed(parseFloat(els.speed.value)));
+      });
+    }
 
     return playback;
   }

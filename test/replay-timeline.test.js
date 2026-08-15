@@ -594,12 +594,33 @@ test("the drop list holds nothing that can render", () => {
 
 // ---- playback speed ----------------------------------------------------
 
-test("the speed list is sorted, includes 1x, and both viewers read it", () => {
-  // Both surfaces build their control from this list; a missing 1x would leave
-  // no way back to real time.
+test("the speed list is sorted, includes 1x, and is frozen", () => {
+  // A missing 1x would leave no way back to real time.
   assert.ok(SPEEDS.includes(1));
   assert.deepEqual([...SPEEDS].sort((a, b) => a - b), [...SPEEDS], "slowest first");
   assert.ok(Object.isFrozen(SPEEDS));
+});
+
+test("both viewers build their speed control from the list, rather than restating it", () => {
+  /* The claim this file used to make about "both viewers read it" was checked
+   * nowhere, and the share viewer did not: index.html spelled the five options
+   * out again, so the two surfaces were one edit away from offering different
+   * speeds. Read the sources and hold it. */
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const at = (p) => fs.readFileSync(path.join(__dirname, "..", p), "utf8");
+
+  const builders = ["dashboard/replay-html.js", "share/worker/public/viewer.js"];
+  for (const file of builders) {
+    assert.match(at(file), /SPEEDS\.map\(/, `${file} must build its options from SPEEDS`);
+  }
+
+  /* The markup carries an empty select. Anchored on the id so this fails if the
+   * control is renamed rather than passing over a page that no longer has one. */
+  const html = at("share/worker/public/index.html");
+  const select = html.match(/<select[^>]*id="speed"[^>]*>([\s\S]*?)<\/select>/);
+  assert.ok(select, "index.html no longer has a select#speed for viewer.js to fill");
+  assert.equal(select[1].trim(), "", "the options belong to SPEEDS, not to the markup");
 });
 
 test("unreadable speeds fall back to 1x rather than guessing", () => {

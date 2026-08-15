@@ -274,6 +274,7 @@
         next: ui.next,
         slider: ui.seek,
         clock: ui.clock,
+        speed: ui.speed,
         chapterEls,
         chapterHost: ui.chapters
       },
@@ -301,14 +302,6 @@
 
     ui.sub.textContent = summarise(meta, marks, playback.totalTime);
     ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));
-    // Play, step, seek and the chapter chips are wired by wireTransport; only
-    // this page's own extra controls are left here.
-    // Written back from what the core accepted, so the control never claims a
-    // rate the engine is not running at. The options only offer valid speeds,
-    // but the core owns the contract, not this markup.
-    ui.speed.addEventListener("change", function () {
-      ui.speed.value = String(playback.setSpeed(parseFloat(ui.speed.value)));
-    });
     // Fit once more after layout settles; the first fit runs inside create(),
     // before the chapter row has necessarily taken its final height.
     root.requestAnimationFrame(() => playback.refit());
@@ -382,6 +375,16 @@
     if (missing.length || !root.RAReplayCore.available()) {
       return failed(new Error("viewer modules missing: " + (missing.join(", ") || "rrweb Replayer")), "engine");
     }
+
+    /* The speed options are built from the shared list rather than written into
+     * index.html, for the same reason the dashboard's modal builds its own:
+     * this page and that one have to agree on what speeds exist, and a list
+     * spelled out in two files is a list that eventually is not the same list.
+     * Built after the module guard above, so a page missing replay-timeline.js
+     * reports that rather than throwing here. */
+    ui.speed.innerHTML = root.RAReplayTimeline.SPEEDS.map(
+      (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
+    ).join("");
 
     ui.retry.addEventListener("click", run);
     doc.addEventListener("keydown", onKey);

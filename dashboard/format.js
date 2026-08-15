@@ -125,6 +125,19 @@
 
   const fmtPercent = (rate) => (rate === null || !Number.isFinite(rate) ? "–" : Math.round(rate * 100) + "%");
 
+  /**
+   * Which of the four win-rate hue steps a rate falls in.
+   *
+   * The break points are quarters of the range rather than anything about good
+   * or bad: this encodes magnitude, not judgement. It lives here, beside
+   * fmtPercent, because four surfaces now colour a rate - the Overview's
+   * aggregate bars, the weekly trend's columns, the matchup grid's cells, and
+   * whatever comes next - and three of them arrived holding their own copy of
+   * this line. A fifth copy drifting is how one page ends up showing the same
+   * rate in two different colours.
+   */
+  const rateStep = (rate) => (rate >= 0.75 ? 4 : rate >= 0.5 ? 3 : rate >= 0.25 ? 2 : 1);
+
   root.RATrackerFormat = {
     esc,
     fmtClock,
@@ -137,6 +150,7 @@
     fmtTime,
     fmtScore,
     fmtPercent,
+    rateStep,
     champ,
     deckOf,
     DASH,

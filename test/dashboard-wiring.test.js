@@ -167,6 +167,13 @@ test("the views drained out of legacy.js load before it, as classic scripts", ()
   // backups.js builds its file with data-io.js's bundle builder, and falls back
   // to its download when the downloads permission is declined.
   assert.ok(at("data-io.js") < at("backups.js"));
+  // The Overview binds table.js's range arithmetic and stats.js's recent form
+  // and weekly buckets off the global as it evaluates, the same way legacy.js
+  // binds the Overview. Load either later and the tiles, the trend chart and
+  // the Matchups grid that reads this file's `filtered()` all go blank.
+  assert.ok(at("format.js") < at("view-overview.js"));
+  assert.ok(at("table.js") < at("view-overview.js"));
+  assert.ok(at("stats.js") < at("view-overview.js"));
 });
 
 test("the module entry point is loaded as a module, and last", () => {
