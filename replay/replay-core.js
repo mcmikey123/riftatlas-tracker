@@ -101,8 +101,10 @@
    * `prefers-reduced-motion`.
    */
   function create(options) {
-    const { quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay, stripInertLinks } =
-      root.RAReplayTimeline;
+    const {
+      quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay, stripInertLinks,
+      normaliseSpeed,
+    } = root.RAReplayTimeline;
 
     const stage = options.stage;
     const scaleEl = options.scaleEl;
@@ -122,10 +124,12 @@
 
     let replayer;
     try {
+      // No speedOption here: that key belongs to rrweb-player, which this core
+      // replaced, and the Replayer itself has never read it. Speed is driven
+      // through setConfig by setSpeed below.
       replayer = new root.rrwebReplay.Replayer(events, {
         root: scaleEl,
         mouseTail: false,
-        speedOption: [1],
         showWarning: false,
         showDebug: false,
       });
@@ -187,6 +191,11 @@
     // seeking back into the replay resumes, where seeking after a deliberate
     // pause does not.
     let finished = false;
+    // The rate playback runs at. Held here as well as in the engine's config
+    // because getSpeed answers from it, and because a paused engine applies a
+    // new speed only when play() next runs - this is the value the viewer was
+    // promised either way.
+    let speed = 1;
 
     /** Refit, but never after teardown — deferred fits outlive the modal. */
     function refit() {
@@ -297,6 +306,22 @@
       start();
     }
 
+    /**
+     * Change the playback rate, mid-play or paused alike. rrweb applies a
+     * setConfig speed to a running timer immediately; a paused engine picks it
+     * up on the next play(). Position is untouched either way - changing how
+     * fast the replay runs must never move where it is.
+     */
+    function setSpeed(next) {
+      speed = normaliseSpeed(next);
+      try {
+        replayer.setConfig({ speed });
+      } catch (err) {
+        console.warn("[RA-Tracker] could not set playback speed:", err);
+      }
+      return speed;
+    }
+
     /** Stepping is "hold still and look at this one", so it always pauses. */
     function stepTo(dir) {
       const next = dir > 0 ? stops.find((ms) => ms > at + 1) : [...stops].reverse().find((ms) => ms < at - 1);
@@ -331,6 +356,8 @@
     return {
       totalTime: total,
       getTime: () => at,
+      getSpeed: () => speed,
+      setSpeed,
       seek,
       endDrag,
       pause: stop,

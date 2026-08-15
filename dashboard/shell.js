@@ -25,7 +25,7 @@ const { esc, fmtBytes } = window.RATrackerFormat;
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
-export const VIEWS = ["overview", "matches", "series", "replays", "shares", "settings"];
+export const VIEWS = ["overview", "matrix", "matches", "series", "replays", "shares", "settings"];
 
 /* Hidden in archive mode rather than disabled - see the header comment. */
 const LIVE_ONLY = new Set(["replays", "shares"]);
@@ -34,7 +34,7 @@ const LIVE_ONLY = new Set(["replays", "shares"]);
    recordings, Shared links a register of uploads, and Settings is not data at
    all - none of them narrow by champion, deck, mode or date, so a filter row
    above them is a control that does nothing to what is underneath it. */
-const FILTERED = new Set(["overview", "matches", "series"]);
+const FILTERED = new Set(["overview", "matrix", "matches", "series"]);
 
 // ---- view switching ----------------------------------------------------
 

@@ -44,6 +44,28 @@
   }
 
   /**
+   * The playback speeds both viewers offer, slowest first. One shared list so
+   * the dashboard modal and the share viewer cannot drift on what "fast" means.
+   * 6x is where a whole match can be reviewed in a couple of minutes while the
+   * board is still readable; past that the frames are a flipbook.
+   */
+  const SPEEDS = Object.freeze([0.5, 1, 2, 4, 6]);
+
+  /**
+   * The speed the engine is actually asked for, given whatever a control
+   * handed over. Anything unreadable - absent, NaN, zero, negative - is 1x,
+   * because a replay that silently plays at the wrong rate is worse than one
+   * that ignored a broken input. Readable values are clamped to the range the
+   * controls offer rather than snapped to a step: the range is the contract,
+   * the steps are just the UI.
+   */
+  function normaliseSpeed(value) {
+    const v = Number(value);
+    if (!Number.isFinite(v) || v <= 0) return 1;
+    return Math.min(SPEEDS[SPEEDS.length - 1], Math.max(SPEEDS[0], v));
+  }
+
+  /**
    * Why the transport was moved. The reason is the whole input to the resume
    * policy below, so every caller that seeks names one.
    */
@@ -380,6 +402,8 @@
     MAX_SCALE,
     SCALE_STEP,
     SEEK,
+    SPEEDS,
+    normaliseSpeed,
     INERT_LINK_RELS,
     isInertLink,
     stripInertLinks,

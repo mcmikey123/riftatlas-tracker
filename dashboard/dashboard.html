@@ -82,6 +82,7 @@
   <nav class="side-nav" aria-label="Views">
     <span class="nav-label">View</span>
     <button class="nav-item" data-goto="overview">Overview</button>
+    <button class="nav-item" data-goto="matrix">Matchups</button>
     <button class="nav-item" data-goto="matches">Matches <span class="nav-count" data-count="matches"></span></button>
     <button class="nav-item" data-goto="series">Series <span class="nav-count" data-count="series"></span></button>
     <button class="nav-item" data-nav-live="replays" data-goto="replays">Replays <span class="nav-count" data-count="replays"></span></button>
@@ -152,6 +153,15 @@
         <div class="tile"><span class="tile-label">Losses</span><span class="tile-value loss" id="tLosses">0</span></div>
         <div class="tile"><span class="tile-label">Win rate</span><span class="tile-row"><span class="tile-value" id="tWinrate">&ndash;</span><span class="tile-sub" id="tDecided"></span></span></div>
         <div class="tile"><span class="tile-label">Avg duration</span><span class="tile-value" id="tDuration">&ndash;</span></div>
+        <div class="tile"><span class="tile-label">Recent form</span><span class="tile-row"><span class="tile-value" id="tForm">&ndash;</span><span class="tile-sub" id="tFormSub"></span></span></div>
+      </div>
+
+      <div class="card card-trend">
+        <div class="card-head">
+          <h2>Win rate by week</h2>
+          <span class="trend-note" data-trend-note></span>
+        </div>
+        <div class="trend" data-trend></div>
       </div>
 
       <div class="agg-grid">
@@ -192,6 +202,11 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- ====================== Matchups ====================== -->
+    <section class="view" data-view="matrix" hidden>
+      <div data-matrix></div>
     </section>
 
     <!-- ====================== Matches ====================== -->
@@ -392,6 +407,7 @@
      is CommonJS, can require() them. -->
 <script src="series.js"></script>
 <script src="table.js"></script>
+<script src="stats.js"></script>
 <!-- The dialog's pure helpers - button ordering and the validation contract.
      Classic, so node --test can require() them; dialog.js reads them off the
      global. -->

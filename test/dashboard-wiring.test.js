@@ -175,7 +175,7 @@ test("the module entry point is loaded as a module, and last", () => {
   // lets the split work with no bundler.
   assert.match(html, /<script type="module" src="main\.js"><\/script>/);
   const main = html.indexOf('src="main.js"');
-  for (const classic of ["format.js", "series.js", "table.js", "storage.js", "legacy.js"]) {
+  for (const classic of ["format.js", "series.js", "table.js", "stats.js", "storage.js", "legacy.js"]) {
     const at = html.indexOf(`src="${classic}"`);
     assert.notEqual(at, -1, `${classic} is not loaded`);
     assert.ok(at < main, `${classic} must load before main.js`);

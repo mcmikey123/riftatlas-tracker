@@ -137,6 +137,9 @@ body {
 }
 .btn:hover { background: #27395c; }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The speed control is a <select> wearing the button's clothes; the page
+   already declares color-scheme: dark, so its dropdown is painted dark too. */
+select.btn { cursor: pointer; }
 /* The slider is labelled for screen readers; sighted users have the clock beside it. */
 .seek-label {
   position: absolute;

@@ -301,6 +301,14 @@
 
     ui.sub.textContent = summarise(meta, marks, playback.totalTime);
     ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));
+    // Play, step, seek and the chapter chips are wired by wireTransport; only
+    // this page's own extra controls are left here.
+    // Written back from what the core accepted, so the control never claims a
+    // rate the engine is not running at. The options only offer valid speeds,
+    // but the core owns the contract, not this markup.
+    ui.speed.addEventListener("change", function () {
+      ui.speed.value = String(playback.setSpeed(parseFloat(ui.speed.value)));
+    });
     // Fit once more after layout settles; the first fit runs inside create(),
     // before the chapter row has necessarily taken its final height.
     root.requestAnimationFrame(() => playback.refit());
@@ -364,7 +372,7 @@
 
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
-      "player", "play", "prev", "next", "seek", "clock", "copyAt", "chapters", "stage", "scale"]) {
+      "player", "play", "prev", "next", "seek", "clock", "speed", "copyAt", "chapters", "stage", "scale"]) {
       ui[id] = doc.getElementById(id);
     }
 

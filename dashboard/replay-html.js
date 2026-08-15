@@ -15,7 +15,8 @@
   "use strict";
 
   const { esc, fmtClock, fmtScore } = root.RATrackerFormat;
-  const { MAX_CHIPS, timeline, evenly, truncationText, targetOwnsKey } = root.RAReplayTimeline;
+  const { MAX_CHIPS, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
+    root.RAReplayTimeline;
 
   /**
    * Escape is consumed by the browser to leave fullscreen, but not every engine
@@ -56,6 +57,9 @@
         <button class="rp-btn vr-next" title="Next board state (→)">▶|</button>
         <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
         <span class="rp-meta vr-time"></span>
+        <select class="rp-btn rp-speed vr-speed" title="Playback speed" aria-label="Playback speed">${SPEEDS.map(
+          (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
+        ).join("")}</select>
         <button class="rp-btn vr-full" title="Fullscreen (f)" aria-pressed="false">⛶ Fullscreen</button>
         ${
           withMoment
@@ -88,6 +92,7 @@
       prevBtn: container.querySelector(".vr-prev"),
       nextBtn: container.querySelector(".vr-next"),
       fullBtn: container.querySelector(".vr-full"),
+      speedSel: container.querySelector(".vr-speed"),
       momentBtn: container.querySelector(".vr-moment"),
       momentPanel: container.querySelector(".vr-share"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
@@ -102,7 +107,8 @@
    * for everything wired here and for the core underneath.
    */
   function wireControls(handles, meta, events, marks, chips, shareMoment) {
-    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, chapterEls } = handles;
+    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
+      handles;
 
     // The transport row itself - the clock, the chips' highlight, the play,
     // step, seek and chapter controls and the keys both surfaces answer - is
@@ -244,6 +250,15 @@
       root.requestAnimationFrame(playback.refit);
     }
 
+    // Play, step, seek and the chapter chips are wired by wireTransport; only
+    // this chrome's own extra control is left here.
+    // The select is written back from what the core actually accepted, so the
+    // control never claims a rate the engine is not running at.
+    if (speedSel) {
+      speedSel.addEventListener("change", () => {
+        speedSel.value = String(playback.setSpeed(parseFloat(speedSel.value)));
+      });
+    }
     // Wired directly rather than through the dashboard's document-level click
     // delegation: the handler needs the transport's position, which only this
     // closure holds, and a data attribute the document also listens for would

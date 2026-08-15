@@ -24,9 +24,10 @@ Turn on **Daily auto-backup to Downloads** in the dashboard's **Settings** view 
 
 ## The dashboard
 
-The dashboard is six views behind a left nav, not one long scrolling page. The header, the filter row and the banners are shared by all of them, and switching views reloads nothing.
+The dashboard is seven views behind a left nav, not one long scrolling page. The header, the filter row and the banners are shared by all of them, and switching views reloads nothing.
 
-- **Overview** — the stat tiles and the three aggregate tables (win rate vs opponent champion, by your deck, by your champion), plus **Detect decks from cards played**.
+- **Overview** — the stat tiles (including your **recent form** over the last 10 and 20 decided games), a **win rate by week** chart, and the three aggregate tables (win rate vs opponent champion, by your deck, by your champion), plus **Detect decks from cards played**.
+- **Matchups** — the champion-by-champion grid: every champion you have played down the side, every one you have faced along the top, and in each cell your win rate over that matchup's decided games with the number of games it rests on beside it. Clicking a cell opens **Matches** narrowed to that matchup, by driving the same filter and search controls a hand would.
 - **Matches** — your full history. Every column sorts, a search box covers opponent, room code, either champion and deck name, a date range narrows the set, and rows come 25 to a page. The old 13 columns are now 12 cells carrying the same 13 fields — date and time stack, your champion, opponent and their champion become one Matchup cell, and mode and room stack — with **Delete** moved into each row's ⋯ menu beside Share replay and Copy match id. Nothing was dropped.
 - **Series** — best-of series, described below.
 - **Replays** — the **Visual replay capture** panel.
@@ -78,7 +79,7 @@ While you play, the extension records the *codes* of your own cards that become 
 
 ## Replays
 
-Each match is recorded as a **replay**: the site's own markup and stylesheets, captured as they changed and played back through [rrweb](https://github.com/rrweb-io/rrweb) in a scripting-disabled iframe. It looks exactly like the game did, because it *is* the game's own HTML — not a redrawn board. Open a row in **Matches** and click **Open full screen** beside **Replay**. Matches without a recording don't show the button.
+Each match is recorded as a **replay**: the site's own markup and stylesheets, captured as they changed and played back through [rrweb](https://github.com/rrweb-io/rrweb) in a scripting-disabled iframe. It looks exactly like the game did, because it *is* the game's own HTML — not a redrawn board. Open a row in **Matches** and click **Open full screen** beside **Replay**. Matches without a recording don't show the button. The viewer plays at **0.5× to 6×** — pick the rate from the control beside the clock; a whole match reviews in a couple of minutes at 6× — and the same control is in the shared-link viewer.
 
 It costs roughly 1–3 MB compressed per match, kept in the extension's own IndexedDB rather than `chrome.storage.local`. Recording is **always at full fidelity** — a frame per settled game event, start to finish. It is never thinned out to save space, because a replay that quietly skips frames is no longer the match you played, and nothing on screen would tell you which parts were missing.
 
