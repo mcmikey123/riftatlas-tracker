@@ -161,6 +161,11 @@ function element(tag, attributes) {
   // several of the dashboard's controls are proxies that call .click() on
   // another button, and every branch that answers is on the document.
   node.click = () => dispatchAt(node, "click");
+  /* Code under test fires its own events too - the Matchups view narrows the
+   * page by writing the filter controls and dispatching at them, exactly as a
+   * hand would, rather than by a private query. It passes a constructed Event,
+   * so the type is taken off whatever object it hands over. */
+  node.dispatchEvent = (event) => dispatchAt(node, event && event.type, { target: node });
   node.focus = () => {
     const root = rootOf(node);
     if (root.document) root.document.activeElement = node;

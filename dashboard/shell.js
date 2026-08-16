@@ -38,7 +38,11 @@ const FILTERED = new Set(["overview", "matrix", "matches", "series"]);
 
 // ---- view switching ----------------------------------------------------
 
-function setView(view) {
+/* Exported for the Matchups view, whose cells open Matches narrowed to the
+ * matchup that was clicked. It was un-exported earlier on this branch as dead,
+ * which it was until that view arrived - the nav's own buttons call it from
+ * inside this file. */
+export function setView(view) {
   const next = VIEWS.indexOf(view) === -1 ? "overview" : view;
   if (state.view === next) return;
   state.view = next;

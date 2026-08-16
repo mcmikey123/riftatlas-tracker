@@ -309,3 +309,52 @@ test("the dashboard reads replays directly, not over sendMessage", () => {
     );
   }
 });
+
+test("every name a dashboard module imports is one the module it names exports", () => {
+  /* The module half has no equivalent of test/dashboard-boot.test.js: that file
+   * loads the classic scripts and drives them, and the ES modules are not part
+   * of it. So an import naming an export that does not exist reached a browser
+   * and nothing else - the page dies on the first line of main.js's graph with
+   * "does not provide an export named X", and the whole dashboard is blank.
+   *
+   * That is not hypothetical. #8 was written against main, where shell.js
+   * exported setView; this branch had un-exported it as dead, the two edits
+   * were in different places, and the merge was textually clean.
+   *
+   * Static and deliberately shallow: it reads what each file declares as an
+   * export, not what it evaluates to. That is enough for the failure above,
+   * which is a name mismatch, and it needs no bundler to run. */
+  const modules = fs.readdirSync(DIR).filter((f) => f.endsWith(".js"));
+
+  let checked = 0;
+  for (const file of modules) {
+    const src = stripComments(read(file));
+    for (const imp of src.matchAll(/import\s*\{([^}]+)\}\s*from\s*["'](\.[^"']+)["']/g)) {
+      const target = imp[2].replace(/^\.\//, "");
+      assert.ok(
+        modules.includes(target),
+        `${file} imports from ${imp[2]}, which is not a file in dashboard/`
+      );
+      const targetSrc = stripComments(read(target));
+      // `a as b` imports b; the name that has to be exported is a.
+      const names = imp[1]
+        .split(",")
+        .map((s) => s.trim().split(/\s+as\s+/)[0].trim())
+        .filter(Boolean);
+      for (const name of names) {
+        const declared = new RegExp(`export\\s+(?:const|let|var|function|class)\\s+${name}\\b`);
+        const listed = new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`);
+        assert.ok(
+          declared.test(targetSrc) || listed.test(targetSrc),
+          `${file} imports { ${name} } from ${imp[2]}, which does not export it`
+        );
+        checked++;
+      }
+    }
+  }
+
+  /* The dashboard's module graph is real and this scan has to have walked it:
+   * a regex that quietly stopped matching would otherwise leave this test
+   * green over a page that cannot boot. */
+  assert.ok(checked > 10, `only ${checked} imports were checked - the scan is not reading the graph`);
+});
