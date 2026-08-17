@@ -332,13 +332,22 @@
     const mode = val("#fMode");
     const deck = val("#fDeck");
     const inclUnknown = includeUnknownAnyway || isChecked("#fUnknown");
-    return all.filter((m) => {
+    const rows = all.filter((m) => {
       if (mc && champ(m.myChampion || m.myLegend) !== mc) return false;
       if (deck && deckOf(m) !== deck) return false;
       if (mode && m.mode !== mode) return false;
       if (!inclUnknown && (m.result === "unknown" || !m.result)) return false;
       return true;
     });
+    /* The date range belongs to the redesign's filter row, but "Filters apply
+     * to every view" is a promise this view has to keep too: tiles that ignore
+     * the range would disagree with the chart and the tables drawn beside
+     * them. Read off the same static controls as the rest of this function. */
+    return window.RATrackerTable.inRange(
+      rows,
+      { preset: val("#fDates") || "all", from: val("#fFrom") || null, to: val("#fTo") || null },
+      "startedAt"
+    );
   }
 
   function render() {
@@ -1639,7 +1648,7 @@
         });
       return;
     }
-    if (["fMyChampion", "fMode", "fDeck", "fUnknown"].includes(t.id)) render();
+    if (["fMyChampion", "fMode", "fDeck", "fUnknown", "fDates", "fFrom", "fTo"].includes(t.id)) render();
   });
 
   /** Name a match's deck by hand, from either deck picker. */

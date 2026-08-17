@@ -24,7 +24,9 @@ const {
   turnOf,
   timeline,
   evenly,
-  truncationText
+  truncationText,
+  SPEEDS,
+  normaliseSpeed
 } = require("../replay/replay-timeline.js");
 
 const CUSTOM = 5;
@@ -588,4 +590,27 @@ test("the drop list holds nothing that can render", () => {
     assert.equal(INERT_LINK_RELS.includes(rel), false, `rel="${rel}" must not be dropped`);
   }
   assert.equal(isInertLink(link({ rel: "stylesheet" })), false);
+});
+
+// ---- playback speed ----------------------------------------------------
+
+test("the speed list is sorted, includes 1x, and both viewers read it", () => {
+  // Both surfaces build their control from this list; a missing 1x would leave
+  // no way back to real time.
+  assert.ok(SPEEDS.includes(1));
+  assert.deepEqual([...SPEEDS].sort((a, b) => a - b), [...SPEEDS], "slowest first");
+  assert.ok(Object.isFrozen(SPEEDS));
+});
+
+test("unreadable speeds fall back to 1x rather than guessing", () => {
+  for (const bad of [null, undefined, NaN, "fast", 0, -2]) {
+    assert.equal(normaliseSpeed(bad), 1, `${String(bad)} must play at real time`);
+  }
+});
+
+test("readable speeds are clamped to the range the controls offer", () => {
+  assert.equal(normaliseSpeed(0.1), SPEEDS[0]);
+  assert.equal(normaliseSpeed(100), SPEEDS[SPEEDS.length - 1]);
+  assert.equal(normaliseSpeed(2), 2);
+  assert.equal(normaliseSpeed("4"), 4, "control values arrive as strings");
 });

@@ -15,6 +15,8 @@ import { state, subscribe, emit, resetPaging } from "./state.js";
 import { mountShell, paintShell, VIEWS } from "./shell.js";
 import { renderMatches, mountMatches } from "./view-matches.js";
 import { renderSeries, mountSeries } from "./view-series.js";
+import { renderOverviewExtras, mountOverviewExtras } from "./view-overview.js";
+import { renderMatrix, mountMatrix } from "./view-matrix.js";
 import * as dialog from "./dialog.js";
 import { toast } from "./toast.js";
 
@@ -132,6 +134,8 @@ function render() {
    * read is exactly the one you came here to fix. */
   renderMatches($("[data-matches]"), withSeries, state.readOnly);
   renderSeries($("[data-series]"), withSeries, state.readOnly);
+  renderOverviewExtras(all);
+  renderMatrix($("[data-matrix]"), all);
   paintSettings();
 }
 
@@ -234,6 +238,8 @@ function boot() {
   mountFilters();
   mountMatches();
   mountSeries();
+  mountOverviewExtras();
+  mountMatrix($("[data-matrix]"));
   mountSettings();
   subscribe(render);
 

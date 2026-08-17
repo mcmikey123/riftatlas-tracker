@@ -301,6 +301,12 @@
     ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));
     ui.prev.addEventListener("click", () => playback.stepTo(-1));
     ui.next.addEventListener("click", () => playback.stepTo(1));
+    // Written back from what the core accepted, so the control never claims a
+    // rate the engine is not running at. The options only offer valid speeds,
+    // but the core owns the contract, not this markup.
+    ui.speed.addEventListener("change", function () {
+      ui.speed.value = String(playback.setSpeed(parseFloat(ui.speed.value)));
+    });
     // `input` fires all the way through a drag, so the drag holds playback and
     // the end of the drag is what puts it back. The end is taken from the events
     // that always fire — never from `change`, which Gecko withholds when the
@@ -393,7 +399,7 @@
 
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
-      "player", "play", "prev", "next", "seek", "clock", "copyAt", "chapters", "stage", "scale"]) {
+      "player", "play", "prev", "next", "seek", "clock", "speed", "copyAt", "chapters", "stage", "scale"]) {
       ui[id] = doc.getElementById(id);
     }
 
