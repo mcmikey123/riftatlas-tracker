@@ -43,6 +43,48 @@
     "RAClipboard"
   ];
 
+  /* A global can be present and still be the wrong vintage. public/replay/,
+   * public/share/ and public/store/ are gitignored duplicates that
+   * sync-assets.sh refreshes from the repo before every deploy, so a deploy
+   * that skipped that step serves this file beside modules older than it - the
+   * globals all exist and REQUIRED above is satisfied.
+   *
+   * Every member this page reaches for, and the list is complete because
+   * viewer-assets.test.js scrapes this file and fails if it is not: a member
+   * used here and missing below is one more way to reach the failure this
+   * check exists to prevent. Without it the first stale member throws part-way
+   * through start(), after the elements are looked up but before the retry
+   * button and the key handler are wired, and the page simply stops - no
+   * message, no retry, indistinguishable from a hang. That is the failure
+   * sync-assets.sh warns about and the one nobody is watching for. */
+  const REQUIRED_MEMBERS = [
+    ["RAClipboard", "copyToButton"],
+    ["RARepaint", "repaint"],
+    ["RAReplayCore", "available"],
+    ["RAReplayCore", "create"],
+    ["RAReplayTimeline", "MAX_CHIPS"],
+    ["RAReplayTimeline", "SPEEDS"],
+    ["RAReplayTimeline", "evenly"],
+    ["RAReplayTimeline", "targetOwnsKey"],
+    ["RAReplayTimeline", "timeline"],
+    ["RAReplayTimeline", "truncationText"],
+    ["RAReplayTransport", "handleKey"],
+    ["RAReplayTransport", "wireTransport"],
+    ["RAShare", "importKey"],
+    ["RAShare", "parseSharePayload"],
+    ["RAShareHosts", "buildLink"],
+    ["RAShareHosts", "fromLinkSeconds"],
+    ["RAShareHosts", "parseLink"],
+    ["RAShareHosts", "toLinkSeconds"],
+    ["RAShareViewer", "ViewerError"],
+    ["RAShareViewer", "brokenImages"],
+    ["RAShareViewer", "classify"],
+    ["RAShareViewer", "describeFailure"],
+    ["RAShareViewer", "emptyCssTextCount"],
+    ["RAShareViewer", "fmtClock"],
+    ["RAShareViewer", "unresolvedCssRefs"]
+  ];
+
   // Secondary lines. The headline says what happened; these say what to do,
   // which is the only reason the failures are told apart at all.
   const DETAILS = {
@@ -78,8 +120,18 @@
 
   function failed(err, fallbackKind) {
     // The module that knows the messages is itself one of the things that can
-    // be missing, so the engine failure is the one message stated twice.
-    const { kind, message, retry } = root.RAShareViewer
+    // be missing, so the engine failure is the one message stated twice. The
+    // member is checked, not just the global: a stale share/viewer-support.js
+    // publishes RAShareViewer without describeFailure, and this is the one
+    // function that cannot throw on the way to reporting that - it is the
+    // reporting.
+    // Written without `!!` on purpose: namespace-contract.test.js cannot read a
+    // namespace through it, and would quietly stop checking RAShareViewer's
+    // members here rather than fail. A plain `&&` keeps the reference legible
+    // to it; the ternary below wants truthiness, not a boolean.
+    const canDescribe =
+      root.RAShareViewer && typeof root.RAShareViewer.describeFailure === "function";
+    const { kind, message, retry } = canDescribe
       ? root.RAShareViewer.describeFailure(err, fallbackKind)
       : { kind: "engine", message: "The replay engine failed to load.", retry: false };
     console.warn("[RA-Tracker] share viewer failed (" + kind + "):", err);
@@ -219,6 +271,86 @@
     }, CARD_ART_INTERVAL_MS);
   }
 
+  /* ---- fullscreen ---------------------------------------------------------
+   *
+   * The dashboard's modal has had this since the replay viewer existed; this
+   * page did not, so a recipient sent a board captured at 1920px read it in
+   * whatever width the page's column happened to leave over.
+   *
+   * `.viewer` is what goes fullscreen rather than `.stage`, so the transport,
+   * the chapter chips and the notices travel with the board - the same call the
+   * modal makes when it fullscreens the shell instead of the body.
+   *
+   * Escape needs none of the modal's grace period here. There, one Escape could
+   * both leave fullscreen and close the modal behind it, so the second meaning
+   * had to be suppressed; this page has nothing behind the replay to close, and
+   * binds no Escape at all, so the browser's own handling is the whole story.
+   */
+  let canFullscreen = false;
+
+  function isFull() {
+    return doc.fullscreenElement === ui.viewer;
+  }
+
+  function paintFullscreen() {
+    const on = isFull();
+    ui.viewer.classList.toggle("full", on);
+    ui.full.textContent = on ? "⤢ Exit fullscreen" : "⛶ Fullscreen";
+    ui.full.title = on ? "Leave fullscreen (f or Esc)" : "Fullscreen (f)";
+    ui.full.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  /** Leave fullscreen if we are in it. Never throws, never rejects outward. */
+  function leaveFullscreen() {
+    let done;
+    try {
+      done = doc.exitFullscreen();
+    } catch (err) {
+      console.warn("[RA-Tracker] could not leave fullscreen:", err);
+      return;
+    }
+    if (done && typeof done.catch === "function") {
+      done.catch((err) => console.warn("[RA-Tracker] could not leave fullscreen:", err));
+    }
+  }
+
+  /**
+   * requestFullscreen can be refused outright - a user gesture the browser did
+   * not credit, an embedding that withholds the permission - and it reports
+   * that by rejecting rather than throwing. Either way the page stays exactly
+   * as it was, so all that is owed is repainting the button to its real state.
+   */
+  function toggleFullscreen() {
+    if (!canFullscreen) return;
+    if (isFull()) return leaveFullscreen();
+    let done;
+    try {
+      done = ui.viewer.requestFullscreen();
+    } catch (err) {
+      console.warn("[RA-Tracker] fullscreen was refused:", err);
+      paintFullscreen();
+      return;
+    }
+    if (done && typeof done.catch === "function") {
+      done.catch((err) => {
+        console.warn("[RA-Tracker] fullscreen was refused:", err);
+        paintFullscreen();
+      });
+    }
+  }
+
+  function onFullscreenChange() {
+    paintFullscreen();
+    // The stage's new box is not final on this event in every engine, so fit
+    // once now and again once layout has settled. The ResizeObserver mount()
+    // installs covers this too; this is the belt to its braces, and matters on
+    // the way out of fullscreen, where the observer can fire before the page
+    // has taken its column width back.
+    if (!playback) return;
+    playback.refit();
+    root.requestAnimationFrame(playback.refit);
+  }
+
   /**
    * A link to this same share, opening wherever the replay is right now.
    *
@@ -319,13 +451,28 @@
     watchCardArt();
   }
 
-  /* Every key this page answers is one the extension's modal answers the same
-   * way, so the map and the guard that goes with it are both in
-   * replay/replay-transport.js. The modal adds Escape and f around the same
-   * call; this page has nothing of its own to add, so it takes the answer and
-   * ignores it. */
+  /* Every transport key this page answers is one the extension's modal answers
+   * the same way, so the map and the guard that goes with it are both in
+   * replay/replay-transport.js. `f` is the one key this page adds around that
+   * call, and it is added the way the modal adds it: only once the transport
+   * has declined the event, and only when the focused element does not own the
+   * key itself - `targetOwnsKey` is what keeps `f` from being swallowed while
+   * someone is typing into a field. The modal also adds Escape; this page has
+   * nothing behind the replay for Escape to close, so it binds none. */
   function onKey(e) {
-    root.RAReplayTransport.handleKey(e, playback);
+    if (root.RAReplayTransport.handleKey(e, playback)) return;
+    if (root.RAReplayTimeline.targetOwnsKey(e.target, e.key)) return;
+    /* Bare f only. Ctrl+F and Cmd+F are Find, and preventDefault on those is
+     * honoured, so an unguarded test here would swallow the browser's own
+     * shortcut and go fullscreen instead. Guarded on this branch rather than at
+     * the top of the handler: the keys above are the shared transport's, and
+     * filtering them here would make this page answer them differently from the
+     * dashboard's modal, which is the drift replay-transport.js exists to stop. */
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      toggleFullscreen();
+    }
   }
 
   async function run() {
@@ -365,15 +512,44 @@
 
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
-      "player", "play", "prev", "next", "seek", "clock", "speed", "copyAt", "chapters", "stage", "scale"]) {
+      "player", "play", "prev", "next", "seek", "clock", "speed", "full", "copyAt", "chapters",
+      "stage", "scale"]) {
       ui[id] = doc.getElementById(id);
     }
+    // The one element addressed by class: it is the page's layout root, and the
+    // element fullscreen is requested on.
+    ui.viewer = doc.querySelector(".viewer");
 
-    // Reported before the download rather than after it: a viewer that cannot
-    // play anything should say so immediately, not after 3.5 MB.
+    /* Three checks, in this order, and the order is the point.
+     *
+     * Reported before the download rather than after it: a viewer that cannot
+     * play anything should say so immediately, not after 3.5 MB.
+     *
+     * Globals first, because a member check on an absent global throws. Members
+     * second, because the engine check below is itself a member call -
+     * RAReplayCore.available - and a stale replay-core.js that does not publish
+     * it would throw there, part-way through start(), which is the silent blank
+     * page this whole guard exists to replace. Only once both hold is it safe
+     * to ask the engine whether it can actually play.
+     *
+     * Both stale cases report `engine`: a half-updated deploy is the same
+     * problem for the recipient as a missing file, and the same remedy for
+     * whoever deployed it - run sync-assets.sh, deploy again.
+     */
     const missing = REQUIRED.filter((name) => !root[name]);
-    if (missing.length || !root.RAReplayCore.available()) {
-      return failed(new Error("viewer modules missing: " + (missing.join(", ") || "rrweb Replayer")), "engine");
+    if (missing.length) {
+      return failed(new Error("viewer modules missing: " + missing.join(", ")), "engine");
+    }
+
+    const stale = REQUIRED_MEMBERS
+      .filter(([name, member]) => root[name][member] === undefined)
+      .map(([name, member]) => name + "." + member);
+    if (stale.length) {
+      return failed(new Error("viewer modules are out of date, missing: " + stale.join(", ")), "engine");
+    }
+
+    if (!root.RAReplayCore.available()) {
+      return failed(new Error("viewer modules missing: rrweb Replayer"), "engine");
     }
 
     /* The speed options are built from the shared list rather than written into
@@ -385,6 +561,25 @@
     ui.speed.innerHTML = root.RAReplayTimeline.SPEEDS.map(
       (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
     ).join("");
+
+    /* Feature-detected rather than assumed: an iframe embed without the
+     * allow-fullscreen permission reaches this line with the method present and
+     * `fullscreenEnabled` false, and a button that silently does nothing is
+     * worse than no button. Nothing is ever torn down - this page does not
+     * unmount its player - so the listener has no removal to match it. */
+    canFullscreen =
+      !!ui.full &&
+      !!ui.viewer &&
+      typeof ui.viewer.requestFullscreen === "function" &&
+      typeof doc.exitFullscreen === "function" &&
+      doc.fullscreenEnabled !== false;
+    if (canFullscreen) {
+      ui.full.addEventListener("click", toggleFullscreen);
+      doc.addEventListener("fullscreenchange", onFullscreenChange);
+      paintFullscreen();
+    } else if (ui.full) {
+      ui.full.hidden = true;
+    }
 
     ui.retry.addEventListener("click", run);
     doc.addEventListener("keydown", onKey);
