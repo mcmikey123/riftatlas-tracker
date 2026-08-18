@@ -155,3 +155,62 @@ test("the clock reads m:ss and never goes backwards past zero", () => {
   assert.equal(support.fmtClock(-50), "0:00");
   assert.equal(support.fmtClock(NaN), "0:00");
 });
+
+/* The bug this pair exists to stop: one card's art 404s on a board where every
+ * other card is on screen, and the viewer announces that the game's image
+ * server is unreachable. It fired on every replay, because there is reliably
+ * one such image, and it latched - the check stopped the moment it saw a
+ * failure and never revised itself. */
+test("one empty image among many loaded ones is not an unreachable host", () => {
+  const cdn = "https://assets.riftatlas-workers.com";
+  const img = (w) => ({ complete: true, naturalWidth: w, src: cdn + "/cards/a.webp" });
+  const health = support.cardArtHealth([img(0), img(120), img(120), img(120)], cdn);
+
+  assert.deepEqual({ loaded: health.loaded, broken: health.broken }, { loaded: 3, broken: 1 });
+  assert.equal(
+    support.cardArtUnreachable(health),
+    false,
+    "a missing file is not a missing server, and saying so trains the reader to ignore the banner"
+  );
+});
+
+test("a host nothing arrives from is unreachable, and one that is quiet is not", () => {
+  const cdn = "https://assets.riftatlas-workers.com";
+  const img = (w) => ({ complete: true, naturalWidth: w, src: cdn + "/cards/a.webp" });
+
+  assert.equal(support.cardArtUnreachable(support.cardArtHealth([img(0), img(0)], cdn)), true);
+  // No card art on the board at all says nothing about the host.
+  assert.equal(support.cardArtUnreachable(support.cardArtHealth([], cdn)), false);
+  assert.equal(
+    support.cardArtUnreachable(support.cardArtHealth([img(120)], cdn)),
+    false
+  );
+});
+
+test("images still in flight count as neither loaded nor broken", () => {
+  const cdn = "https://assets.riftatlas-workers.com";
+  const health = support.cardArtHealth(
+    [
+      { complete: false, naturalWidth: 0, src: cdn + "/cards/a.webp" },
+      { complete: true, naturalWidth: 90, src: cdn + "/cards/b.webp" },
+    ],
+    cdn
+  );
+  assert.deepEqual(
+    { loaded: health.loaded, broken: health.broken },
+    { loaded: 1, broken: 0 },
+    "a slow image is not a failed one"
+  );
+});
+
+test("the failing srcs are reported, capped, and only from the card host", () => {
+  const cdn = "https://assets.riftatlas-workers.com";
+  const broken = (host, n) => ({ complete: true, naturalWidth: 0, src: host + "/cards/" + n + ".webp" });
+  const health = support.cardArtHealth(
+    [...Array(9)].map((_, n) => broken(cdn, n)).concat(broken("https://elsewhere.example", 99)),
+    cdn
+  );
+  assert.equal(health.broken, 9, "another host's failures are not this host's");
+  assert.equal(health.brokenSrc.length, 5, "enough to identify the culprit, not a wall of text");
+  assert.ok(health.brokenSrc.every((src) => src.startsWith(cdn)));
+});

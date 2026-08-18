@@ -128,19 +128,55 @@
   }
 
   /**
-   * How many images from `origin` finished loading with nothing in them. Card
-   * art living on another host is the one asset the viewer cannot serve itself,
-   * so its absence is reported rather than left looking like a broken replay.
+   * How the card art from `origin` actually fared: how many finished with
+   * something in them, and how many finished empty.
+   *
+   * Both halves, because the count of failures alone cannot tell "the image
+   * host is down" from "one card's art 404s". Reporting the second as the
+   * first is what this returns two numbers to prevent: a replay whose cards
+   * are all on screen bar one is not a replay with an unreachable image
+   * server, and saying so trains the reader to ignore the banner that matters.
+   *
+   * Images still in flight are counted as neither - `complete` is false until
+   * they settle, and a slow image is not a failed one.
+   *
    * Takes any iterable of image-likes so it can be tested without a DOM.
    */
-  function brokenImages(images, origin) {
-    let count = 0;
+  function cardArtHealth(images, origin) {
+    let loaded = 0;
+    let broken = 0;
+    const brokenSrc = [];
     for (const img of images || []) {
-      if (!img || !img.complete || img.naturalWidth > 0) continue;
-      if (origin && String(img.src || "").indexOf(origin) !== 0) continue;
-      count++;
+      if (!img || !img.complete) continue;
+      const src = String(img.src || "");
+      if (origin && src.indexOf(origin) !== 0) continue;
+      if (img.naturalWidth > 0) loaded++;
+      else {
+        broken++;
+        if (brokenSrc.length < 5) brokenSrc.push(src);
+      }
     }
-    return count;
+    return { loaded, broken, brokenSrc };
+  }
+
+  /**
+   * Whether the card-art host should be called unreachable.
+   *
+   * Only when nothing from it arrived at all. One failure among many is one
+   * card's art, and the viewer has nothing useful to say about that; the
+   * reader can see the gap, and the rest of the replay genuinely is unaffected.
+   */
+  function cardArtUnreachable({ loaded, broken }) {
+    return broken > 0 && loaded === 0;
+  }
+
+  /**
+   * How many images from `origin` finished loading with nothing in them.
+   * Retained because it is the narrower question and is still the one the
+   * count-based tests ask.
+   */
+  function brokenImages(images, origin) {
+    return cardArtHealth(images, origin).broken;
   }
 
   /**
@@ -164,6 +200,8 @@
     unresolvedCssRefs,
     emptyCssTextCount,
     brokenImages,
+    cardArtHealth,
+    cardArtUnreachable,
     fmtClock
   };
 
