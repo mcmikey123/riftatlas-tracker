@@ -32,25 +32,148 @@ const idsInHtml = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
 const stripComments = (text) =>
   text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
-test("every element id legacy.js reaches for is still in the markup", () => {
-  const legacyPath = path.join(DIR, "legacy.js");
-  if (!fs.existsSync(legacyPath)) return; // fully drained
-  const legacy = stripComments(read("legacy.js"));
+/* legacy.js and the files drained out of it. A module that took a view out of
+ * legacy.js took that view's element lookups with it, and they are exactly as
+ * exposed to a markup rename as they were before the move - so the scan follows
+ * them rather than quietly checking less than it used to. Each of these uses
+ * legacy.js's null-guarded `$("#id")` idiom, which is what the scan below
+ * knows how to read; the ES modules use `document.querySelector` and are not
+ * part of this. */
+const DRAINED = ["legacy.js", "shares-view.js", "view-overview.js", "view-replays.js", "deck-labelling.js", "data-io.js", "backups.js", "settings-capture.js"];
+
+test("every element id legacy.js and its offspring reach for is still in the markup", () => {
+  const present = DRAINED.filter((f) => fs.existsSync(path.join(DIR, f)));
+  if (!present.length) return; // fully drained
 
   const wanted = new Set();
-  for (const m of legacy.matchAll(/\bon\("#([a-zA-Z][\w-]*)"/g)) wanted.add(m[1]);
-  for (const m of legacy.matchAll(/\$\("#([a-zA-Z][\w-]*)["\s]/g)) wanted.add(m[1]);
-  for (const m of legacy.matchAll(/\b(?:val|isChecked|setText|setHtml)\("#([a-zA-Z][\w-]*)"/g)) {
-    wanted.add(m[1]);
+  for (const file of present) {
+    const source = stripComments(read(file));
+    const found = new Set();
+    for (const m of source.matchAll(/\bon\("#([a-zA-Z][\w-]*)"/g)) found.add(m[1]);
+    for (const m of source.matchAll(/\$\("#([a-zA-Z][\w-]*)["\s]/g)) found.add(m[1]);
+    for (const m of source.matchAll(/\b(?:val|isChecked|setText|setHtml)\("#([a-zA-Z][\w-]*)"/g)) {
+      found.add(m[1]);
+    }
+
+    /* Per file, or this is vacuous rather than passing. It works by matching the
+     * accessor idioms these files happen to use today; the moment a port
+     * rewrites them - which is exactly what draining legacy.js means - the set
+     * goes empty and the assertion below succeeds having checked nothing.
+     * Checking only the union would hide that for every file but the last one
+     * left. Same guard, and same reason, as test/vendor-contract.test.js. */
+    assert.ok(
+      found.size > 0,
+      `no #id lookups found in ${file} - the accessor idiom this scan knows about has ` +
+        "changed, so it is no longer checking anything. Teach it the new one, or drop " +
+        "the file from DRAINED if it has stopped reaching for elements by id."
+    );
+    for (const id of found) wanted.add(id);
   }
 
   const missing = [...wanted].filter((id) => !idsInHtml.has(id)).sort();
   assert.deepEqual(
     missing,
     [],
-    "legacy.js still uses these ids but the markup no longer has them, so those " +
+    "these files still use these ids but the markup no longer has them, so those " +
       "features are silently dead: " + missing.join(", ")
   );
+});
+
+test("the share modules load before legacy.js, which reads them as it evaluates", () => {
+  /* legacy.js takes all four off the global at eval time - the share panel it
+   * draws inside a Replays row, the busy flag the delete confirm checks, the
+   * shares list, the modal's share entry point - and mounts two of their click
+   * listeners. Load one of them after legacy.js and every one of those bindings
+   * is undefined for the life of the page.
+   *
+   * Being classic scripts is load-bearing too, and not only for the requires
+   * the tests use: their listeners must be registered before view-matches.js's,
+   * a deferred module, whose own [data-share] branch expands the row the panel
+   * is drawn in. */
+  const order = [...html.matchAll(/<script (?:type="module" )?src="([^"]+)"/g)].map((m) => m[1]);
+  const at = (file) => order.findIndex((src) => src.endsWith(file));
+  const legacy = at("legacy.js");
+  assert.notEqual(legacy, -1, "legacy.js is not loaded");
+
+  for (const file of ["share-panel.js", "share-pipeline.js", "share-moment.js", "shares-view.js"]) {
+    assert.ok(at(file) !== -1, `dashboard.html must load ${file}`);
+    assert.ok(at(file) < legacy, `${file} must load before legacy.js`);
+    assert.ok(
+      !new RegExp(`<script type="module" src="[^"]*${file}"`).test(html),
+      `${file} must stay a classic script, or its click listeners register after view-matches.js's`
+    );
+  }
+  // Each reads the one above it off the global as it evaluates.
+  assert.ok(at("share-panel.js") < at("share-pipeline.js"));
+  assert.ok(at("share-pipeline.js") < at("share-moment.js"));
+  assert.ok(at("share-pipeline.js") < at("shares-view.js"));
+  // And all of them read share/share-ui-support.js and share/hosts.js.
+  assert.ok(at("share-ui-support.js") < at("share-panel.js"));
+  assert.ok(at("hosts.js") < at("share-panel.js"));
+  /* share-pipeline.js binds RATrackerSettingsClamps as it evaluates, to clamp
+   * the endpoint the upload goes to. Load it later and CLAMP is undefined for
+   * the life of the page - which is the failure this whole test exists for. */
+  assert.ok(
+    at("settings-clamps.js") < at("share-pipeline.js"),
+    "settings-clamps.js must load before share-pipeline.js, which reads it at eval time"
+  );
+});
+
+test("the views drained out of legacy.js load before it, as classic scripts", () => {
+  /* Each of these was a section of legacy.js and is now a file with its own
+   * delegated listener. Two things about the load order are load-bearing:
+   *
+   *   legacy.js binds every one of them off the global as it evaluates and
+   *   calls its mount() - load one later and that binding is undefined for the
+   *   life of the page, which is a whole view that silently does nothing;
+   *
+   *   being CLASSIC is what keeps their click branches where they were. Their
+   *   listeners are registered from legacy.js's own evaluation, which happens
+   *   before any deferred module runs - so they stay ahead of view-matches.js,
+   *   whose fallback branch closes an open row menu and repaints on any click
+   *   these branches also answer. Turn one into a module and it registers after
+   *   that repaint instead of before it. */
+  const order = [...html.matchAll(/<script (?:type="module" )?src="([^"]+)"/g)].map((m) => m[1]);
+  const at = (file) => order.findIndex((src) => src.endsWith(file));
+  const legacy = at("legacy.js");
+  assert.notEqual(legacy, -1, "legacy.js is not loaded");
+
+  const drained = [
+    "view-overview.js",
+    "view-replays.js",
+    "deck-labelling.js",
+    "data-io.js",
+    "backups.js",
+    "settings-capture.js",
+  ];
+  for (const file of drained.concat("notify.js")) {
+    assert.ok(at(file) !== -1, `dashboard.html must load ${file}`);
+    assert.ok(at(file) < legacy, `${file} must load before legacy.js, which mounts it as it evaluates`);
+    assert.ok(
+      !new RegExp(`<script type="module" src="[^"]*${file}"`).test(html),
+      `${file} must stay a classic script, or its click listeners register after view-matches.js's`
+    );
+  }
+
+  // notify.js is how a classic script reaches the toast and the dialog; every
+  // one of these takes it off the global as it evaluates.
+  for (const file of drained) {
+    assert.ok(at("notify.js") < at(file), `notify.js must load before ${file}`);
+  }
+  // view-replays.js draws the share panel inside its own rows and asks the
+  // pipeline whether an upload is in flight before it deletes a recording.
+  assert.ok(at("share-panel.js") < at("view-replays.js"));
+  assert.ok(at("shares-view.js") < at("view-replays.js"));
+  // backups.js builds its file with data-io.js's bundle builder, and falls back
+  // to its download when the downloads permission is declined.
+  assert.ok(at("data-io.js") < at("backups.js"));
+  // The Overview binds table.js's range arithmetic and stats.js's recent form
+  // and weekly buckets off the global as it evaluates, the same way legacy.js
+  // binds the Overview. Load either later and the tiles, the trend chart and
+  // the Matchups grid that reads this file's `filtered()` all go blank.
+  assert.ok(at("format.js") < at("view-overview.js"));
+  assert.ok(at("table.js") < at("view-overview.js"));
+  assert.ok(at("stats.js") < at("view-overview.js"));
 });
 
 test("the module entry point is loaded as a module, and last", () => {
@@ -160,12 +283,78 @@ test("the dashboard loads the replay store, and loads css-assets.js before it", 
 });
 
 test("the dashboard reads replays directly, not over sendMessage", () => {
-  // The whole point of the page-side reader: a payload this large cannot cross
-  // chrome.runtime.sendMessage, so a reintroduced ra:visual:get here would fail
-  // on exactly the largest replays and nowhere else.
-  const legacy = stripComments(read("legacy.js"));
-  assert.ok(
-    !/ra:visual:get/.test(legacy),
-    "legacy.js must not fetch replays over sendMessage - payloads exceed the 64 MiB message ceiling"
-  );
+  /* The whole point of the page-side reader: a payload this large cannot cross
+   * chrome.runtime.sendMessage, so a reintroduced ra:visual:get would fail on
+   * exactly the largest replays and nowhere else.
+   *
+   * Every classic script the page loads, not legacy.js alone: the [data-visual]
+   * handler that opens a replay - the one branch that could reintroduce the
+   * message - has already moved out to view-replays.js, and a scan pinned to
+   * the file it used to live in guards nothing the moment it moves again. Same
+   * widening, and same reason, as the injected-element check in
+   * test/vendor-contract.test.js. */
+  const scripts = [...html.matchAll(/<script (?:type="module" )?src="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((src) => !src.includes("vendor/"));
+  assert.ok(scripts.includes("view-replays.js"), "view-replays.js owns the replay-opening branch");
+
+  for (const src of scripts) {
+    // Relative to dashboard/, so ../store, ../share and ../replay come too:
+    // the read is theirs as much as this folder's.
+    const file = path.join(DIR, src);
+    assert.ok(fs.existsSync(file), `dashboard.html loads ${src}, which is not in the repo`);
+    assert.ok(
+      !/ra:visual:get/.test(stripComments(fs.readFileSync(file, "utf8"))),
+      `${src} must not fetch replays over sendMessage - payloads exceed the 64 MiB message ceiling`
+    );
+  }
+});
+
+test("every name a dashboard module imports is one the module it names exports", () => {
+  /* The module half has no equivalent of test/dashboard-boot.test.js: that file
+   * loads the classic scripts and drives them, and the ES modules are not part
+   * of it. So an import naming an export that does not exist reached a browser
+   * and nothing else - the page dies on the first line of main.js's graph with
+   * "does not provide an export named X", and the whole dashboard is blank.
+   *
+   * That is not hypothetical. #8 was written against main, where shell.js
+   * exported setView; this branch had un-exported it as dead, the two edits
+   * were in different places, and the merge was textually clean.
+   *
+   * Static and deliberately shallow: it reads what each file declares as an
+   * export, not what it evaluates to. That is enough for the failure above,
+   * which is a name mismatch, and it needs no bundler to run. */
+  const modules = fs.readdirSync(DIR).filter((f) => f.endsWith(".js"));
+
+  let checked = 0;
+  for (const file of modules) {
+    const src = stripComments(read(file));
+    for (const imp of src.matchAll(/import\s*\{([^}]+)\}\s*from\s*["'](\.[^"']+)["']/g)) {
+      const target = imp[2].replace(/^\.\//, "");
+      assert.ok(
+        modules.includes(target),
+        `${file} imports from ${imp[2]}, which is not a file in dashboard/`
+      );
+      const targetSrc = stripComments(read(target));
+      // `a as b` imports b; the name that has to be exported is a.
+      const names = imp[1]
+        .split(",")
+        .map((s) => s.trim().split(/\s+as\s+/)[0].trim())
+        .filter(Boolean);
+      for (const name of names) {
+        const declared = new RegExp(`export\\s+(?:const|let|var|function|class)\\s+${name}\\b`);
+        const listed = new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`);
+        assert.ok(
+          declared.test(targetSrc) || listed.test(targetSrc),
+          `${file} imports { ${name} } from ${imp[2]}, which does not export it`
+        );
+        checked++;
+      }
+    }
+  }
+
+  /* The dashboard's module graph is real and this scan has to have walked it:
+   * a regex that quietly stopped matching would otherwise leave this test
+   * green over a page that cannot boot. */
+  assert.ok(checked > 10, `only ${checked} imports were checked - the scan is not reading the graph`);
 });

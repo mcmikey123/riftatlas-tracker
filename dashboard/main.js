@@ -15,7 +15,6 @@ import { state, subscribe, emit, resetPaging } from "./state.js";
 import { mountShell, paintShell, VIEWS } from "./shell.js";
 import { renderMatches, mountMatches } from "./view-matches.js";
 import { renderSeries, mountSeries } from "./view-series.js";
-import { renderOverviewExtras, mountOverviewExtras } from "./view-overview.js";
 import { renderMatrix, mountMatrix } from "./view-matrix.js";
 import * as dialog from "./dialog.js";
 import { toast } from "./toast.js";
@@ -72,25 +71,22 @@ let settings = STORE.defaultSettings;
 
 // ---- what the nav shows ------------------------------------------------
 
-function counts() {
-  const all = LEGACY.matches() || [];
+/* `all` is the raw match array and `withSeries` the same matches decorated by
+ * SERIES.detect. Both are passed in rather than derived here: detect() is pure,
+ * so a second call would return exactly what render() already holds, and this
+ * runs every three seconds while a match is live.
+ *
+ * They are two arguments rather than one because detect() drops any match
+ * without an id, and the nav's match count has always been the raw total. */
+function counts(all, withSeries) {
   const records = LEGACY.visualRecords() || [];
   const assets = LEGACY.visualAssets() || { bytes: 0 };
-
-  /* Automatic series are derived, never stored, so this is simply a
-   * computation over the current matches - the same call the Series view will
-   * make. See docs/specs: persisting them would fight content.js's three-second
-   * save for the live match. */
-  const detected = SERIES.detect(all, {
-    enabled: settings.seriesDetect !== false,
-    format: settings.seriesFormatDefault,
-  }).matches;
 
   const bytes = records.reduce((n, r) => n + (Number(r.compressedBytes) || 0), 0);
 
   return {
     matches: all.length,
-    series: SERIES.group(detected).length,
+    series: SERIES.group(withSeries).length,
     // Null until the service worker has answered, so the nav shows nothing
     // rather than claiming zero recordings exist.
     replays: records.length ? records.length : null,
@@ -113,30 +109,32 @@ function syncFilters() {
   state.filters.champion = read("#fMyChampion");
   state.filters.deck = read("#fDeck");
   state.filters.mode = read("#fMode");
-  const unknown = $("#fUnknown");
-  state.filters.countUnknown = !!(unknown && unknown.checked);
 }
 
 function render() {
   syncFilters();
-  paintShell(counts());
 
   const all = LEGACY.matches() || [];
   /* Series are derived, so the badge in Matches reads the same computation the
-   * Series view will - not a stored field. */
+   * Series view will - not a stored field. Computed once here and handed to
+   * everything below: the nav, both tables and the Settings line all want the
+   * same decoration of the same array. */
   const withSeries = SERIES.detect(all, {
     enabled: settings.seriesDetect !== false,
     format: settings.seriesFormatDefault,
   }).matches;
+
+  paintShell(counts(all, withSeries));
 
   /* Unknown results are excluded from the STATS by the filter checkbox, but the
    * history has always listed them regardless - a match whose result was never
    * read is exactly the one you came here to fix. */
   renderMatches($("[data-matches]"), withSeries, state.readOnly);
   renderSeries($("[data-series]"), withSeries, state.readOnly);
-  renderOverviewExtras(all);
-  renderMatrix($("[data-matrix]"), all);
-  paintSettings();
+  /* The Overview's own tiles, chart and tables are painted by view-overview.js
+   * off legacy.js's render; only Matchups is this half's to draw. */
+  renderMatrix($("[data-matrix]"));
+  paintSettings(withSeries);
 }
 
 // ---- the filter row ----------------------------------------------------
@@ -211,22 +209,18 @@ function mountSettings() {
   }
 }
 
-/** Settings controls this module owns, painted from whatever storage holds. */
-function paintSettings() {
+/**
+ * Settings controls this module owns, painted from whatever storage holds.
+ * `withSeries` is render()'s decorated array, for the same reason counts()
+ * takes it: detect() is pure, so re-deriving it here is work with no answer.
+ */
+function paintSettings(withSeries) {
   const detect = $("#sDetect");
   if (detect) detect.checked = settings.seriesDetect !== false;
 
-  const all = LEGACY.matches() || [];
-
-
   const status = $("[data-series-status]");
   if (!status) return;
-  const grouped = SERIES.group(
-    SERIES.detect(all, {
-      enabled: settings.seriesDetect !== false,
-      format: settings.seriesFormatDefault,
-    }).matches
-  );
+  const grouped = SERIES.group(withSeries);
   const byHand = grouped.filter((s) => s.source === "manual").length;
   status.textContent = `${grouped.length} series · ${byHand} you grouped yourself`;
 }
@@ -238,7 +232,6 @@ function boot() {
   mountFilters();
   mountMatches();
   mountSeries();
-  mountOverviewExtras();
   mountMatrix($("[data-matrix]"));
   mountSettings();
   subscribe(render);
@@ -249,7 +242,6 @@ function boot() {
    * from the same match array the tables were just drawn from. */
   LEGACY.onRender = () => {
     state.readOnly = LEGACY.readOnly();
-    state.archiveName = LEGACY.archiveName();
     emit();
   };
 

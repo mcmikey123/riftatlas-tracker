@@ -19,6 +19,7 @@
 <script defer src="/vendor/rrweb-replay.min.js"></script>
 <script defer src="/replay/replay-timeline.js"></script>
 <script defer src="/replay/replay-core.js"></script>
+<script defer src="/replay/replay-transport.js"></script>
 <script defer src="/share/payload.js"></script>
 <script defer src="/share/hosts.js"></script>
 <script defer src="/store/css-assets.js"></script>
@@ -51,13 +52,10 @@
       <label class="seek-label" for="seek">Position</label>
       <input class="seek" id="seek" type="range" min="0" max="1000" value="0" step="1">
       <span class="clock" id="clock">0:00 / 0:00</span>
-      <select class="btn speed" id="speed" title="Playback speed" aria-label="Playback speed">
-        <option value="0.5">0.5×</option>
-        <option value="1" selected>1×</option>
-        <option value="2">2×</option>
-        <option value="4">4×</option>
-        <option value="6">6×</option>
-      </select>
+      <!-- Options are filled in by viewer.js from RAReplayTimeline.SPEEDS, so
+           this page and the extension's modal cannot drift on what speeds
+           exist. Empty here rather than a copy of the list. -->
+      <select class="btn speed" id="speed" title="Playback speed" aria-label="Playback speed"></select>
       <button class="btn moment" id="copyAt" type="button"
               title="Copy a link that opens this replay at the moment it is showing now">Copy link to this moment</button>
     </div>

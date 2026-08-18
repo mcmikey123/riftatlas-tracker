@@ -34,6 +34,7 @@
     "rrwebReplay",
     "RAReplayTimeline",
     "RAReplayCore",
+    "RAReplayTransport",
     "RAShare",
     "RAShareHosts",
     "rehydrateCssAssets",
@@ -243,7 +244,7 @@
 
   function mount(meta, events, link) {
     const { ViewerError, fmtClock } = root.RAShareViewer;
-    const { MAX_CHIPS, SEEK, timeline, evenly, truncationText } = root.RAReplayTimeline;
+    const { MAX_CHIPS, timeline, evenly, truncationText } = root.RAReplayTimeline;
 
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
@@ -254,42 +255,45 @@
     }
     const chapterEls = renderChapters(chips);
 
-    function paintTime(at, total) {
-      ui.seek.max = String(Math.round(total));
-      ui.seek.value = String(Math.round(at));
-      ui.clock.textContent = fmtClock(at) + " / " + fmtClock(total);
-      let active = -1;
-      chips.forEach((chip, n) => {
-        if (chip.ms <= at + 1) active = n;
-      });
-      chapterEls.forEach((b, n) => b.classList.toggle("on", n === active));
-    }
-
-    function paintPlayState(playing) {
-      ui.play.textContent = playing ? "❚❚" : "▶";
-      ui.play.setAttribute("aria-label", playing ? "Pause" : "Play");
-    }
-
     // The stage has to be laid out before create(): the core fits the board to
     // stage.clientWidth/clientHeight, and a hidden stage measures zero, which
     // would leave the board pinned at 1:1 in the corner.
     ui.status.hidden = true;
     ui.player.hidden = false;
 
-    playback = root.RAReplayCore.create({
-      stage: ui.stage,
-      scaleEl: ui.scale,
-      events,
-      meta,
-      marks,
-      autoplay: true,
-      // A plain link plays on open; a link that names a moment opens paused at it,
-      // because the sender is pointing at that moment and playing on walks off it.
-      // The core makes that call - see shouldAutoplay - so both surfaces cannot
-      // drift on it. null here means "no moment given"; 0 means second zero.
-      startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
-      onTime: paintTime,
-      onPlayState: paintPlayState
+    // The transport row - the clock, the chips' highlight, play, step, seek and
+    // the keys - is the same row the extension's modal draws, and lives in
+    // replay/replay-transport.js so the two cannot drift on it again. This page
+    // keeps only what is its own: the copy-link button below, and the notices.
+    playback = root.RAReplayTransport.wireTransport({
+      chips,
+      fmtClock,
+      els: {
+        play: ui.play,
+        prev: ui.prev,
+        next: ui.next,
+        slider: ui.seek,
+        clock: ui.clock,
+        speed: ui.speed,
+        chapterEls,
+        chapterHost: ui.chapters
+      },
+      create: (callbacks) =>
+        root.RAReplayCore.create({
+          stage: ui.stage,
+          scaleEl: ui.scale,
+          events,
+          meta,
+          marks,
+          autoplay: true,
+          // A plain link plays on open; a link that names a moment opens paused at it,
+          // because the sender is pointing at that moment and playing on walks off it.
+          // The core makes that call - see shouldAutoplay - so both surfaces cannot
+          // drift on it. null here means "no moment given"; 0 means second zero.
+          startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
+          onTime: callbacks.onTime,
+          onPlayState: callbacks.onPlayState
+        })
     });
     if (!playback) {
       ui.player.hidden = true;
@@ -297,27 +301,7 @@
     }
 
     ui.sub.textContent = summarise(meta, marks, playback.totalTime);
-    ui.play.addEventListener("click", () => playback.togglePlay());
     ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));
-    ui.prev.addEventListener("click", () => playback.stepTo(-1));
-    ui.next.addEventListener("click", () => playback.stepTo(1));
-    // Written back from what the core accepted, so the control never claims a
-    // rate the engine is not running at. The options only offer valid speeds,
-    // but the core owns the contract, not this markup.
-    ui.speed.addEventListener("change", function () {
-      ui.speed.value = String(playback.setSpeed(parseFloat(ui.speed.value)));
-    });
-    // `input` fires all the way through a drag, so the drag holds playback and
-    // the end of the drag is what puts it back. The end is taken from the events
-    // that always fire — never from `change`, which Gecko withholds when the
-    // value lands back where the interaction started it, and this page is served
-    // to whatever browser the link was opened in.
-    ui.seek.addEventListener("input", () => playback.seek(parseInt(ui.seek.value, 10) || 0, SEEK.DRAG));
-    for (const type of root.RAReplayCore.DRAG_END_EVENTS) ui.seek.addEventListener(type, playback.endDrag);
-    ui.chapters.addEventListener("click", (e) => {
-      const ms = e.target && e.target.dataset ? e.target.dataset.ms : undefined;
-      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
-    });
     // Fit once more after layout settles; the first fit runs inside create(),
     // before the chapter row has necessarily taken its final height.
     root.requestAnimationFrame(() => playback.refit());
@@ -335,31 +319,13 @@
     watchCardArt();
   }
 
+  /* Every key this page answers is one the extension's modal answers the same
+   * way, so the map and the guard that goes with it are both in
+   * replay/replay-transport.js. The modal adds Escape and f around the same
+   * call; this page has nothing of its own to add, so it takes the answer and
+   * ignores it. */
   function onKey(e) {
-    if (!playback) return;
-    // Text entry owns its keys and a focused button owns space. The rule itself
-    // is `targetOwnsKey` in replay-timeline.js, shared with the extension's
-    // modal: this page and that one had drifted on it four times, and a guard
-    // that is right in one viewer and absent in the other is one bug shipped
-    // twice.
-    if (root.RAReplayTimeline.targetOwnsKey(e.target, e.key)) return;
-
-    if (e.key === " " || e.key === "Spacebar") {
-      e.preventDefault();
-      playback.togglePlay();
-    } else if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      playback.stepTo(-1);
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault();
-      playback.stepTo(1);
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      playback.seek(0, root.RAReplayTimeline.SEEK.JUMP);
-    } else if (e.key === "End") {
-      e.preventDefault();
-      playback.seek(playback.totalTime, root.RAReplayTimeline.SEEK.JUMP);
-    }
+    root.RAReplayTransport.handleKey(e, playback);
   }
 
   async function run() {
@@ -409,6 +375,16 @@
     if (missing.length || !root.RAReplayCore.available()) {
       return failed(new Error("viewer modules missing: " + (missing.join(", ") || "rrweb Replayer")), "engine");
     }
+
+    /* The speed options are built from the shared list rather than written into
+     * index.html, for the same reason the dashboard's modal builds its own:
+     * this page and that one have to agree on what speeds exist, and a list
+     * spelled out in two files is a list that eventually is not the same list.
+     * Built after the module guard above, so a page missing replay-timeline.js
+     * reports that rather than throwing here. */
+    ui.speed.innerHTML = root.RAReplayTimeline.SPEEDS.map(
+      (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
+    ).join("");
 
     ui.retry.addEventListener("click", run);
     doc.addEventListener("keydown", onKey);

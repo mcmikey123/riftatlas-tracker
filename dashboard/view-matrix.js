@@ -3,8 +3,9 @@
  * The champion-by-champion grid: every champion you have played down the side,
  * every champion you have faced along the top, and in each cell your record
  * between the two. The arithmetic is stats.js's matchupMatrix, pure and
- * tested; the rows come through the same `statsRows` the Overview draws from,
- * so the grid narrows with the filter row like everything else.
+ * tested; the rows come through the Overview's own `filtered()`, so the grid
+ * narrows with the filter row like everything else and cannot disagree with
+ * the tiles about which matches are in view.
  *
  * Every cell states its denominator. 100% of 2 and 100% of 40 are different
  * claims, and a grid of bare percentages would make them look the same - so
@@ -16,15 +17,12 @@
  * lands on visibly says how it was narrowed and how to undo it.
  */
 import { setView } from "./shell.js";
-import { statsRows } from "./view-overview.js";
 
 const STATS = window.RATrackerStats;
-const { esc, fmtPercent } = window.RATrackerFormat;
+const OVERVIEW = window.RATrackerViewOverview;
+const { esc, fmtPercent, rateStep } = window.RATrackerFormat;
 
 const $ = (s) => document.querySelector(s);
-
-/* Same quarter-steps as every other win-rate hue on the page. */
-const rateStep = (rate) => (rate >= 0.75 ? 4 : rate >= 0.5 ? 3 : rate >= 0.25 ? 2 : 1);
 
 function cellTip(mine, theirs, c) {
   const record = `${c.wins}–${c.losses}` + (c.games > c.decided ? ` of ${c.games} games` : "");
@@ -42,10 +40,10 @@ function cellHtml(mine, theirs, c) {
   </button></td>`;
 }
 
-export function renderMatrix(container, all) {
+export function renderMatrix(container) {
   if (!container) return;
 
-  const grid = STATS.matchupMatrix(statsRows(all));
+  const grid = STATS.matchupMatrix(OVERVIEW.filtered());
   if (!grid.size) {
     container.innerHTML =
       '<p class="empty-view">No matches under the current filters, so there are no matchups to grid.</p>';

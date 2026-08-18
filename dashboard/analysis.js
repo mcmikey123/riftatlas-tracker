@@ -117,7 +117,7 @@
     return out;
   }
 
-  root.RATrackerAnalysis = { analyse, PATTERNS };
+  root.RATrackerAnalysis = { analyse };
 })(typeof window !== "undefined" ? window : globalThis);
 
 if (typeof module !== "undefined" && module.exports) {

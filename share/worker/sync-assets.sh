@@ -18,6 +18,7 @@ for rel in \
   vendor/rrweb.min.css \
   replay/replay-timeline.js \
   replay/replay-core.js \
+  replay/replay-transport.js \
   share/payload.js \
   share/hosts.js \
   share/viewer-support.js \
@@ -35,4 +36,12 @@ do
 done
 
 echo "synced into $here/public"
-[ "$missing" -eq 0 ] || echo "  $missing file(s) missing — do not deploy, the viewer needs all of them"
+
+# Exit non-zero so `./sync-assets.sh && wrangler deploy` stops here. Saying "do
+# not deploy" and then exiting 0 left the shell free to deploy anyway, and a
+# missing module surfaces only as "viewer modules missing" in a recipient's
+# browser - the one place nobody is watching.
+if [ "$missing" -ne 0 ]; then
+  echo "  $missing file(s) missing — do not deploy, the viewer needs all of them"
+  exit 1
+fi

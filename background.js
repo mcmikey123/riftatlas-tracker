@@ -113,11 +113,14 @@ async function handleVisual(msg) {
     // Deleting a match must take its DOM recording with it: the visual track
     // holds the opponent's name and the in-game chat, and nothing else in the
     // extension can reach this database once the match record is gone.
+    // Through the store, never straight at the database: a delete has to
+    // serialize against the recording it may be interrupting, and drop the live
+    // session with it, or the recorder keeps writing chunks nothing can reach.
     case "ra:visual:delete":
-      await self.RATrackerIdb.clearMatch(msg.matchId);
+      await replayStore.remove(msg.matchId);
       return { ok: true };
     case "ra:visual:clear":
-      await self.RATrackerIdb.clearAll();
+      await replayStore.clearAll();
       return { ok: true };
     default:
       return { ok: false, error: "unknown message " + msg.type };

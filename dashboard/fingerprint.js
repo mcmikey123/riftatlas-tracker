@@ -16,6 +16,9 @@
   // The zones content.js harvests those codes from - the contract between the
   // two files. Legend/champion are excluded: they're identical across variants
   // of the same champion, so they'd blur exactly the distinction we're drawing.
+  // Nothing in this file reads it: it is the dashboard half of the mirror that
+  // test/shared-constants.test.js pins against content.js, so deleting it as
+  // unused would drop the only check that the two lists still agree.
   const DECK_ZONES = ["battlefieldA", "battlefieldB", "base", "hand", "trash", "runeArea"];
   const MIN_CARDS = 6; // below this a sample is too thin to judge
   const THRESHOLD = 0.5; // overlap needed to call it the same deck
@@ -127,7 +130,7 @@
 
   root.RATrackerFingerprint = {
     fingerprint, overlap, suggestLabels, clusterDecks,
-    DECK_ZONES, MIN_CARDS, THRESHOLD,
+    MIN_CARDS,
   };
 })(typeof window !== "undefined" ? window : globalThis);
 

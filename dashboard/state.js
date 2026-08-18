@@ -28,15 +28,14 @@ export const state = {
     deck: "",
     mode: "",
     dateRange: { preset: "all", from: null, to: null },
-    countUnknown: false,
   },
 
-  /* Matches and Series each own one of these. Kept separate so sorting one
-   * table does not reorder the other, and so paging through Matches does not
-   * drop you onto page 4 of a Series table that has two pages. */
+  /* Matches and Series each own one of these. Kept separate so sorting or
+   * searching one table does not reorder the other. Only Matches paginates, so
+   * only Matches carries a page. */
   tables: {
     matches: { sortKey: "date", sortDir: "desc", search: "", page: 1 },
-    series: { sortKey: "date", sortDir: "desc", search: "", page: 1 },
+    series: { sortKey: "date", sortDir: "desc", search: "" },
   },
 
   // Which rows are expanded. Ids, not elements, so they survive a re-render,
@@ -51,28 +50,15 @@ export const state = {
   // never what was meant by the second click.
   openRowMenu: null,
 
-  /* matchId -> { phase, link, createdAt, reuse, error, retry }.
-   * ONE entry per match, read by both the row's panel and the replay modal, so
-   * a share begun in the row shows the same phase when the modal opens over it. */
-  shares: new Map(),
-
-  // objectId -> { busy } or a describeRecheck() result.
-  recheck: new Map(),
-
   // Suggestion keys the user has said "not a series" to. Mirrored from
   // settings, because an in-memory set would re-offer the same pair on reload.
   dismissedSuggestions: new Set(),
-
-  // Set while a dialog is open. storage.onChanged defers its reload until it
-  // clears - see main.js for why that matters.
-  dialogOpen: false,
 
   // Mirrored from storage so the Series view can describe its own window in
   // the suggestion strip without re-reading settings on every render.
   seriesSettings: {},
 
   readOnly: false,
-  archiveName: "",
 };
 
 const listeners = new Set();
@@ -111,20 +97,6 @@ export function emit() {
   });
 }
 
-/** Repaint now, skipping the coalescing. For teardown paths that cannot wait. */
-export function emitNow() {
-  for (const fn of listeners) {
-    try {
-      fn();
-    } catch (err) {
-      console.error("[RA-Tracker] a view failed to render:", err);
-    }
-  }
-}
-
-/** The table state for whichever table a view owns. */
-export const tableFor = (name) => state.tables[name] || state.tables.matches;
-
 /**
  * Reset paging after anything that can shrink the row set.
  *
@@ -135,5 +107,4 @@ export const tableFor = (name) => state.tables[name] || state.tables.matches;
  */
 export function resetPaging() {
   state.tables.matches.page = 1;
-  state.tables.series.page = 1;
 }

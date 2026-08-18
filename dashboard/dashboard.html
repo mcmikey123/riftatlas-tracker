@@ -22,7 +22,7 @@
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>
     <h1>Rift Atlas Stats Tracker</h1>
-    <span class="brand-version">0.13.0</span>
+    <span class="brand-version">0.14.0</span>
   </div>
   <span class="local-pill"><span class="dot dot-win" aria-hidden="true"></span>Stored on this machine only</span>
 
@@ -107,7 +107,7 @@
          dashboard re-renders every three seconds while a match is live, and a
          search field inside re-rendered markup would lose its caret and its
          value each time. -->
-    <section class="filter-row" data-filters>
+    <section class="filter-row">
       <span class="nav-label">Filters</span>
       <label class="filter"><span>My champion</span>
         <select id="fMyChampion"><option value="">All</option></select>
@@ -165,7 +165,7 @@
       </div>
 
       <div class="agg-grid">
-        <div class="card card-vs">
+        <div class="card">
           <div class="card-head"><h2>Win rate vs opponent champion</h2></div>
           <table id="vsTable" class="agg">
             <thead><tr><th>Champion</th><th>Games</th><th>W</th><th>L</th><th>Win rate</th></tr></thead>
@@ -304,7 +304,7 @@
               <input type="number" id="visualKeep" step="1" data-mutates />
               <span class="setting-text">
                 <span class="setting-name">Keep replays for the newest N matches</span>
-                <span class="setting-copy" data-keep-copy>1&ndash;500. When a new match is recorded, the oldest replay
+                <span class="setting-copy">1&ndash;500. When a new match is recorded, the oldest replay
                   beyond this number is deleted.</span>
               </span>
             </label>
@@ -412,9 +412,20 @@
      Classic, so node --test can require() them; dialog.js reads them off the
      global. -->
 <script src="dialog-support.js"></script>
+<!-- The export/import file format: the envelope a bundle is written into, the
+     reader an imported file comes back through, and the CSV cell. -->
+<script src="bundle.js"></script>
+<!-- What a replay record says about itself: which of its counters were
+     measured, what its state means in words, whether it can be played. -->
+<script src="replay-panel.js"></script>
 <script src="../vendor/rrweb-replay.min.js"></script>
 <script src="../replay/replay-timeline.js"></script>
 <script src="../replay/replay-core.js"></script>
+<!-- The transport row under a replay - play, step, seek, clock, chips, keys -
+     is the same on this page and on the share viewer's, so it is one file that
+     both load. The share viewer's copy is synced by share/worker/sync-assets.sh
+     and its three lists are held together by test/viewer-assets.test.js. -->
+<script src="../replay/replay-transport.js"></script>
 <script src="replay-html.js"></script>
 <!-- Sharing. css-assets.js is loaded here as well as in the service worker: a
      share re-strips the CSS that get() rehydrated, using the same pure function
@@ -431,9 +442,37 @@
 <script src="../share/share-ui-support.js"></script>
 <script src="../share/repaint.js"></script>
 <script src="../share/clipboard.js"></script>
+<!-- What the three typed Settings fields are allowed to become. After
+     share/hosts.js, whose normaliseEndpoint it reads off the global. -->
+<script src="settings-clamps.js"></script>
 <!-- The dashboard's only writer. After share/config.js, whose default endpoint
      is part of the settings shape, and before anything that could write. -->
 <script src="storage.js"></script>
+<!-- Sharing a replay, in four files: the panel's state and wording, the upload
+     that fills it in, the replay modal's "copy link to this moment", and the
+     register of what has been shared. Each depends on the one above it, and all
+     four are classic scripts loaded before legacy.js - which is what keeps the
+     share panel's click branches ahead of view-matches.js's, in a deferred
+     module, that expands the row the panel is drawn in. -->
+<script src="share-panel.js"></script>
+<script src="share-pipeline.js"></script>
+<script src="share-moment.js"></script>
+<script src="shares-view.js"></script>
+<!-- The toast and the dialog live in the module half; this is how a classic
+     script reaches them, and the fallback for when it is loaded on its own. -->
+<script src="notify.js"></script>
+<!-- Views drained out of legacy.js. Classic scripts, and loaded before it: it
+     takes each one off the global as it evaluates and hands it the match array
+     through mount(), and their click listeners must register where legacy.js's
+     own branches used to be - ahead of view-matches.js, a deferred module.
+     view-replays.js follows the four share files, whose panel it draws inside
+     its own rows and whose busy flag its delete confirm checks. -->
+<script src="view-overview.js"></script>
+<script src="view-replays.js"></script>
+<script src="deck-labelling.js"></script>
+<script src="data-io.js"></script>
+<script src="backups.js"></script>
+<script src="settings-capture.js"></script>
 <!-- Being drained one view at a time. Every element it reaches for may already
      have been ported, so nothing in it dereferences a query result directly. -->
 <script src="legacy.js"></script>

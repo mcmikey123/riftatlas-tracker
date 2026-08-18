@@ -85,16 +85,23 @@ test("the recorder avoids rrweb's crashing blockSelector path", () => {
   assert.ok(/\bblockClass\b/.test(source), "our injected UI must still be excluded from capture");
 });
 
-test("every element content.js injects into the page is blocked from capture", () => {
-  const source = fs.readFileSync(path.join(root, "content.js"), "utf8");
+test("every element the content scripts inject into the page is blocked from capture", () => {
+  /* Every content script, not one file: the toast and the banner have moved
+   * once already (content.js -> capture/page-ui.js), and this check silently
+   * guards nothing the moment it is looking at the wrong file. */
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+  const source = manifest.content_scripts[0].js
+    .filter((rel) => !rel.startsWith("vendor/"))
+    .map((rel) => fs.readFileSync(path.join(root, rel), "utf8"))
+    .join("\n");
   const recorder = fs.readFileSync(path.join(root, "capture/dom-recorder.js"), "utf8");
   const blockClass = recorder.match(/BLOCK_CLASS\s*=\s*"([^"]+)"/)?.[1];
   assert.ok(blockClass, "dom-recorder.js must define BLOCK_CLASS");
 
-  // Each element content.js gives an id to is injected into the game page, so it
-  // must carry the block class or our own UI ends up inside the replay.
+  // Each element we give an id to is injected into the game page, so it must
+  // carry the block class or our own UI ends up inside the replay.
   const injected = [...source.matchAll(/\.id\s*=\s*"(ra-tracker-[\w-]+)"([\s\S]{0,200})/g)];
-  assert.ok(injected.length >= 2, "expected content.js to inject at least the toast and the banner");
+  assert.ok(injected.length >= 2, "expected the content scripts to inject at least the toast and the banner");
   for (const [, id, following] of injected) {
     assert.ok(
       following.includes(blockClass),

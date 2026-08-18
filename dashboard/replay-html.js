@@ -1,10 +1,11 @@
 /* Rift Atlas Stats Tracker - replay viewer chrome
  *
  * The dashboard's wrapper around the portable playback core: the shell markup,
- * the modal, fullscreen, and the keyboard. Everything that actually drives
- * rrweb lives in `replay/replay-core.js`, and the timeline arithmetic in
- * `replay/replay-timeline.js`, so the standalone share viewer can reuse both
- * without dragging the dashboard's markup along with them.
+ * the modal, fullscreen, and the two keys only this surface has. Everything
+ * that actually drives rrweb lives in `replay/replay-core.js`, the transport
+ * row every surface shares in `replay/replay-transport.js`, and the timeline
+ * arithmetic in `replay/replay-timeline.js`, so the standalone share viewer can
+ * reuse all three without dragging the dashboard's markup along with them.
  *
  * This is the only replay there is: matches without a visual track have no
  * replay at all, and a capture that ran out of budget simply stops where it
@@ -13,8 +14,8 @@
 (function (root) {
   "use strict";
 
-  const { esc, fmtClock } = root.RATrackerFormat;
-  const { MAX_CHIPS, SEEK, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
+  const { esc, fmtClock, fmtScore } = root.RATrackerFormat;
+  const { MAX_CHIPS, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
     root.RAReplayTimeline;
 
   /**
@@ -51,7 +52,7 @@
       ${banner}
       ${note}
       <div class="rp-controls">
-        <button class="rp-btn vr-play" title="Play / pause (space)">▶</button>
+        <button class="rp-btn vr-play" title="Play / pause (space)" aria-label="Play">▶</button>
         <button class="rp-btn vr-prev" title="Previous board state (←)">◀</button>
         <button class="rp-btn vr-next" title="Next board state (→)">▶|</button>
         <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
@@ -99,8 +100,9 @@
   }
 
   /**
-   * Start the playback core inside the rendered shell and hook the controls,
-   * the chapter chips and fullscreen up to it. Returns the controller the modal
+   * Start the playback core inside the rendered shell, wire the shared
+   * transport row to it, and add the chrome only this surface has: fullscreen
+   * and the copy-link-to-this-moment button. Returns the controller the modal
    * drives, or null if the recording will not play; `destroy` is the teardown
    * for everything wired here and for the core underneath.
    */
@@ -108,36 +110,38 @@
     const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
       handles;
 
-    function paint(at, total) {
-      // The range is set on every paint, not once after create(): create() fires
-      // onTime during the call, before anything here has been told how long the
-      // recording is, and a slider still carrying the markup's default would put
-      // that first position at the wrong place on the track.
-      slider.max = String(Math.round(total));
-      slider.value = String(Math.round(at));
-      timeEl.textContent = `${fmtClock(at)} / ${fmtClock(total)}`;
-      let active = -1;
-      chips.forEach((c, n) => {
-        if (c.ms <= at + 1) active = n;
-      });
-      chapterEls.forEach((el, n) => el.classList.toggle("on", n === active));
-    }
-
-    const playback = root.RAReplayCore.create({
-      stage: handles.stage,
-      scaleEl: handles.scaleEl,
-      events,
-      meta,
-      marks,
-      autoplay: true,
-      onTime: paint,
-      onPlayState: (playing) => {
-        playBtn.textContent = playing ? "❚❚" : "▶";
+    // The transport row itself - the clock, the chips' highlight, the play,
+    // step, seek and chapter controls and the keys both surfaces answer - is
+    // shared with the share viewer. Only the modal's own chrome is below.
+    // Chapter clicks are delegated on the container rather than on the chip
+    // row, because the chip row is markup that is only rendered when there is
+    // more than one chip; the container is always there.
+    const playback = root.RAReplayTransport.wireTransport({
+      chips,
+      fmtClock,
+      els: {
+        play: playBtn,
+        prev: prevBtn,
+        next: nextBtn,
+        slider,
+        clock: timeEl,
+        speed: speedSel,
+        chapterEls,
+        chapterHost: container,
       },
+      create: (callbacks) =>
+        root.RAReplayCore.create({
+          stage: handles.stage,
+          scaleEl: handles.scaleEl,
+          events,
+          meta,
+          marks,
+          autoplay: true,
+          onTime: callbacks.onTime,
+          onPlayState: callbacks.onPlayState,
+        }),
     });
     if (!playback) return null;
-
-    const total = playback.totalTime;
 
     /**
      * The moment panel is a band in the same column as the stage, so opening it
@@ -247,26 +251,6 @@
       root.requestAnimationFrame(playback.refit);
     }
 
-    playBtn.addEventListener("click", playback.togglePlay);
-    prevBtn.addEventListener("click", () => playback.stepTo(-1));
-    nextBtn.addEventListener("click", () => playback.stepTo(1));
-    // The select is written back from what the core actually accepted, so the
-    // control never claims a rate the engine is not running at.
-    if (speedSel) {
-      speedSel.addEventListener("change", () => {
-        speedSel.value = String(playback.setSpeed(parseFloat(speedSel.value)));
-      });
-    }
-    // `input` fires all the way through a drag, so the drag holds playback and
-    // the end of the drag is what puts it back. The end is taken from the events
-    // that always fire — never from `change`, which Gecko withholds when the
-    // value lands back where the interaction started it.
-    slider.addEventListener("input", () => playback.seek(parseInt(slider.value, 10) || 0, SEEK.DRAG));
-    for (const type of root.RAReplayCore.DRAG_END_EVENTS) slider.addEventListener(type, playback.endDrag);
-    container.addEventListener("click", (e) => {
-      const ms = e.target?.dataset?.ms;
-      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, SEEK.CHAPTER);
-    });
     // Wired directly rather than through the dashboard's document-level click
     // delegation: the handler needs the transport's position, which only this
     // closure holds, and a data attribute the document also listens for would
@@ -295,11 +279,7 @@
     }
 
     return {
-      next: () => playback.stepTo(1),
-      prev: () => playback.stepTo(-1),
-      first: () => playback.seek(0, SEEK.JUMP),
-      last: () => playback.seek(total, SEEK.JUMP),
-      togglePlay: playback.togglePlay,
+      handleKey: (e) => root.RAReplayTransport.handleKey(e, playback),
       toggleFullscreen,
       escapeHandled,
       stop: playback.pause,
@@ -357,9 +337,9 @@
     const title = `${esc(match.myChampion || match.myLegend || "You")} vs ${esc(
       match.opponentChampion || match.opponentLegend || "Opponent"
     )}`;
-    const sub = `${esc(match.opponentName || "")}${d ? " · " + d.toLocaleString() : ""} · ${
-      match.myScore ?? 0
-    }–${match.opponentScore ?? 0} · ${esc(match.result || "unknown")}`;
+    const sub = `${esc(match.opponentName || "")}${d ? " · " + d.toLocaleString() : ""} · ${esc(
+      fmtScore(match)
+    )} · ${esc(match.result || "unknown")}`;
     back.innerHTML = `
       <div class="rp-modal vr-modal" role="dialog" aria-label="Match replay">
         <div class="rp-modal-head">
@@ -395,14 +375,12 @@
       // Escape is above this on purpose: it closes the modal from anywhere,
       // including from the share link's field, where it has nothing else to do.
       // Everything below moves the replay, and the moment panel puts a text
-      // field and two buttons inside the modal that own those keys themselves.
+      // field and two buttons inside the modal that own those keys themselves —
+      // which is what `targetOwnsKey` answers for, inside handleKey for the
+      // shared keys and here for fullscreen, the one key only this surface has.
+      if (ctl.handleKey(e)) return;
       if (targetOwnsKey(e.target, e.key)) return;
-      if (e.key === "ArrowRight") { e.preventDefault(); ctl.next(); }
-      else if (e.key === "ArrowLeft") { e.preventDefault(); ctl.prev(); }
-      else if (e.key === " ") { e.preventDefault(); ctl.togglePlay(); }
-      else if (e.key === "Home") { e.preventDefault(); ctl.first(); }
-      else if (e.key === "End") { e.preventDefault(); ctl.last(); }
-      else if (e.key === "f" || e.key === "F") { e.preventDefault(); ctl.toggleFullscreen(); }
+      if (e.key === "f" || e.key === "F") { e.preventDefault(); ctl.toggleFullscreen(); }
     }
     document.addEventListener("keydown", onKey);
     back.querySelector(".rp-close").addEventListener("click", close);

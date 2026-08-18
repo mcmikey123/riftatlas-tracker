@@ -48,7 +48,7 @@ const DECK_SOURCE = {
   fingerprint: { dot: "accent", words: "Matched by the cards you actually played during the match." },
   manual: { dot: "draw", words: "You typed this name, so nothing will overwrite it." },
 };
-const deckSourceOf = (m) => DECK_SOURCE[m.deckSource] || { dot: "unknown", words: "Where this name came from was not recorded." };
+export const deckSourceOf = (m) => DECK_SOURCE[m.deckSource] || { dot: "unknown", words: "Where this name came from was not recorded." };
 
 // ---- the rows a render works from --------------------------------------
 
@@ -81,7 +81,7 @@ export function visibleMatches(all) {
   return T.sortBy(rows, sortKeyFor(t.sortKey), t.sortDir);
 }
 
-function sortKeyFor(key) {
+export function sortKeyFor(key) {
   switch (key) {
     case "matchup": return (m) => champ(m.myChampion || m.myLegend);
     case "mode": return (m) => m.mode;
@@ -95,7 +95,7 @@ function sortKeyFor(key) {
   }
 }
 
-const COLUMNS = [
+export const COLUMNS = [
   { key: "", label: "", sortable: false },
   { key: "", label: "", sortable: false },
   { key: "date", label: "Date" },
@@ -457,12 +457,29 @@ export function mountMatches() {
       state.tables.matches.search = "";
       state.tables.series.search = "";
       resetPaging();
-      // The filter row is static DOM this view does not own, so its controls
-      // are put back by hand rather than by a re-render.
-      for (const [id, value] of [["#fMyChampion", ""], ["#fDeck", ""], ["#fMode", ""], ["#fDates", "all"], ["#fSearch", ""]]) {
+      /* The filter row is static DOM this view does not own, so its controls
+       * are put back by hand rather than by a re-render.
+       *
+       * The two custom-range dates are cleared along with the preset. Leaving
+       * them set kept a cleared filter alive in the markup: the state above
+       * says "all", but the next switch back to "custom" reads these fields
+       * and silently reapplies the range the user had just cleared. The row
+       * holding them is collapsed for the same reason - it is only ever shown
+       * for the "custom" preset, and nothing else closes it. */
+      for (const [id, value] of [
+        ["#fMyChampion", ""],
+        ["#fDeck", ""],
+        ["#fMode", ""],
+        ["#fDates", "all"],
+        ["#fFrom", ""],
+        ["#fTo", ""],
+        ["#fSearch", ""],
+      ]) {
         const el = document.querySelector(id);
         if (el) el.value = value;
       }
+      const custom = document.querySelector("[data-custom-range]");
+      if (custom) custom.hidden = true;
       emit();
       return;
     }

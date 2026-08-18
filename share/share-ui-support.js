@@ -20,10 +20,12 @@
   // fail.
   const MAX_UPLOAD_BYTES = 12582912;
 
+  const DAY_MS = 86400000;
+
   // Fixed at the bucket by an R2 lifecycle rule, not per share. Nothing in the
   // extension can change it, and nothing can revoke a share before it elapses.
   const SHARE_TTL_DAYS = 7;
-  const SHARE_TTL_MS = SHARE_TTL_DAYS * 86400000;
+  const SHARE_TTL_MS = SHARE_TTL_DAYS * DAY_MS;
 
   // The first four bytes of a share frame, taken from share/payload.js rather
   // than restated - a second copy of a magic number is how a format check
@@ -80,6 +82,61 @@
     500: "misconfigured",
     503: "unavailable"
   };
+
+  /* The only hosts an http:// endpoint may name. A `wrangler dev` on this
+   * machine is the one endpoint that legitimately cannot offer https.
+   * `new URL()` keeps the brackets on an IPv6 hostname, hence `[::1]`. */
+  const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+  /**
+   * Whether the configured share endpoint may be uploaded to at all.
+   *
+   * An extension page's fetch obeys CORS like any other page, so uploading needs
+   * the endpoint's cooperation. The share Worker grants it: it answers the
+   * preflight and echoes Access-Control-Allow-Origin for chrome-extension://
+   * origins only. That is deliberately server-side rather than a host permission
+   * in the manifest, so the extension ships no wildcard origin access and a
+   * self-hoster can point Settings at their own instance with no manifest edit
+   * and no prompt.
+   *
+   * The endpoint is still validated, because a malformed one should fail with a
+   * clear message rather than an opaque fetch rejection - and because of the
+   * https rule below, which is the actual security content of this function.
+   * The payload is encrypted before it leaves the machine, so plain http would
+   * not expose a replay - but the upload token and the object id are not part
+   * of the payload, and both travel in the clear.
+   *
+   * Returns what to tell the user, or null when there is nothing to say.
+   */
+  function endpointProblem(endpoint) {
+    let url;
+    try {
+      url = new URL(endpoint);
+    } catch (_) {
+      return "The share endpoint in Settings isn't a valid URL.";
+    }
+    if (url.protocol === "https:") return null;
+    if (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname)) return null;
+    return "The share endpoint in Settings must be an https:// URL (http:// only for localhost).";
+  }
+
+  /**
+   * Why a stored replay could not be played, from the payload the read
+   * produced.
+   *
+   * Four distinct failures used to share one message, which is exactly what let
+   * a transport ceiling masquerade as a corrupt recording for as long as it
+   * did. They need different things from the reader: a missing record is gone
+   * for good, a damaged first chunk means the recording itself is hurt, and an
+   * empty one never captured anything to begin with.
+   */
+  function unreadableReason(payload) {
+    if (!payload) return "No recording is stored for this match any more.";
+    if ((payload.meta || {}).truncatedAtChunk === 0) {
+      return "This replay's first chunk is damaged, so none of it can be played.";
+    }
+    return "This replay recorded no events, so there is nothing to play.";
+  }
 
   /** Bytes as B / KB / MB, matching how the capture panel prints sizes. */
   function fmtSize(bytes) {
@@ -215,7 +272,7 @@
    * pruning from contradicting that promise: everything it removes is a link
    * that already opens to nothing.
    */
-  const PRUNE_GRACE_MS = 2 * 86400000;
+  const PRUNE_GRACE_MS = 2 * DAY_MS;
 
   function isPrunable(record, now) {
     return Number(now) >= expiresAt(record) + PRUNE_GRACE_MS;
@@ -239,7 +296,7 @@
    * describe. Below it the answer is an upload: 3.5 MB and about 600 ms buys
    * seven days instead of minutes, which is the trade every time.
    */
-  const MIN_REUSE_MS = 86400000;
+  const MIN_REUSE_MS = DAY_MS;
 
   /** How long a share has left, in ms; negative once it has gone. */
   function remainingMs(record, now) {
@@ -258,7 +315,6 @@
 
   const MINUTE_MS = 60000;
   const HOUR_MS = 3600000;
-  const DAY_MS = 86400000;
 
   function plural(n, unit) {
     return `${n} ${unit}${n === 1 ? "" : "s"}`;
@@ -287,11 +343,19 @@
     return "in under a minute";
   }
 
-  // What a link is made of, so a record that cannot produce one is caught
-  // before it becomes a row. Both are unpadded base64url of a fixed length:
-  // 128 bits of object id, 256 bits of key.
-  const OBJECT_ID_RE = /^[A-Za-z0-9_-]{22}$/;
-  const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+  /* What a link is made of, so a record that cannot produce one is caught
+   * before it becomes a row. Both are unpadded base64url of a fixed length:
+   * 128 bits of object id, 256 bits of key.
+   *
+   * The lengths come from hosts.js rather than being restated here, the same
+   * way MAGIC comes from payload.js above. They were literals until now, and
+   * hosts.js already claimed "share/share-ui-support.js applies the same test"
+   * - true only for as long as nobody changed one of them. The stake is high
+   * for a silent check: a record that fails this is dropped from the list, and
+   * a dropped record takes the only copy of its decryption key with it. */
+  const HOSTS = root.RAShareHosts || require("./hosts.js");
+  const OBJECT_ID_RE = new RegExp(`^[A-Za-z0-9_-]{${HOSTS.OBJECT_ID_CHARS}}$`);
+  const KEY_RE = new RegExp(`^[A-Za-z0-9_-]{${HOSTS.KEY_CHARS}}$`);
 
   /**
    * The stored `shares` array as rows to render: valid records only, newest
@@ -475,8 +539,15 @@
     PRUNE_GRACE_MS,
     MIN_REUSE_MS,
     MESSAGES,
+    // Exported so the retry offer can be asserted against the list rather than
+    // against the four call sites that decide it. `describeUploadFailure` can
+    // never return `unverified` - only the verification step raises that - so
+    // nothing else reaches this entry.
+    RETRYABLE,
     RECHECK_MESSAGES,
     RECHECK_LABELS,
+    endpointProblem,
+    unreadableReason,
     fmtSize,
     checkPayloadSize,
     oversizeMessage,

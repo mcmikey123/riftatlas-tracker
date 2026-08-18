@@ -38,6 +38,10 @@ const FILTERED = new Set(["overview", "matrix", "matches", "series"]);
 
 // ---- view switching ----------------------------------------------------
 
+/* Exported for the Matchups view, whose cells open Matches narrowed to the
+ * matchup that was clicked. It was un-exported earlier on this branch as dead,
+ * which it was until that view arrived - the nav's own buttons call it from
+ * inside this file. */
 export function setView(view) {
   const next = VIEWS.indexOf(view) === -1 ? "overview" : view;
   if (state.view === next) return;
@@ -86,7 +90,7 @@ function paintViews() {
  * than shown as 0 - "Replays 0" and "Replays, not asked yet" are different
  * claims and only one of them is true before the worker answers.
  */
-export function paintNav(counts) {
+function paintNav(counts) {
   for (const el of $$("[data-count]")) {
     const n = counts[el.dataset.count];
     el.textContent = n === null || n === undefined ? "" : String(n);
@@ -215,5 +219,3 @@ export function paintShell(counts) {
   paintNav(counts);
   paintReadOnly();
 }
-
-export { closeMenus };

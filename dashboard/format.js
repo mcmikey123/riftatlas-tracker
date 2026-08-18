@@ -64,6 +64,10 @@
   /** A match's deck name, or the bucket unnamed ones are grouped under. */
   const deckOf = (m) => ((m && m.deckName) || "").trim() || "Unlabelled";
 
+  /* One spelling of the wall-clock options, shared by the two helpers below so
+   * a share row and a replay row cannot start rendering the time differently. */
+  const HOUR_MINUTE = { hour: "2-digit", minute: "2-digit" };
+
   /**
    * Today / Yesterday / "2 May" / "2 May 2025".
    *
@@ -84,11 +88,33 @@
     return d.getFullYear() === today.getFullYear() ? day : day + " " + d.getFullYear();
   }
 
+  /**
+   * `02/05/2026 20:14` - an absolute date and time in one string.
+   *
+   * Distinct from fmtDay above, which is deliberately RELATIVE ("Today",
+   * "Yesterday") because the history it labels is mostly recent. The rows that
+   * use this one are not: a shared link and a stored recording both outlive the
+   * match they came from, and "Yesterday" on a share that expires in six days
+   * tells you nothing about when it lapses.
+   */
+  function fmtStamp(when) {
+    /* Takes epoch milliseconds as well as an ISO string, because its callers
+     * genuinely hold both: a match dates from `startedAt`, an ISO string, while
+     * a replay record and a share record both date from a Date.now() number
+     * (store/replay-store.js and share/share-ui-support.js). The hand-written
+     * code this replaced used `new Date(x)`, which takes either - so parsing
+     * only strings silently blanked two whole columns. */
+    const t = typeof when === "number" ? when : Date.parse(when || "");
+    if (!Number.isFinite(t)) return DASH;
+    const d = new Date(t);
+    return d.toLocaleDateString() + " " + d.toLocaleTimeString([], HOUR_MINUTE);
+  }
+
   /** `20:14`, the 24-hour wall clock a match started at. */
   function fmtTime(iso) {
     const t = Date.parse(iso || "");
     if (!Number.isFinite(t)) return DASH;
-    return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return new Date(t).toLocaleTimeString([], HOUR_MINUTE);
   }
 
   /** `8–5`, or an em dash when neither side was ever scored. */
@@ -99,6 +125,19 @@
 
   const fmtPercent = (rate) => (rate === null || !Number.isFinite(rate) ? "–" : Math.round(rate * 100) + "%");
 
+  /**
+   * Which of the four win-rate hue steps a rate falls in.
+   *
+   * The break points are quarters of the range rather than anything about good
+   * or bad: this encodes magnitude, not judgement. It lives here, beside
+   * fmtPercent, because four surfaces now colour a rate - the Overview's
+   * aggregate bars, the weekly trend's columns, the matchup grid's cells, and
+   * whatever comes next - and three of them arrived holding their own copy of
+   * this line. A fifth copy drifting is how one page ends up showing the same
+   * rate in two different colours.
+   */
+  const rateStep = (rate) => (rate >= 0.75 ? 4 : rate >= 0.5 ? 3 : rate >= 0.25 ? 2 : 1);
+
   root.RATrackerFormat = {
     esc,
     fmtClock,
@@ -107,9 +146,11 @@
     fmtCount,
     fmtMs,
     fmtDay,
+    fmtStamp,
     fmtTime,
     fmtScore,
     fmtPercent,
+    rateStep,
     champ,
     deckOf,
     DASH,

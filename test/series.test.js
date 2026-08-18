@@ -488,6 +488,21 @@ test("removing a game renumbers the ones that are left", () => {
   assert.equal(byId(after, "g3").seriesGame, 2, "the gap is closed, not left as game 3");
 });
 
+/* Every exported mutator here copies before it writes, because the dashboard
+ * hands these functions the same array it is rendering from. renumber used to
+ * be the one exception - it rewrote the caller's own records in place, which
+ * looked safe only because its internal caller had already copied. The
+ * external caller in legacy.js had not. */
+test("renumbering leaves the caller's own records alone", () => {
+  const out = run(backToBack(["win", "loss", "win"]));
+  const before = JSON.stringify(out);
+  S.renumber(
+    out.filter((m) => m.id !== "g2"),
+    byId(out, "g1").seriesId
+  );
+  assert.equal(JSON.stringify(out), before, "renumber must not mutate what it was given");
+});
+
 test("a series cannot survive as one game", () => {
   const out = run(backToBack(["win", "loss"]));
   const after = S.removeFromSeries(out, "g2");
