@@ -43,6 +43,29 @@
     "RAClipboard"
   ];
 
+  /* A global can be present and still be the wrong vintage. public/replay/,
+   * public/share/ and public/store/ are gitignored duplicates that
+   * sync-assets.sh refreshes from the repo before every deploy, so a deploy
+   * that skipped that step serves this file beside modules older than it - the
+   * globals all exist and REQUIRED above is satisfied.
+   *
+   * These are the members this page reaches for by name. Without the check the
+   * first missing one throws part-way through start(), after the elements are
+   * looked up but before the retry button and the key handler are wired, and
+   * the page simply stops: no message, no retry, indistinguishable from a hang.
+   * That is precisely the failure sync-assets.sh warns about and the one nobody
+   * is watching for, so it is reported as an engine failure like any other. */
+  const REQUIRED_MEMBERS = [
+    ["RAReplayTimeline", "SPEEDS"],
+    ["RAReplayTimeline", "MAX_CHIPS"],
+    ["RAReplayTimeline", "timeline"],
+    ["RAReplayTimeline", "evenly"],
+    ["RAReplayTransport", "wireTransport"],
+    ["RAReplayTransport", "handleKey"],
+    ["RAShareHosts", "toLinkSeconds"],
+    ["RAShareHosts", "fromLinkSeconds"]
+  ];
+
   // Secondary lines. The headline says what happened; these say what to do,
   // which is the only reason the failures are told apart at all.
   const DETAILS = {
@@ -374,6 +397,17 @@
     const missing = REQUIRED.filter((name) => !root[name]);
     if (missing.length || !root.RAReplayCore.available()) {
       return failed(new Error("viewer modules missing: " + (missing.join(", ") || "rrweb Replayer")), "engine");
+    }
+
+    // Every global is present; this asks whether they are the right vintage.
+    // Same failure kind, because a half-updated deploy is the same problem for
+    // the recipient as a missing file, and the same remedy for whoever deployed
+    // it: run sync-assets.sh, deploy again.
+    const stale = REQUIRED_MEMBERS
+      .filter(([name, member]) => !root[name] || root[name][member] === undefined)
+      .map(([name, member]) => name + "." + member);
+    if (stale.length) {
+      return failed(new Error("viewer modules are out of date, missing: " + stale.join(", ")), "engine");
     }
 
     /* The speed options are built from the shared list rather than written into

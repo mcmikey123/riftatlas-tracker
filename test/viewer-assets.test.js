@@ -113,3 +113,48 @@ test("every global viewer.js requires at boot is loaded before it", () => {
       unpublished.join(", ")
   );
 });
+
+test("every member viewer.js guards against a stale deploy is one its module publishes", () => {
+  /* REQUIRED above catches a script that never loaded. This catches the other
+   * half: public/{replay,share,store} are gitignored duplicates refreshed by
+   * sync-assets.sh, so a deploy that skipped it serves a current viewer.js
+   * beside modules older than it - every global present, every REQUIRED name
+   * satisfied, and the first member viewer.js reaches for undefined. That is
+   * what shipped the speed control's <select> to a viewer whose timeline module
+   * had no SPEEDS.
+   *
+   * The guard is only worth having if its list is true, and a list of string
+   * pairs is exactly the thing a rename walks away from. A member named here
+   * that no module publishes would fail the boot check on every load, for
+   * everyone, on a correctly synced deploy - so it is pinned to the sources the
+   * same way REQUIRED is, and against the repo-root copies for the same reason. */
+  const declared = viewerSource.match(/const REQUIRED_MEMBERS = \[([\s\S]*?)\n  \];/);
+  assert.ok(declared, "viewer.js must declare its member checks as a REQUIRED_MEMBERS array");
+  const pairs = [...declared[1].matchAll(/\["([^"]+)",\s*"([^"]+)"\]/g)].map((m) => [m[1], m[2]]);
+  assert.ok(pairs.length > 0, "REQUIRED_MEMBERS is empty - the stale-deploy guard checks nothing");
+
+  const before = scriptsInIndex();
+  const earlier = before.slice(0, before.indexOf("viewer.js"));
+  const sources = earlier.map((rel) => {
+    const full = path.join(repo, rel);
+    return fs.existsSync(full) ? fs.readFileSync(full, "utf8") : "";
+  });
+
+  const unpublished = pairs
+    .filter(([name, member]) => {
+      // The file that publishes the global is the one that has to publish the
+      // member, so they are matched together rather than over one blob - which
+      // would let a member defined in an unrelated module satisfy the check.
+      const owner = sources.find((src) => new RegExp("\\b" + name + "\\b").test(src));
+      return !owner || !new RegExp("\\b" + member + "\\b").test(owner);
+    })
+    .map(([name, member]) => name + "." + member);
+
+  assert.deepEqual(
+    unpublished,
+    [],
+    "viewer.js refuses to boot without these, but the module that publishes the " +
+      "global does not define them - every load would report a stale deploy: " +
+      unpublished.join(", ")
+  );
+});
