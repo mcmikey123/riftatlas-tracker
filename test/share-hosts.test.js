@@ -6,6 +6,8 @@ const {
   fromBase64Url,
   toLinkSeconds,
   fromLinkSeconds,
+  toLinkSpeed,
+  fromLinkSpeed,
   buildLink,
   parseLink,
   hostFor
@@ -291,4 +293,108 @@ test("an object id that is not the link shape is refused rather than turned into
 test("the worker host is registered and unknown ids are refused", () => {
   assert.strictEqual(hostFor("w").id, "w");
   assert.throws(() => hostFor("zz"), { name: "ShareLinkError" });
+});
+
+// ---- the optional playback-speed field ----------------------------------
+
+const FRAG = `${ENDPOINT}/#1.${OBJECT_ID}.${toBase64Url(KEY)}`;
+const build = (extra) => buildLink({ endpoint: ENDPOINT, objectId: OBJECT_ID, keyBytes: KEY, ...extra });
+
+/* 1x is the rate a viewer plays at when told nothing, so writing it would make
+ * every ordinary link longer to say what already happens - and every link built
+ * by the shares list, which passes no rate at all, must stay byte-for-byte what
+ * it was. Both are the same guarantee from two directions. */
+test("a link says nothing about speed at 1x, or when handed nothing readable", () => {
+  assert.strictEqual(build({}), FRAG);
+  for (const quiet of [undefined, null, "", 1, "1", 1.0, 0, -2, NaN, Infinity, "fast"]) {
+    assert.strictEqual(
+      build({ atSpeed: quiet }),
+      FRAG,
+      `atSpeed ${JSON.stringify(String(quiet))} must add nothing`
+    );
+  }
+});
+
+test("a speed rides as tenths behind an s, because 0.5 would be two fields", () => {
+  // The separator is ".", so the rate cannot be written as the number it is.
+  for (const [speed, field] of [[0.5, "s5"], [2, "s20"], [4, "s40"], [6, "s60"]]) {
+    const link = build({ atSpeed: speed });
+    assert.strictEqual(link, `${FRAG}.${field}`, `${speed}x must ride as ${field}`);
+    assert.ok(!link.includes(".5."), "a rate must never put a bare decimal in the fragment");
+    assert.strictEqual(fromLinkSpeed(parseLink(link).atSpeed), speed);
+    assert.ok(link.length < 120, "links must stay short enough to paste anywhere");
+  }
+});
+
+test("a moment and a rate ride together, and each survives without the other", () => {
+  const both = build({ atSeconds: 95, atSpeed: 2 });
+  assert.strictEqual(both, `${FRAG}.95.s20`);
+  assert.deepStrictEqual(
+    { at: parseLink(both).atSeconds, speed: fromLinkSpeed(parseLink(both).atSpeed) },
+    { at: 95, speed: 2 }
+  );
+
+  // A rate with no moment needs no empty slot where the seconds would have been.
+  const speedOnly = build({ atSpeed: 0.5 });
+  assert.strictEqual(speedOnly, `${FRAG}.s5`);
+  assert.strictEqual(parseLink(speedOnly).atSeconds, null, "no moment means no moment");
+  assert.strictEqual(fromLinkSpeed(parseLink(speedOnly).atSpeed), 0.5);
+
+  const momentOnly = build({ atSeconds: 95 });
+  assert.strictEqual(momentOnly, `${FRAG}.95`);
+  assert.strictEqual(parseLink(momentOnly).atSpeed, null, "no rate means no rate");
+});
+
+/* The fields are read by shape rather than by position precisely so that a chat
+ * client, a mail wrapper or a person retyping a link cannot cost the recipient
+ * the share by reordering two things that look interchangeable. */
+test("the trailing fields parse in either order", () => {
+  const forward = parseLink(`${FRAG}.95.s20`);
+  const reversed = parseLink(`${FRAG}.s20.95`);
+  assert.deepStrictEqual(
+    { at: reversed.atSeconds, speed: reversed.atSpeed },
+    { at: forward.atSeconds, speed: forward.atSpeed },
+    "the order two optional fields arrive in must not change what they mean"
+  );
+});
+
+/* Same guarantee the timestamp field already had: a link that ended a sentence
+ * brings the full stop, and that must stay harmless now there is one more field
+ * it could be mistaken for. */
+test("a full stop after a rate is dropped, not read as a field", () => {
+  assert.strictEqual(fromLinkSpeed(parseLink(`${FRAG}.s20.`).atSpeed), 2);
+  assert.strictEqual(parseLink(`${FRAG}.95.s20.`).atSeconds, 95);
+});
+
+test("a rate that is not s-then-digits reads as no rate, never as a broken link", () => {
+  for (const junk of ["sx", "s", "s-2", "s2x", "S20"]) {
+    const parsed = parseLink(`${FRAG}.${junk}`);
+    assert.strictEqual(parsed.atSpeed, null, `${junk} must not parse as a rate`);
+  }
+});
+
+/* Two of a kind, or a sixth field, is a link that was rewritten rather than one
+ * that was extended - and a rewritten link cannot be decrypted, so saying so is
+ * the honest answer rather than opening something that will fail later. */
+test("a repeated field or a sixth field is malformed, not a future format", () => {
+  for (const bad of [`${FRAG}.95.96.s20`, `${FRAG}.s20.s40`, `${FRAG}.95.s20.s40`]) {
+    assert.throws(() => parseLink(bad), /malformed/, `${bad} must be rejected`);
+  }
+});
+
+test("toLinkSpeed rounds rather than truncates, so 0.5 cannot become 0.4", () => {
+  assert.strictEqual(toLinkSpeed(0.49999999999999994), 5);
+  assert.strictEqual(toLinkSpeed(2.0000000000000004), 20);
+  assert.strictEqual(toLinkSpeed(1), null, "1x is the default and says nothing");
+  assert.strictEqual(fromLinkSpeed(5), 0.5);
+  assert.strictEqual(fromLinkSpeed(0), null);
+  assert.strictEqual(fromLinkSpeed(undefined), null);
+});
+
+// The viewer is a web page a recipient may already have open, so every link
+// shape that predates this field has to keep meaning exactly what it meant.
+test("links that predate the speed field still parse, and report no rate", () => {
+  assert.strictEqual(parseLink(FRAG).atSpeed, null);
+  assert.strictEqual(parseLink(`${FRAG}.95`).atSpeed, null);
+  assert.strictEqual(parseLink(`${FRAG}.0`).atSeconds, 0, "zero is still a position");
 });

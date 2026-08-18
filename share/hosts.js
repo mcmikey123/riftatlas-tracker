@@ -9,9 +9,26 @@
 //
 // The key rides in the fragment so it never reaches the instance's request logs.
 //
-// THE OPTIONAL FOURTH FIELD is a playback position in whole seconds: "open this replay at
-// this moment". Three decisions are worth stating, because each has an obvious-looking
-// alternative that is wrong:
+// THE OPTIONAL TRAILING FIELDS say how to open the replay: a playback position in whole
+// seconds ("open at this moment"), and a playback speed tagged with an "s" ("open at the
+// rate I was watching it"). Both are omitted entirely when they have nothing to say, so a
+// plain share link is byte-for-byte the link it always was.
+//
+// They are read by shape, not by position: bare digits are the seconds, "s" followed by
+// digits is the speed. That costs nothing over fixing an order and buys the thing that
+// actually goes wrong with links - a chat client, a mail wrapper or a person reflowing one
+// by hand - because either order opens, and a link carrying only a speed does not need an
+// empty slot where the seconds would have been.
+//
+// Speed is carried in TENTHS of normal rate, as an integer: "s5" is 0.5x, "s20" is 2x. The
+// separator is "." and a speed is "0.5", so the obvious encoding is the one thing the format
+// cannot hold - "0.5" is two fields. Tenths cannot express a rate finer than 0.1x, which is
+// no loss: the controls offer 0.5x to 6x and replay-timeline.js clamps to that range.
+// A speed of exactly 1x is omitted rather than written, because it is what a viewer does
+// anyway - see toLinkSpeed.
+//
+// Four decisions are worth stating, because each has an obvious-looking alternative that
+// is wrong:
 //
 //   Why not `?t=`. The key is in the fragment precisely so it never reaches Cloudflare or
 //   the browser's history; a querystring would be sent. That alone is enough, but the
@@ -24,13 +41,19 @@
 //   Why seconds. Sub-second precision is noise on a replay minutes long, and three fewer
 //   characters is three fewer chances for a line wrap to break the link.
 //
-//   Why still version "1", accepting three parts or four. The viewer parses links with THIS
+//   Why not snap the speed to the offered list here. This file has no idea what speeds the
+//   controls offer, the same way it has no idea how long the recording is. It validates the
+//   shape and hands back a number; replay-timeline.js's `normaliseSpeed` decides what that
+//   number means, and is the one place that knows. A link naming a rate the UI has since
+//   stopped offering therefore still opens, clamped, rather than being thrown out.
+//
+//   Why still version "1", accepting three parts to five. The viewer parses links with THIS
 //   FILE: share/worker/sync-assets.sh copies it into the Worker's static assets, so the
 //   builder and the parser are the same source. A version number earns its keep when two
 //   independent implementations can disagree about a format; here they cannot, and the only
 //   skew possible is a browser holding a cached copy of an older deploy - which minting "2"
 //   would relabel from "malformed" to "newer format" without making the link work. Against
-//   that, "1" accepting an optional field is purely additive: every link already in the wild
+//   that, "1" accepting optional fields is purely additive: every link already in the wild
 //   keeps parsing, there is one format to reason about rather than two, and the version stays
 //   available for the change it was reserved for, which is a second storage backend.
 (function (root) {
@@ -119,14 +142,59 @@
     return Number.isSafeInteger(n) ? n : null;
   }
 
+  // Tenths of normal rate. See the note at the top of this file for why the
+  // rate cannot simply be written as "0.5".
+  const SPEED_TENTHS = 10;
+
+  /**
+   * A playback rate as the integer a link carries, or null for "say nothing".
+   *
+   * 1x returns null, so an ordinary link is unchanged: normal speed is what a
+   * viewer does with no instruction, and a field that only ever restates the
+   * default is a field that makes every link longer to no effect. Anything
+   * unreadable returns null for the same reason it does everywhere else in
+   * this file - a convenience must never be the thing that costs a recipient
+   * the share.
+   *
+   * Rounded, not truncated: a rate is a rate, and 0.5 must not become "s4"
+   * because a float arrived a hair under.
+   */
+  function toLinkSpeed(speed) {
+    const v = Number(speed);
+    if (!Number.isFinite(v) || v <= 0) return null;
+    const tenths = Math.round(v * SPEED_TENTHS);
+    if (tenths <= 0 || tenths === SPEED_TENTHS) return null;
+    return Number.isSafeInteger(tenths) ? tenths : null;
+  }
+
+  /** The rate a link's integer names, or null when it names none. */
+  function fromLinkSpeed(tenths) {
+    const n = Number(tenths);
+    if (!Number.isSafeInteger(n) || n <= 0) return null;
+    return n / SPEED_TENTHS;
+  }
+
+  /**
+   * The speed field as it appears in a fragment ("s20"), as tenths, or null.
+   * Same posture as the seconds field: anything that is not exactly s-then-
+   * digits reads as "no speed" rather than as a broken link.
+   */
+  function parseLinkSpeed(text) {
+    if (typeof text !== "string" || !/^s[0-9]+$/.test(text)) return null;
+    const n = Number(text.slice(1));
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
+  }
+
   /**
    * `atSeconds` is optional and omitted from the link entirely when absent, so
    * every existing caller keeps producing exactly the link it produced before.
    */
-  function buildLink({ endpoint, objectId, keyBytes, atSeconds }) {
+  function buildLink({ endpoint, objectId, keyBytes, atSeconds, atSpeed }) {
     const n = toPosition(atSeconds);
     const moment = n === null ? "" : "." + Math.floor(n);
-    return `${normaliseEndpoint(endpoint)}/#${LINK_VERSION}.${objectId}.${toBase64Url(keyBytes)}${moment}`;
+    const tenths = toLinkSpeed(atSpeed);
+    const speed = tenths === null ? "" : ".s" + tenths;
+    return `${normaliseEndpoint(endpoint)}/#${LINK_VERSION}.${objectId}.${toBase64Url(keyBytes)}${moment}${speed}`;
   }
 
   function parseLink(input) {
@@ -144,11 +212,31 @@
     // and only when there is a real field in front of it: a genuine fifth field
     // still means the link was rewritten.
     if (parts.length > 3 && parts[parts.length - 1] === "") parts.pop();
-    // Three or four: the fourth is the optional playback position. Five is not a
-    // format anyone has ever shipped, so it is a mangled link, not a future one.
-    if (parts.length < 3 || parts.length > 4) throw new ShareLinkError("link fragment is malformed");
+    // Three to five: the two optional trailing fields are the playback position
+    // (bare digits) and the playback speed ("s20"). Read by shape and each
+    // allowed once, so a link that came back in either order still opens; a
+    // sixth field, or two of a kind, means the link was rewritten rather than
+    // extended, and that is a mangled link rather than a future format.
+    if (parts.length < 3 || parts.length > 5) throw new ShareLinkError("link fragment is malformed");
 
-    const [version, objectId, keyText, timeText] = parts;
+    const [version, objectId, keyText] = parts;
+    let timeText;
+    let speedText;
+    /* Each field is claimed by its shape and by nothing else. Letting a second
+     * speed-shaped field fall through to the seconds slot instead would read
+     * "s20.s40" as a rate plus an unparseable position - which is to say, it
+     * would quietly drop half a rewritten link and open anyway, when the point
+     * of rejecting a rewritten link is that it cannot be trusted to be the one
+     * that was sent. */
+    for (const extra of parts.slice(3)) {
+      if (/^s[0-9]+$/.test(extra)) {
+        if (speedText !== undefined) throw new ShareLinkError("link fragment is malformed");
+        speedText = extra;
+      } else {
+        if (timeText !== undefined) throw new ShareLinkError("link fragment is malformed");
+        timeText = extra;
+      }
+    }
     if (version !== LINK_VERSION) {
       throw new ShareLinkError("this link uses a newer format than this viewer understands");
     }
@@ -169,9 +257,16 @@
     }
     if (keyBytes.length !== KEY_BYTES) throw new ShareLinkError("link key is the wrong length");
 
-    // Not clamped here - this file has no idea how long the recording is. The
-    // clamp is replay-timeline.js's `startPosition`, which does.
-    return { version, objectId, keyBytes, atSeconds: parseLinkSeconds(timeText) };
+    // Neither is clamped here - this file has no idea how long the recording is
+    // or what rates the controls offer. The clamps are replay-timeline.js's
+    // `startPosition` and `normaliseSpeed`, which do.
+    return {
+      version,
+      objectId,
+      keyBytes,
+      atSeconds: parseLinkSeconds(timeText),
+      atSpeed: parseLinkSpeed(speedText),
+    };
   }
 
   // upload() is the only impure member. fetch is a parameter rather than a closed-over
@@ -237,6 +332,9 @@
     toLinkSeconds,
     fromLinkSeconds,
     parseLinkSeconds,
+    toLinkSpeed,
+    fromLinkSpeed,
+    parseLinkSpeed,
     buildLink,
     parseLink,
     hostFor

@@ -67,17 +67,20 @@
   const close = (matchId) => void shareOpen.delete(matchId);
   const toggle = (matchId) => (shareOpen.has(matchId) ? close(matchId) : open(matchId));
 
-  /* The link a share record rebuilds to. `atSeconds` is optional and omitted
-   * from the link when absent, so the shares list keeps producing exactly the
-   * link it always did; only "copy a link to this moment" passes one. Always
-   * the record's own endpoint, never the one in Settings - a share uploaded
-   * before that setting changed still lives where it was put. */
-  function linkFor(record, atSeconds) {
+  /* The link a share record rebuilds to. `atSeconds` and `atSpeed` are both
+   * optional and omitted from the link when absent, so the shares list keeps
+   * producing exactly the link it always did; only "copy a link to this
+   * moment" passes them. The rate goes in raw - buildLink is what decides that
+   * 1x says nothing. Always the record's own endpoint, never the one in
+   * Settings - a share uploaded before that setting changed still lives where
+   * it was put. */
+  function linkFor(record, atSeconds, atSpeed) {
     return HOSTS.buildLink({
       endpoint: record.endpoint,
       objectId: record.objectId,
       keyBytes: HOSTS.fromBase64Url(record.key),
       atSeconds,
+      atSpeed,
     });
   }
 

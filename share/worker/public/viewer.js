@@ -74,6 +74,7 @@
     ["RAShare", "parseSharePayload"],
     ["RAShareHosts", "buildLink"],
     ["RAShareHosts", "fromLinkSeconds"],
+    ["RAShareHosts", "fromLinkSpeed"],
     ["RAShareHosts", "parseLink"],
     ["RAShareHosts", "toLinkSeconds"],
     ["RAShareViewer", "ViewerError"],
@@ -365,11 +366,17 @@
    * instead.
    */
   function copyMoment(link, button) {
+    /* The rate is read off the control rather than the core, because the
+     * control is where the transport writes back whatever the core accepted -
+     * so it is the one place that cannot disagree with what is actually
+     * playing. buildLink drops it when it is 1x, which is why an ordinary
+     * link is still the ordinary link. */
     const url = root.RAShareHosts.buildLink({
       endpoint: root.location.origin,
       objectId: link.objectId,
       keyBytes: link.keyBytes,
-      atSeconds: root.RAShareHosts.toLinkSeconds(playback.getTime())
+      atSeconds: root.RAShareHosts.toLinkSeconds(playback.getTime()),
+      atSpeed: parseFloat(ui.speed.value)
     });
     root.RAClipboard.copyToButton(url, button);
   }
@@ -431,6 +438,15 @@
       ui.player.hidden = true;
       throw new ViewerError("playback");
     }
+
+    /* A link that names a rate opens at it. Applied after wireTransport rather
+     * than through create(), because the select has to be moved with it: the
+     * transport writes that control back from what the core ACCEPTED, and a
+     * replay running at 2x under a select still reading 1x is the control
+     * lying about the replay. Same write-back rule as the change handler, for
+     * the same reason. A link naming no rate leaves both alone. */
+    const linkSpeed = root.RAShareHosts.fromLinkSpeed(link.atSpeed);
+    if (linkSpeed !== null) ui.speed.value = String(playback.setSpeed(linkSpeed));
 
     ui.sub.textContent = summarise(meta, marks, playback.totalTime);
     ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));

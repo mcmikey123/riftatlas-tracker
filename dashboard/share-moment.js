@@ -92,28 +92,28 @@
    * What it has left is said out loud, in the wording the match row's own reuse
    * uses - `SHARE.reuseNotice`, so the two buttons cannot drift into describing
    * the same decision differently. */
-  function offerReusedLink(panel, button, record, atSeconds) {
-    const link = PANEL.linkFor(record, atSeconds);
+  function offerReusedLink(panel, button, record, atSeconds, atSpeed) {
+    const link = PANEL.linkFor(record, atSeconds, atSpeed);
     const field = showMomentLink(panel, link, SHARE.reuseNotice(record, Date.now()));
     window.RAClipboard.copyToButton(link, button, { field });
   }
 
   /* Entry point handed to the modal. `atMs` was read at the click, so it names
    * the moment the user meant even when an upload happens in between. */
-  async function shareMoment({ atMs, button, panel }, match) {
+  async function shareMoment({ atMs, atSpeed, button, panel }, match) {
     const atSeconds = HOSTS.toLinkSeconds(atMs);
     const stored = await window.RATrackerStorage.readShares();
     const record = SHARE.reusableShare(stored, match.id, Date.now());
-    if (record) return offerReusedLink(panel, button, record, atSeconds);
+    if (record) return offerReusedLink(panel, button, record, atSeconds, atSpeed);
     // Nothing live to reuse, so this is a first upload. The disclosure comes
     // first and the upload is a second, deliberate click - the same two steps
     // the row's own share panel takes, because the thing being consented to is
     // the same: a replay carrying an opponent's display name and the match chat
     // leaves this machine, and it cannot be unshared afterwards.
-    askThenShareMoment(match.id, atSeconds, button, panel);
+    askThenShareMoment(match.id, atSeconds, atSpeed, button, panel);
   }
 
-  function askThenShareMoment(matchId, atSeconds, button, panel) {
+  function askThenShareMoment(matchId, atSeconds, atSpeed, button, panel) {
     panel.hidden = false;
     panel.innerHTML = `${PANEL.DISCLOSURE}
       <div class="vr-share-actions">
@@ -136,7 +136,7 @@
       // The panel's own buttons go with its content, so a Cancel or a closed
       // modal during the read detaches this one.
       if (!go.isConnected) return;
-      if (landed) return offerReusedLink(panel, button, landed, atSeconds);
+      if (landed) return offerReusedLink(panel, button, landed, atSeconds, atSpeed);
 
       button.disabled = true;
       momentFollow = { matchId, panel };
@@ -155,7 +155,7 @@
         }
         showMomentLink(
           panel,
-          PANEL.linkFor(made.record, atSeconds),
+          PANEL.linkFor(made.record, atSeconds, atSpeed),
           "Uploaded and verified. Later moments from this match reuse it — no second upload, " +
             "and no second copy on the endpoint."
         );
