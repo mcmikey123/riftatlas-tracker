@@ -158,3 +158,24 @@ test("every member viewer.js guards against a stale deploy is one its module pub
       unpublished.join(", ")
   );
 });
+
+test("every element viewer.js looks up by id exists in the viewer page", () => {
+  /* viewer.js collects its chrome in one getElementById sweep and then uses the
+   * results unguarded, so an id that markup does not carry is a null that
+   * surfaces as a TypeError part-way through start() - the same silent, blank
+   * page the stale-module guard above exists to prevent, arriving by the other
+   * road. Renaming a control in one file and not the other is all it takes. */
+  const sweep = viewerSource.match(/for \(const id of \[([\s\S]*?)\]\) \{/);
+  assert.ok(sweep, "viewer.js must collect its elements from one `for (const id of [...])` list");
+  const ids = [...sweep[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(ids.length > 0, "the element id list is empty - has start() been rewritten?");
+
+  const inMarkup = new Set([...indexHtml.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+  const absent = ids.filter((id) => !inMarkup.has(id));
+  assert.deepEqual(
+    absent,
+    [],
+    "viewer.js looks these up but index.html carries no such id, so each is null " +
+      "the first time it is touched: " + absent.join(", ")
+  );
+});

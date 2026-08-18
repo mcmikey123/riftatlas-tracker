@@ -213,3 +213,23 @@ select.btn { cursor: pointer; }
   color: var(--ink-3);
   text-align: center;
 }
+
+/* --- fullscreen ---
+ *
+ * The whole .viewer goes fullscreen, not the stage alone, so the transport,
+ * the chapter chips and the notices come with it. The notices are the reason
+ * it is not the stage: the card-art warning is raised about two seconds in,
+ * which is after a viewer who wanted fullscreen has already asked for it.
+ *
+ * A fullscreen element is painted over the UA's black backdrop and inherits
+ * none of <body>'s background, so the page colour has to be restated here or
+ * the padding around the stage goes black.
+ */
+.viewer.full {
+  background: var(--bg);
+  padding: 8px clamp(8px, 2vw, 20px) 6px;
+}
+/* The title and the "anyone with this link" line are furniture that has
+   already been read by the time anyone reaches for fullscreen; the point of
+   the mode is to give every pixel it costs to the board. */
+.viewer.full .head { display: none; }

@@ -60,6 +60,7 @@
     ["RAReplayTimeline", "MAX_CHIPS"],
     ["RAReplayTimeline", "timeline"],
     ["RAReplayTimeline", "evenly"],
+    ["RAReplayTimeline", "targetOwnsKey"],
     ["RAReplayTransport", "wireTransport"],
     ["RAReplayTransport", "handleKey"],
     ["RAShareHosts", "toLinkSeconds"],
@@ -242,6 +243,86 @@
     }, CARD_ART_INTERVAL_MS);
   }
 
+  /* ---- fullscreen ---------------------------------------------------------
+   *
+   * The dashboard's modal has had this since the replay viewer existed; this
+   * page did not, so a recipient sent a board captured at 1920px read it in
+   * whatever width the page's column happened to leave over.
+   *
+   * `.viewer` is what goes fullscreen rather than `.stage`, so the transport,
+   * the chapter chips and the notices travel with the board - the same call the
+   * modal makes when it fullscreens the shell instead of the body.
+   *
+   * Escape needs none of the modal's grace period here. There, one Escape could
+   * both leave fullscreen and close the modal behind it, so the second meaning
+   * had to be suppressed; this page has nothing behind the replay to close, and
+   * binds no Escape at all, so the browser's own handling is the whole story.
+   */
+  let canFullscreen = false;
+
+  function isFull() {
+    return doc.fullscreenElement === ui.viewer;
+  }
+
+  function paintFullscreen() {
+    const on = isFull();
+    ui.viewer.classList.toggle("full", on);
+    ui.full.textContent = on ? "⤢ Exit fullscreen" : "⛶ Fullscreen";
+    ui.full.title = on ? "Leave fullscreen (f or Esc)" : "Fullscreen (f)";
+    ui.full.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  /** Leave fullscreen if we are in it. Never throws, never rejects outward. */
+  function leaveFullscreen() {
+    let done;
+    try {
+      done = doc.exitFullscreen();
+    } catch (err) {
+      console.warn("[RA-Tracker] could not leave fullscreen:", err);
+      return;
+    }
+    if (done && typeof done.catch === "function") {
+      done.catch((err) => console.warn("[RA-Tracker] could not leave fullscreen:", err));
+    }
+  }
+
+  /**
+   * requestFullscreen can be refused outright - a user gesture the browser did
+   * not credit, an embedding that withholds the permission - and it reports
+   * that by rejecting rather than throwing. Either way the page stays exactly
+   * as it was, so all that is owed is repainting the button to its real state.
+   */
+  function toggleFullscreen() {
+    if (!canFullscreen) return;
+    if (isFull()) return leaveFullscreen();
+    let done;
+    try {
+      done = ui.viewer.requestFullscreen();
+    } catch (err) {
+      console.warn("[RA-Tracker] fullscreen was refused:", err);
+      paintFullscreen();
+      return;
+    }
+    if (done && typeof done.catch === "function") {
+      done.catch((err) => {
+        console.warn("[RA-Tracker] fullscreen was refused:", err);
+        paintFullscreen();
+      });
+    }
+  }
+
+  function onFullscreenChange() {
+    paintFullscreen();
+    // The stage's new box is not final on this event in every engine, so fit
+    // once now and again once layout has settled. The ResizeObserver mount()
+    // installs covers this too; this is the belt to its braces, and matters on
+    // the way out of fullscreen, where the observer can fire before the page
+    // has taken its column width back.
+    if (!playback) return;
+    playback.refit();
+    root.requestAnimationFrame(playback.refit);
+  }
+
   /**
    * A link to this same share, opening wherever the replay is right now.
    *
@@ -342,13 +423,21 @@
     watchCardArt();
   }
 
-  /* Every key this page answers is one the extension's modal answers the same
-   * way, so the map and the guard that goes with it are both in
-   * replay/replay-transport.js. The modal adds Escape and f around the same
-   * call; this page has nothing of its own to add, so it takes the answer and
-   * ignores it. */
+  /* Every transport key this page answers is one the extension's modal answers
+   * the same way, so the map and the guard that goes with it are both in
+   * replay/replay-transport.js. `f` is the one key this page adds around that
+   * call, and it is added the way the modal adds it: only once the transport
+   * has declined the event, and only when the focused element does not own the
+   * key itself - `targetOwnsKey` is what keeps `f` from being swallowed while
+   * someone is typing into a field. The modal also adds Escape; this page has
+   * nothing behind the replay for Escape to close, so it binds none. */
   function onKey(e) {
-    root.RAReplayTransport.handleKey(e, playback);
+    if (root.RAReplayTransport.handleKey(e, playback)) return;
+    if (root.RAReplayTimeline.targetOwnsKey(e.target, e.key)) return;
+    if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      toggleFullscreen();
+    }
   }
 
   async function run() {
@@ -388,9 +477,13 @@
 
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
-      "player", "play", "prev", "next", "seek", "clock", "speed", "copyAt", "chapters", "stage", "scale"]) {
+      "player", "play", "prev", "next", "seek", "clock", "speed", "full", "copyAt", "chapters",
+      "stage", "scale"]) {
       ui[id] = doc.getElementById(id);
     }
+    // The one element addressed by class: it is the page's layout root, and the
+    // element fullscreen is requested on.
+    ui.viewer = doc.querySelector(".viewer");
 
     // Reported before the download rather than after it: a viewer that cannot
     // play anything should say so immediately, not after 3.5 MB.
@@ -419,6 +512,25 @@
     ui.speed.innerHTML = root.RAReplayTimeline.SPEEDS.map(
       (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
     ).join("");
+
+    /* Feature-detected rather than assumed: an iframe embed without the
+     * allow-fullscreen permission reaches this line with the method present and
+     * `fullscreenEnabled` false, and a button that silently does nothing is
+     * worse than no button. Nothing is ever torn down - this page does not
+     * unmount its player - so the listener has no removal to match it. */
+    canFullscreen =
+      !!ui.full &&
+      !!ui.viewer &&
+      typeof ui.viewer.requestFullscreen === "function" &&
+      typeof doc.exitFullscreen === "function" &&
+      doc.fullscreenEnabled !== false;
+    if (canFullscreen) {
+      ui.full.addEventListener("click", toggleFullscreen);
+      doc.addEventListener("fullscreenchange", onFullscreenChange);
+      paintFullscreen();
+    } else if (ui.full) {
+      ui.full.hidden = true;
+    }
 
     ui.retry.addEventListener("click", run);
     doc.addEventListener("keydown", onKey);
