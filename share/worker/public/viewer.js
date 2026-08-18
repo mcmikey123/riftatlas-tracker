@@ -425,10 +425,16 @@
           meta,
           marks,
           autoplay: true,
-          // A plain link plays on open; a link that names a moment opens paused at it,
-          // because the sender is pointing at that moment and playing on walks off it.
-          // The core makes that call - see shouldAutoplay - so both surfaces cannot
-          // drift on it. null here means "no moment given"; 0 means second zero.
+          // Every link plays on open here, the one naming a moment included: a
+          // recipient opening a link someone sent them is starting to watch, and
+          // a frozen board with a play button is a worse answer to "look at this"
+          // than the moment playing out. The dashboard's modal passes no such
+          // flag and still opens paused, where a moment is a position being
+          // examined rather than one being sent. The core owns the rule either
+          // way - see shouldAutoplay - so neither surface can drift on it, and
+          // prefers-reduced-motion still overrides both.
+          playFromMoment: true,
+          // null here means "no moment given"; 0 means second zero.
           startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
           onTime: callbacks.onTime,
           onPlayState: callbacks.onPlayState

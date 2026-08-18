@@ -342,17 +342,34 @@ test("prefers-reduced-motion overrides a surface that asked to autoplay", () => 
   assert.strictEqual(shouldAutoplay(true, true), false);
 });
 
-test("a link naming a moment opens paused at it", () => {
-  // The sender is pointing at that moment; playing on walks off it before the
-  // recipient has looked. A plain link, with no moment named, still plays.
+test("a surface that does not ask opens paused at a named moment", () => {
+  // The dashboard's modal, where a moment is a position being examined. A plain
+  // link, with no moment named, still plays.
   assert.strictEqual(shouldAutoplay(true, false, true), false);
   assert.strictEqual(shouldAutoplay(true, false, false), true);
 });
 
+test("a surface that asks for it plays on from a named moment", () => {
+  // The share viewer, where a recipient opening a link someone sent them is
+  // starting to watch. Opting in must not disturb the plain-link case either way.
+  assert.strictEqual(shouldAutoplay(true, false, true, true), true);
+  assert.strictEqual(shouldAutoplay(true, false, false, true), true);
+});
+
+test("playing on from a moment can only restore autoplay, never grant it", () => {
+  /* The opt-in undoes what naming a moment took away and nothing else. If it
+   * could outrank either argument below, a timestamped link would become a way
+   * around prefers-reduced-motion - which is exactly the thing the preference
+   * is a standing answer to - or a way to start a surface that never asked to
+   * play at all. */
+  assert.strictEqual(shouldAutoplay(true, true, true, true), false, "reduced motion still wins");
+  assert.strictEqual(shouldAutoplay(false, false, true, true), false, "a surface that never asked");
+  assert.strictEqual(shouldAutoplay(true, true, false, true), false, "no moment, still reduced");
+});
+
 test("naming a moment can only suppress autoplay, never grant it", () => {
-  // Both cases must stay paused *because* a moment was named, not in spite of it.
-  // Getting this wrong turns a timestamped link into a way around
-  // prefers-reduced-motion, which is why both arguments below are true.
+  // Unchanged for every surface that does not opt in: still paused *because* a
+  // moment was named, not in spite of it.
   assert.strictEqual(shouldAutoplay(true, true, true), false, "reduced motion still wins");
   assert.strictEqual(shouldAutoplay(false, false, true), false, "a surface that never asked");
 });
