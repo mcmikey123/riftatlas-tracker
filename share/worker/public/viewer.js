@@ -74,10 +74,12 @@
     ["RAShare", "parseSharePayload"],
     ["RAShareHosts", "buildLink"],
     ["RAShareHosts", "fromLinkSeconds"],
+    ["RAShareHosts", "fromLinkSpeed"],
     ["RAShareHosts", "parseLink"],
     ["RAShareHosts", "toLinkSeconds"],
     ["RAShareViewer", "ViewerError"],
-    ["RAShareViewer", "brokenImages"],
+    ["RAShareViewer", "cardArtHealth"],
+    ["RAShareViewer", "cardArtUnreachable"],
     ["RAShareViewer", "classify"],
     ["RAShareViewer", "describeFailure"],
     ["RAShareViewer", "emptyCssTextCount"],
@@ -253,20 +255,40 @@
     let checks = 0;
     const timer = root.setInterval(() => {
       checks += 1;
-      let broken = 0;
+      let health = null;
       try {
         const frame = ui.scale.querySelector("iframe");
         const inner = frame && frame.contentDocument;
-        if (inner) broken = root.RAShareViewer.brokenImages(inner.images, CARD_ART_ORIGIN);
+        if (inner) health = root.RAShareViewer.cardArtHealth(inner.images, CARD_ART_ORIGIN);
       } catch (err) {
         // Torn down, or an engine that will not hand over the replay document.
         // Either way there is nothing to report and nothing to retry.
       }
-      if (broken > 0) {
-        root.clearInterval(timer);
+
+      /* Judged only on the last look, never on the first one that sees a
+       * failure.
+       *
+       * This used to fire the moment a single image from the host finished
+       * empty, then clearInterval and never look again - so one card whose art
+       * 404s, on a board where every other card is on screen, latched "the
+       * game's image server is unreachable" for the whole replay and could not
+       * be revised by the next poll that saw sixty images arrive. Waiting for
+       * the last check costs the banner up to sixteen seconds and buys the only
+       * evidence that distinguishes a dead host from a missing file: whether
+       * anything from that host arrived at all.
+       *
+       * The srcs are logged either way. A partial failure says nothing in the
+       * page - the reader can see the gap and the rest of the replay really is
+       * unaffected - but it is the thing someone will want to look up. */
+      if (checks < CARD_ART_CHECKS) return;
+      root.clearInterval(timer);
+      if (!health || health.broken === 0) return;
+      console.warn(
+        "[RA-Tracker] card art: " + health.loaded + " loaded, " + health.broken + " empty:",
+        health.brokenSrc
+      );
+      if (root.RAShareViewer.cardArtUnreachable(health)) {
         notice("Card images couldn't load — the game's image server is unreachable. The rest of the replay is unaffected.");
-      } else if (checks >= CARD_ART_CHECKS) {
-        root.clearInterval(timer);
       }
     }, CARD_ART_INTERVAL_MS);
   }
@@ -365,11 +387,17 @@
    * instead.
    */
   function copyMoment(link, button) {
+    /* The rate is read off the control rather than the core, because the
+     * control is where the transport writes back whatever the core accepted -
+     * so it is the one place that cannot disagree with what is actually
+     * playing. buildLink drops it when it is 1x, which is why an ordinary
+     * link is still the ordinary link. */
     const url = root.RAShareHosts.buildLink({
       endpoint: root.location.origin,
       objectId: link.objectId,
       keyBytes: link.keyBytes,
-      atSeconds: root.RAShareHosts.toLinkSeconds(playback.getTime())
+      atSeconds: root.RAShareHosts.toLinkSeconds(playback.getTime()),
+      atSpeed: parseFloat(ui.speed.value)
     });
     root.RAClipboard.copyToButton(url, button);
   }
@@ -418,10 +446,16 @@
           meta,
           marks,
           autoplay: true,
-          // A plain link plays on open; a link that names a moment opens paused at it,
-          // because the sender is pointing at that moment and playing on walks off it.
-          // The core makes that call - see shouldAutoplay - so both surfaces cannot
-          // drift on it. null here means "no moment given"; 0 means second zero.
+          // Every link plays on open here, the one naming a moment included: a
+          // recipient opening a link someone sent them is starting to watch, and
+          // a frozen board with a play button is a worse answer to "look at this"
+          // than the moment playing out. The dashboard's modal passes no such
+          // flag and still opens paused, where a moment is a position being
+          // examined rather than one being sent. The core owns the rule either
+          // way - see shouldAutoplay - so neither surface can drift on it, and
+          // prefers-reduced-motion still overrides both.
+          playFromMoment: true,
+          // null here means "no moment given"; 0 means second zero.
           startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
           onTime: callbacks.onTime,
           onPlayState: callbacks.onPlayState
@@ -431,6 +465,15 @@
       ui.player.hidden = true;
       throw new ViewerError("playback");
     }
+
+    /* A link that names a rate opens at it. Applied after wireTransport rather
+     * than through create(), because the select has to be moved with it: the
+     * transport writes that control back from what the core ACCEPTED, and a
+     * replay running at 2x under a select still reading 1x is the control
+     * lying about the replay. Same write-back rule as the change handler, for
+     * the same reason. A link naming no rate leaves both alone. */
+    const linkSpeed = root.RAShareHosts.fromLinkSpeed(link.atSpeed);
+    if (linkSpeed !== null) ui.speed.value = String(playback.setSpeed(linkSpeed));
 
     ui.sub.textContent = summarise(meta, marks, playback.totalTime);
     ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));

@@ -165,13 +165,26 @@
    * the play button is right there either way.
    *
    * `opensAtMoment` is true when the caller was told exactly where to start — a
-   * share link carrying a timestamp. Those open paused: the point of sending one
-   * is "look at this", and playing on from it walks off the thing being pointed
-   * at before the recipient has seen it. Not the same as "starts at zero": a link
+   * share link carrying a timestamp. Not the same as "starts at zero": a link
    * may deliberately name second 0, which is still a named moment.
+   *
+   * `playFromMoment` is the surface's answer to what that should mean, because
+   * the two surfaces want opposite things and only one of them is ever handed a
+   * moment. The dashboard's modal does not pass it and opens paused: a moment
+   * there is a position being examined. The share viewer does, because a
+   * recipient opening a link someone sent them is starting to watch, and landing
+   * on a frozen board with a play button is a worse answer to "look at this"
+   * than the seconds either side of the moment playing out.
+   *
+   * It can only ever restore what naming a moment took away. Both of the tests
+   * below it are the reason: an opt-in that could outrank `reducedMotion`, or
+   * start a surface that never asked to autoplay at all, would make a
+   * timestamped link a way around the preference rather than a way to honour
+   * the sender.
    */
-  function shouldAutoplay(requested, reducedMotion, opensAtMoment) {
-    return !!requested && !reducedMotion && !opensAtMoment;
+  function shouldAutoplay(requested, reducedMotion, opensAtMoment, playFromMoment) {
+    if (!requested || reducedMotion) return false;
+    return !opensAtMoment || !!playFromMoment;
   }
 
   /**

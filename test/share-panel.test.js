@@ -200,6 +200,21 @@ test("a link carries no timestamp unless one is asked for", () => {
   assert.ok(P.linkFor(record(), 92).endsWith(".92"), "only the moment link pins a position");
 });
 
+/* The shares list rebuilds links for records it knows nothing else about, and
+ * passes neither a position nor a rate; only "copy a link to this moment" does.
+ * A rate leaking into the list's links would pin every share to whatever the
+ * last replay happened to be playing at. */
+test("a link carries no playback rate unless one is asked for", () => {
+  assert.ok(!P.linkFor(record()).includes(".s"), "a plain share link names no rate");
+  assert.ok(!P.linkFor(record(), 92).includes(".s"), "a moment alone names no rate");
+  assert.ok(
+    !P.linkFor(record(), 92, 1).includes(".s"),
+    "1x is what a viewer does anyway, so it is not written"
+  );
+  assert.ok(P.linkFor(record(), 92, 2).endsWith(".92.s20"), "2x rides as tenths behind an s");
+  assert.ok(P.linkFor(record(), undefined, 0.5).endsWith(".s5"), "a rate needs no position");
+});
+
 test("the key travels in the fragment, where the endpoint's logs cannot see it", () => {
   const link = P.linkFor(record());
   assert.ok(link.includes("#"));

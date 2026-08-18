@@ -349,7 +349,14 @@
     // Branched rather than "seek to the start, then maybe play": pausing at a
     // position and then playing from it makes rrweb build the full snapshot
     // twice, and each build is a visible flash of the board.
-    if (shouldAutoplay(options.autoplay, reducedMotion(), options.startAtMs != null)) start();
+    if (
+      shouldAutoplay(
+        options.autoplay,
+        reducedMotion(),
+        options.startAtMs != null,
+        options.playFromMoment
+      )
+    ) start();
     else replayer.pause(at);
     emit();
 

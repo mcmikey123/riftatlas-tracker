@@ -264,6 +264,10 @@
       handles.momentBtn.addEventListener("click", () =>
         shareMoment({
           atMs: playback.getTime(),
+          // Read off the select, not the core: the transport writes that
+          // control back from whatever the core accepted, so it is the one
+          // place that cannot disagree with what is actually playing.
+          atSpeed: parseFloat(speedSel.value),
           button: handles.momentBtn,
           panel: handles.momentPanel,
         })
