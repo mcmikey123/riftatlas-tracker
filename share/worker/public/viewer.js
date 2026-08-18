@@ -49,22 +49,40 @@
    * that skipped that step serves this file beside modules older than it - the
    * globals all exist and REQUIRED above is satisfied.
    *
-   * These are the members this page reaches for by name. Without the check the
-   * first missing one throws part-way through start(), after the elements are
-   * looked up but before the retry button and the key handler are wired, and
-   * the page simply stops: no message, no retry, indistinguishable from a hang.
-   * That is precisely the failure sync-assets.sh warns about and the one nobody
-   * is watching for, so it is reported as an engine failure like any other. */
+   * Every member this page reaches for, and the list is complete because
+   * viewer-assets.test.js scrapes this file and fails if it is not: a member
+   * used here and missing below is one more way to reach the failure this
+   * check exists to prevent. Without it the first stale member throws part-way
+   * through start(), after the elements are looked up but before the retry
+   * button and the key handler are wired, and the page simply stops - no
+   * message, no retry, indistinguishable from a hang. That is the failure
+   * sync-assets.sh warns about and the one nobody is watching for. */
   const REQUIRED_MEMBERS = [
-    ["RAReplayTimeline", "SPEEDS"],
+    ["RAClipboard", "copyToButton"],
+    ["RARepaint", "repaint"],
+    ["RAReplayCore", "available"],
+    ["RAReplayCore", "create"],
     ["RAReplayTimeline", "MAX_CHIPS"],
-    ["RAReplayTimeline", "timeline"],
+    ["RAReplayTimeline", "SPEEDS"],
     ["RAReplayTimeline", "evenly"],
     ["RAReplayTimeline", "targetOwnsKey"],
-    ["RAReplayTransport", "wireTransport"],
+    ["RAReplayTimeline", "timeline"],
+    ["RAReplayTimeline", "truncationText"],
     ["RAReplayTransport", "handleKey"],
+    ["RAReplayTransport", "wireTransport"],
+    ["RAShare", "importKey"],
+    ["RAShare", "parseSharePayload"],
+    ["RAShareHosts", "buildLink"],
+    ["RAShareHosts", "fromLinkSeconds"],
+    ["RAShareHosts", "parseLink"],
     ["RAShareHosts", "toLinkSeconds"],
-    ["RAShareHosts", "fromLinkSeconds"]
+    ["RAShareViewer", "ViewerError"],
+    ["RAShareViewer", "brokenImages"],
+    ["RAShareViewer", "classify"],
+    ["RAShareViewer", "describeFailure"],
+    ["RAShareViewer", "emptyCssTextCount"],
+    ["RAShareViewer", "fmtClock"],
+    ["RAShareViewer", "unresolvedCssRefs"]
   ];
 
   // Secondary lines. The headline says what happened; these say what to do,
@@ -102,8 +120,18 @@
 
   function failed(err, fallbackKind) {
     // The module that knows the messages is itself one of the things that can
-    // be missing, so the engine failure is the one message stated twice.
-    const { kind, message, retry } = root.RAShareViewer
+    // be missing, so the engine failure is the one message stated twice. The
+    // member is checked, not just the global: a stale share/viewer-support.js
+    // publishes RAShareViewer without describeFailure, and this is the one
+    // function that cannot throw on the way to reporting that - it is the
+    // reporting.
+    // Written without `!!` on purpose: namespace-contract.test.js cannot read a
+    // namespace through it, and would quietly stop checking RAShareViewer's
+    // members here rather than fail. A plain `&&` keeps the reference legible
+    // to it; the ternary below wants truthiness, not a boolean.
+    const canDescribe =
+      root.RAShareViewer && typeof root.RAShareViewer.describeFailure === "function";
+    const { kind, message, retry } = canDescribe
       ? root.RAShareViewer.describeFailure(err, fallbackKind)
       : { kind: "engine", message: "The replay engine failed to load.", retry: false };
     console.warn("[RA-Tracker] share viewer failed (" + kind + "):", err);
@@ -434,6 +462,13 @@
   function onKey(e) {
     if (root.RAReplayTransport.handleKey(e, playback)) return;
     if (root.RAReplayTimeline.targetOwnsKey(e.target, e.key)) return;
+    /* Bare f only. Ctrl+F and Cmd+F are Find, and preventDefault on those is
+     * honoured, so an unguarded test here would swallow the browser's own
+     * shortcut and go fullscreen instead. Guarded on this branch rather than at
+     * the top of the handler: the keys above are the shared transport's, and
+     * filtering them here would make this page answer them differently from the
+     * dashboard's modal, which is the drift replay-transport.js exists to stop. */
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "f" || e.key === "F") {
       e.preventDefault();
       toggleFullscreen();
@@ -485,22 +520,36 @@
     // element fullscreen is requested on.
     ui.viewer = doc.querySelector(".viewer");
 
-    // Reported before the download rather than after it: a viewer that cannot
-    // play anything should say so immediately, not after 3.5 MB.
+    /* Three checks, in this order, and the order is the point.
+     *
+     * Reported before the download rather than after it: a viewer that cannot
+     * play anything should say so immediately, not after 3.5 MB.
+     *
+     * Globals first, because a member check on an absent global throws. Members
+     * second, because the engine check below is itself a member call -
+     * RAReplayCore.available - and a stale replay-core.js that does not publish
+     * it would throw there, part-way through start(), which is the silent blank
+     * page this whole guard exists to replace. Only once both hold is it safe
+     * to ask the engine whether it can actually play.
+     *
+     * Both stale cases report `engine`: a half-updated deploy is the same
+     * problem for the recipient as a missing file, and the same remedy for
+     * whoever deployed it - run sync-assets.sh, deploy again.
+     */
     const missing = REQUIRED.filter((name) => !root[name]);
-    if (missing.length || !root.RAReplayCore.available()) {
-      return failed(new Error("viewer modules missing: " + (missing.join(", ") || "rrweb Replayer")), "engine");
+    if (missing.length) {
+      return failed(new Error("viewer modules missing: " + missing.join(", ")), "engine");
     }
 
-    // Every global is present; this asks whether they are the right vintage.
-    // Same failure kind, because a half-updated deploy is the same problem for
-    // the recipient as a missing file, and the same remedy for whoever deployed
-    // it: run sync-assets.sh, deploy again.
     const stale = REQUIRED_MEMBERS
-      .filter(([name, member]) => !root[name] || root[name][member] === undefined)
+      .filter(([name, member]) => root[name][member] === undefined)
       .map(([name, member]) => name + "." + member);
     if (stale.length) {
       return failed(new Error("viewer modules are out of date, missing: " + stale.join(", ")), "engine");
+    }
+
+    if (!root.RAReplayCore.available()) {
+      return failed(new Error("viewer modules missing: rrweb Replayer"), "engine");
     }
 
     /* The speed options are built from the shared list rather than written into
