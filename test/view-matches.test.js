@@ -32,11 +32,15 @@ const assert = require("node:assert/strict");
 const format = require("../dashboard/format.js");
 const tableLib = require("../dashboard/table.js");
 const seriesLib = require("../dashboard/series.js");
+// The row's note dot and the expanded row's summary both read a match's
+// timestamped notes off this, which is pure and has no page behind it.
+const notesLib = require("../dashboard/replay-notes.js");
 
 global.window = {
   RATrackerFormat: format,
   RATrackerTable: tableLib,
   RATrackerSeries: seriesLib,
+  RATrackerReplayNotes: notesLib,
   // Only what a collapsed row reaches for. Expanded rows need a real DOM and
   // are not exercised here.
   RATrackerLegacy: { deckNames: () => [], hasVisual: () => false },
@@ -447,4 +451,95 @@ test("the clear-filters affordance tracks the row count, not whether a filter is
   const out = sink();
   V.renderMatches(out, all, false);
   assert.doesNotMatch(out.innerHTML, /data-clearfilters/);
+});
+
+// ---- timestamped replay notes ------------------------------------------
+
+/* The notes themselves are replay-notes.js's and are tested there. What is the
+ * table's own is where they show up: a dot on the collapsed row, and a summary
+ * in the expanded one whose timestamps open the replay at the moment they name.
+ *
+ * The expanded row reaches into legacy.js for the log, the analysis and the
+ * deck names, so this section widens the stub above for the rows it opens. */
+const withLegacy = (over, run) => {
+  const before = global.window.RATrackerLegacy;
+  global.window.RATrackerLegacy = Object.assign(
+    {
+      deckNames: () => [],
+      hasVisual: () => false,
+      logFor: () => [],
+      analyse: () => ({
+        verdict: "No read",
+        detail: "",
+        hasLog: false,
+        lines: 0,
+        unmatched: 0,
+        self: {},
+        opponent: {},
+      }),
+      shareOpenHas: () => false,
+      shareBoxInner: () => "",
+    },
+    over
+  );
+  try {
+    run();
+  } finally {
+    global.window.RATrackerLegacy = before;
+  }
+};
+
+const NOTED = [{ id: "n1", atMs: 125000, text: "traded the wrong unit" }];
+
+test("a match reviewed only through timestamped notes still carries the row's dot", () => {
+  // The dot said "there is writing on this match" and knew about one kind of
+  // writing, so a match noted entirely from the replay read as having none.
+  const out = sink();
+  V.renderMatches(out, [match({ id: "noted", notes: "", timedNotes: NOTED })], false);
+  assert.match(out.innerHTML, /note-dot/);
+  assert.match(out.innerHTML, /1 timestamped note/);
+});
+
+test("the expanded row summarises the notes, each timestamp opening the replay there", () => {
+  state.openRows.add("noted");
+  withLegacy({ hasVisual: (id) => id === "noted" }, () => {
+    const out = sink();
+    V.renderMatches(out, [match({ id: "noted", timedNotes: NOTED })], false);
+    assert.match(out.innerHTML, /Replay notes/);
+    assert.match(out.innerHTML, /traded the wrong unit/);
+    // The same attribute Open full screen carries, plus the moment: one path
+    // from a click to a modal, and the modal is told where to open.
+    assert.match(out.innerHTML, /data-visual="noted" data-at="125000"/);
+    assert.match(out.innerHTML, /data-notedrop="noted:n1"/);
+  });
+});
+
+test("notes outlive the recording they were written against, minus the jump", () => {
+  state.openRows.add("noted");
+  withLegacy({ hasVisual: () => false }, () => {
+    const out = sink();
+    V.renderMatches(out, [match({ id: "noted", timedNotes: NOTED })], false);
+    assert.match(out.innerHTML, /traded the wrong unit/, "the notes are still worth reading");
+    assert.doesNotMatch(out.innerHTML, /data-at=/, "but there is nothing left to open");
+    assert.match(out.innerHTML, /tn-at-gone/);
+  });
+});
+
+test("an archive shows its notes and offers no way to delete one", () => {
+  state.openRows.add("noted");
+  withLegacy({}, () => {
+    const out = sink();
+    V.renderMatches(out, [match({ id: "noted", timedNotes: NOTED })], true);
+    assert.match(out.innerHTML, /traded the wrong unit/);
+    assert.doesNotMatch(out.innerHTML, /data-notedrop/);
+  });
+});
+
+test("a match with no notes gets no summary at all, not an empty heading", () => {
+  state.openRows.add("plain");
+  withLegacy({}, () => {
+    const out = sink();
+    V.renderMatches(out, [match({ id: "plain" })], false);
+    assert.doesNotMatch(out.innerHTML, /Replay notes/);
+  });
 });

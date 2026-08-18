@@ -15,8 +15,12 @@
   "use strict";
 
   const { esc, fmtClock, fmtScore } = root.RATrackerFormat;
-  const { MAX_CHIPS, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
+  const { MAX_CHIPS, SEEK, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
     root.RAReplayTimeline;
+  // The notes model: what a note is, which id the next one gets, where a marker
+  // sits on the scrubber. Reading and writing them is the caller's, handed in
+  // as `options.notes` for the same reason `shareMoment` is - see renderShell.
+  const NOTES = root.RATrackerReplayNotes;
 
   /**
    * Escape is consumed by the browser to leave fullscreen, but not every engine
@@ -25,6 +29,209 @@
    * leaves fullscreen and closes the modal behind it.
    */
   const ESCAPE_GRACE_MS = 300;
+
+  /**
+   * The notes drawer, empty. It is markup rather than something built as notes
+   * arrive, because everything in it except the list survives every write: the
+   * composer keeps focus and a half-typed draft while a note is saved beside it.
+   */
+  function notesDrawerHtml() {
+    return `<aside class="vr-notes" aria-label="Replay notes" hidden>
+      <div class="vr-notes-head">
+        <span class="vr-notes-title">Notes</span>
+        <button class="rp-btn vr-notes-hide" title="Hide notes (n)" aria-label="Hide notes">✕</button>
+      </div>
+      <div class="vr-notes-list"></div>
+      <div class="vr-notes-new">
+        <span class="vr-notes-at">Note at <span class="vr-notes-when">0:00</span></span>
+        <textarea class="vr-notes-draft" rows="3" maxlength="${NOTES.MAX_TEXT}"
+          aria-label="A note pinned to this moment"
+          placeholder="What happened here? What would you do differently?"></textarea>
+        <p class="vr-notes-error" role="alert" hidden></p>
+        <div class="vr-notes-actions">
+          <button class="rp-btn vr-notes-save">Save note</button>
+          <button class="rp-btn vr-notes-clear" title="Drop this draft and follow the replay again">Clear</button>
+        </div>
+        <p class="vr-notes-hint">Writing pauses the replay and pins the note to the moment you started it.</p>
+      </div>
+    </aside>`;
+  }
+
+  /**
+   * The list of notes, in playback order, each one a seek and a delete.
+   *
+   * The timestamp is the button because the timestamp is the thing being
+   * jumped to; the text beside it is not, so a long note can be read and
+   * selected without every stray click moving the replay.
+   */
+  function notesListHtml(list) {
+    if (!list.length) {
+      return '<p class="vr-notes-empty">No notes on this replay yet. Play to a moment and write one below.</p>';
+    }
+    return list
+      .map(
+        (note) => `<div class="vr-notes-item">
+          <button class="rp-btn vr-notes-seek" data-noteseek="${note.atMs}"
+            title="Jump to this moment">${esc(fmtClock(note.atMs))}</button>
+          <span class="vr-notes-text">${esc(note.text)}</span>
+          <button class="vr-notes-del" data-notedel="${esc(note.id)}"
+            title="Delete this note" aria-label="Delete this note">✕</button>
+        </div>`
+      )
+      .join("");
+  }
+
+  /**
+   * Wire the drawer to the transport and to the caller's notes handler.
+   *
+   * The pinned moment is taken when the WRITING STARTS, not when Save is
+   * pressed: a note is about the board that prompted it, and by the time a
+   * sentence has been typed the replay is somewhere else entirely. Focusing the
+   * draft therefore pauses playback and latches the position, which is also the
+   * only way the board stays put long enough to be written about. Clearing the
+   * draft unlatches it, and the label goes back to following the clock.
+   *
+   * Everything here is bound to elements inside the modal, which is discarded
+   * whole when it closes, so there is nothing document-level to tear down.
+   */
+  function wireNotes(handles, playback, notes) {
+    if (!notes || !handles.notesPanel) return null;
+    const panel = handles.notesPanel;
+    const draft = handles.notesDraft;
+    // The moment this draft is pinned to, or null while it is following the
+    // clock. Null is not "the start": it is "nothing is being written".
+    let pinnedMs = null;
+
+    const paintWhen = (ms) => {
+      if (handles.notesWhen) handles.notesWhen.textContent = fmtClock(ms);
+    };
+
+    function paintError(message) {
+      const el = handles.notesError;
+      if (!el) return;
+      el.textContent = message || "";
+      el.hidden = !message;
+    }
+
+    /* Markers sit over the slider rather than in it: a range input has no way
+     * to draw anything inside its own track. The overlay is inset by half a
+     * thumb at each end - see .vr-marks - so a note at the very end lands under
+     * the thumb that would be showing it, and they take no pointer events at
+     * all, because a marker that swallowed a click would break the drag it sits
+     * on top of. Seeking to a note is the list's job. */
+    function paintMarks(list) {
+      if (!handles.marksEl) return;
+      handles.marksEl.innerHTML = list
+        .map((note) => {
+          const pct = NOTES.markerAt(note.atMs, playback.totalTime);
+          return pct === null
+            ? ""
+            : `<span class="vr-mark" style="left:${pct}%" title="${esc(fmtClock(note.atMs))} · ${esc(note.text)}"></span>`;
+        })
+        .join("");
+    }
+
+    function paint() {
+      const list = notes.list();
+      if (handles.notesList) handles.notesList.innerHTML = notesListHtml(list);
+      paintMarks(list);
+    }
+
+    /** Drop whatever is being written and follow the clock again. */
+    function clearDraft() {
+      if (draft) draft.value = "";
+      pinnedMs = null;
+      paintError("");
+      paintWhen(playback.getTime());
+    }
+
+    function save() {
+      const text = draft ? draft.value : "";
+      const at = pinnedMs === null ? playback.getTime() : pinnedMs;
+      const result = notes.add(at, text);
+      if (result.error) return paintError(result.error);
+      clearDraft();
+      paint();
+      if (draft) draft.focus();
+    }
+
+    if (draft) {
+      // Focus, not the first keystroke: the pause has to happen before the
+      // board being written about has moved on, and a viewer who clicks into
+      // the box has already stopped watching.
+      draft.addEventListener("focus", () => {
+        if (pinnedMs !== null) return;
+        pinnedMs = playback.getTime();
+        playback.pause();
+        paintWhen(pinnedMs);
+      });
+      // Ctrl/⌘+Enter saves, because the box takes plain Enter for a new line.
+      draft.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          save();
+        }
+      });
+    }
+    if (handles.notesSave) handles.notesSave.addEventListener("click", save);
+    if (handles.notesClear) handles.notesClear.addEventListener("click", clearDraft);
+    if (handles.notesHide) handles.notesHide.addEventListener("click", () => toggle(false));
+
+    panel.addEventListener("click", (e) => {
+      const seek = e.target.closest && e.target.closest("[data-noteseek]");
+      if (seek) {
+        // A chapter seek rather than a step: clicking a note while the replay
+        // is running plays on from there, which is what the chips already do.
+        playback.seek(parseInt(seek.dataset.noteseek, 10) || 0, SEEK.CHAPTER);
+        return;
+      }
+      const del = e.target.closest && e.target.closest("[data-notedel]");
+      if (del) {
+        notes.remove(del.dataset.notedel);
+        paint();
+      }
+    });
+
+    /**
+     * Show or hide the drawer. It takes its width off the stage rather than off
+     * the window, so the board has to be refitted: by the ResizeObserver in
+     * wireControls on an engine that has one, and by this call on one that does
+     * not. Both are no-ops after teardown.
+     */
+    function toggle(open) {
+      const next = open === undefined ? panel.hidden : open;
+      panel.hidden = !next;
+      if (handles.notesBtn) handles.notesBtn.setAttribute("aria-pressed", next ? "true" : "false");
+      if (next) paint();
+      playback.refit();
+    }
+
+    if (handles.notesBtn) handles.notesBtn.addEventListener("click", () => toggle());
+
+    paint();
+    paintWhen(playback.getTime());
+
+    return {
+      toggle,
+      paint,
+      /** The clock the composer shows, while nothing is pinned to a moment. */
+      onTime: (ms) => {
+        if (pinnedMs === null) paintWhen(ms);
+      },
+      /**
+       * Escape belongs to a draft in progress before it belongs to the modal:
+       * closing the window over a half-written note would throw the note away
+       * to answer a keypress that meant "not this". A second Escape, with the
+       * draft now empty, closes as it always did.
+       */
+      escapeHandled() {
+        if (pinnedMs === null && !(draft && draft.value.trim())) return false;
+        clearDraft();
+        if (draft) draft.blur();
+        return true;
+      },
+    };
+  }
 
   /**
    * Write the viewer's chrome into `container` and hand back every element the
@@ -36,8 +243,13 @@
    * pipeline and the endpoint setting, none of which this file has or should
    * have, so a modal opened without one simply has no such button rather than a
    * dead one.
+   *
+   * `withNotes` is the same bargain for the notes drawer: reading and writing a
+   * match's notes needs the match array and the dashboard's one writer, so a
+   * modal opened without a notes handler has no drawer and no toggle rather
+   * than a drawer that cannot save anything. An archive is exactly that case.
    */
-  function renderShell(container, match, meta, marks, chips, withMoment) {
+  function renderShell(container, match, meta, marks, chips, withMoment, withNotes) {
     const truncated = meta.state === "truncated";
     const lostTail = !!meta.incomplete || meta.truncatedAtChunk != null;
 
@@ -55,12 +267,20 @@
         <button class="rp-btn vr-play" title="Play / pause (space)" aria-label="Play">▶</button>
         <button class="rp-btn vr-prev" title="Previous board state (←)">◀</button>
         <button class="rp-btn vr-next" title="Next board state (→)">▶|</button>
-        <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
+        <span class="vr-track">
+          <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
+          <span class="vr-marks" aria-hidden="true"></span>
+        </span>
         <span class="rp-meta vr-time"></span>
         <select class="rp-btn rp-speed vr-speed" title="Playback speed" aria-label="Playback speed">${SPEEDS.map(
           (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
         ).join("")}</select>
         <button class="rp-btn vr-full" title="Fullscreen (f)" aria-pressed="false">⛶ Fullscreen</button>
+        ${
+          withNotes
+            ? `<button class="rp-btn vr-notes-btn" title="Notes pinned to this replay (n)" aria-pressed="false">✎ Notes</button>`
+            : ""
+        }
         ${
           withMoment
             ? `<button class="rp-btn vr-moment" title="Copy a link that opens this replay at the moment it is showing now">Copy link to this moment</button>`
@@ -80,7 +300,10 @@
               .join("")}</div>`
           : ""
       }
-      <div class="vr-stage"><div class="vr-scale"></div></div>`;
+      <div class="vr-main">
+        <div class="vr-stage"><div class="vr-scale"></div></div>
+        ${withNotes ? notesDrawerHtml() : ""}
+      </div>`;
 
     return {
       container,
@@ -96,19 +319,37 @@
       momentBtn: container.querySelector(".vr-moment"),
       momentPanel: container.querySelector(".vr-share"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
+      marksEl: container.querySelector(".vr-marks"),
+      notesBtn: container.querySelector(".vr-notes-btn"),
+      notesPanel: container.querySelector(".vr-notes"),
+      notesList: container.querySelector(".vr-notes-list"),
+      notesDraft: container.querySelector(".vr-notes-draft"),
+      notesWhen: container.querySelector(".vr-notes-when"),
+      notesSave: container.querySelector(".vr-notes-save"),
+      notesClear: container.querySelector(".vr-notes-clear"),
+      notesHide: container.querySelector(".vr-notes-hide"),
+      notesError: container.querySelector(".vr-notes-error"),
     };
   }
 
   /**
    * Start the playback core inside the rendered shell, wire the shared
-   * transport row to it, and add the chrome only this surface has: fullscreen
-   * and the copy-link-to-this-moment button. Returns the controller the modal
-   * drives, or null if the recording will not play; `destroy` is the teardown
-   * for everything wired here and for the core underneath.
+   * transport row to it, and add the chrome only this surface has: fullscreen,
+   * the copy-link-to-this-moment button and the notes drawer. Returns the
+   * controller the modal drives, or null if the recording will not play;
+   * `destroy` is the teardown for everything wired here and for the core
+   * underneath.
    */
-  function wireControls(handles, meta, events, marks, chips, shareMoment) {
+  function wireControls(handles, meta, events, marks, chips, options) {
+    const shareMoment = options.shareMoment;
     const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
       handles;
+
+    /* Declared before the transport starts, because the core fires its first
+     * onTime from inside create() and the closure below reads this name. Bound
+     * to the drawer immediately afterwards - the drawer drives the transport,
+     * so it cannot be built until there is one. */
+    let notesUi = null;
 
     // The transport row itself - the clock, the chips' highlight, the play,
     // step, seek and chapter controls and the keys both surfaces answer - is
@@ -137,11 +378,23 @@
           meta,
           marks,
           autoplay: true,
-          onTime: callbacks.onTime,
+          /* A moment asked for by name - a note's timestamp, from the summary
+           * in the match's own row. The core opens there and suppresses
+           * autoplay for it, which is the same bargain a share link carrying a
+           * timestamp already makes: someone said "look at this", so the board
+           * holds still on it. Omitted entirely when nobody named one. */
+          startAtMs: options.startAtMs,
+          onTime: (ms, total) => {
+            callbacks.onTime(ms, total);
+            if (notesUi) notesUi.onTime(ms);
+          },
           onPlayState: callbacks.onPlayState,
         }),
     });
     if (!playback) return null;
+
+    notesUi = wireNotes(handles, playback, options.notes);
+    if (notesUi && options.openNotes) notesUi.toggle(true);
 
     /**
      * The moment panel is a band in the same column as the stage, so opening it
@@ -237,7 +490,8 @@
         leaveFullscreen();
         return true;
       }
-      return Date.now() - leftFullAt < ESCAPE_GRACE_MS;
+      if (Date.now() - leftFullAt < ESCAPE_GRACE_MS) return true;
+      return !!notesUi && notesUi.escapeHandled();
     }
 
     function onFullscreenChange() {
@@ -281,6 +535,9 @@
     return {
       handleKey: (e) => root.RAReplayTransport.handleKey(e, playback),
       toggleFullscreen,
+      toggleNotes: () => {
+        if (notesUi) notesUi.toggle();
+      },
       escapeHandled,
       stop: playback.pause,
       destroy() {
@@ -302,9 +559,17 @@
    *
    * `options.shareMoment({ atMs, button, panel })` is the dashboard's hook for
    * turning the current position into a link; see `renderShell`.
+   *
+   * `options.notes` is the same shape of hook for this match's timestamped
+   * notes - `{ list, add, remove, edit }`, from dashboard/replay-notes.js -
+   * and its absence is what an archive's read-only replay looks like.
+   * `options.openNotes` opens the drawer with the replay, which is how
+   * arriving from a note in the match's own row lands on the list it came
+   * from, and `options.startAtMs` is the moment that note named.
    */
   function mount(container, match, payload, options) {
-    const shareMoment = (options && options.shareMoment) || null;
+    const opts = options || {};
+    const shareMoment = opts.shareMoment || null;
     const meta = (payload && payload.meta) || {};
     const events = (payload && payload.events) || [];
     if (events.length < 2) {
@@ -320,8 +585,13 @@
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
 
-    const handles = renderShell(container, match, meta, marks, chips, !!shareMoment);
-    const ctl = wireControls(handles, meta, events, marks, chips, shareMoment);
+    const handles = renderShell(container, match, meta, marks, chips, !!shareMoment, !!opts.notes);
+    const ctl = wireControls(handles, meta, events, marks, chips, {
+      shareMoment,
+      notes: opts.notes || null,
+      openNotes: !!opts.openNotes,
+      startAtMs: opts.startAtMs,
+    });
     if (!ctl) {
       container.innerHTML = '<p class="rp-empty">This recording could not be played back.</p>';
       return null;
@@ -350,7 +620,7 @@
           <button class="rp-btn rp-close" title="Close (Esc)">✕ Close</button>
         </div>
         <div class="rp-modal-body"></div>
-        <p class="rp-hint">← → step between board states · space play/pause · f fullscreen · the board is the site's own, replayed at its recorded size</p>
+        <p class="rp-hint">← → step between board states · space play/pause · f fullscreen · n notes · the board is the site's own, replayed at its recorded size</p>
       </div>`;
     document.body.appendChild(back);
     document.body.classList.add("rp-modal-open");
@@ -381,6 +651,9 @@
       if (ctl.handleKey(e)) return;
       if (targetOwnsKey(e.target, e.key)) return;
       if (e.key === "f" || e.key === "F") { e.preventDefault(); ctl.toggleFullscreen(); }
+      // `n` is guarded by the same targetOwnsKey above, which is what stops it
+      // toggling the drawer shut from inside the note being typed in it.
+      if (e.key === "n" || e.key === "N") { e.preventDefault(); ctl.toggleNotes(); }
     }
     document.addEventListener("keydown", onKey);
     back.querySelector(".rp-close").addEventListener("click", close);

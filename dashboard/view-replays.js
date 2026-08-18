@@ -27,6 +27,7 @@
   // All loaded before this file by dashboard.html; the requires are for node.
   const { esc, fmtBytes, fmtCount, fmtMs } = root.RATrackerFormat || require("./format.js");
   const PANEL = root.RATrackerReplayPanel || require("./replay-panel.js");
+  const NOTES = root.RATrackerReplayNotes || require("./replay-notes.js");
   const SHARE_PANEL = root.RATrackerSharePanel || require("./share-panel.js");
   const SHARE_PIPELINE = root.RATrackerSharePipeline || require("./share-pipeline.js");
   const SHARES_VIEW = root.RATrackerSharesView || require("./shares-view.js");
@@ -264,6 +265,13 @@
       const visualId = visualBtn && visualBtn.dataset.visual;
       if (visualId) {
         const m = matches().find((x) => x.id === visualId) || { id: visualId };
+        /* `data-at` is a moment the click named: a timestamped note in the
+         * match's own row carries one, every other opener carries none. It
+         * rides on the same attribute the modal already opens from rather than
+         * a second one, so there is still exactly one path from a click to a
+         * replay - and a note arrives with the drawer it came from open. */
+        const at = visualBtn.dataset.at;
+        const startAtMs = at === undefined ? undefined : Number(at) || 0;
         readReplay(visualId).then(
           (payload) => {
             if (!payload || !payload.events || !payload.events.length) {
@@ -272,6 +280,11 @@
             }
             root.RATrackerVisualReplay.openModal(m, payload, {
               shareMoment: (request) => root.RATrackerShareMoment.shareMoment(request, m),
+              // Null while an archive is open, which is what leaves that modal
+              // with no drawer rather than one that cannot save.
+              notes: NOTES.hooksFor(visualId),
+              openNotes: startAtMs !== undefined,
+              startAtMs,
             });
           },
           (err) => {

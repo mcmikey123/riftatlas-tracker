@@ -29,6 +29,10 @@
   const DATA_IO = window.RATrackerDataIo;
   const BACKUPS = window.RATrackerBackups;
   const CAPTURE_SETTINGS = window.RATrackerSettingsCapture;
+  /* Timestamped replay notes. They live on the match record, so the rules are
+   * over there and the array and the writer stay here - the same split every
+   * drained view has. */
+  const NOTES = window.RATrackerReplayNotes;
   const analyse = (m) => window.RATrackerAnalysis.analyse(m);
   const $ = (s) => document.querySelector(s);
   const readOnly = () => archive !== null;
@@ -338,6 +342,11 @@
     render: () => render(),
     readReplay,
   });
+  /* No listeners of its own: notes are written from the replay modal, which
+   * holds a handler this file's array and writer are reached through, and from
+   * the Matches view, which calls the same one. What it needs is the array, the
+   * archive's veto, and the one write. */
+  NOTES.mount({ matches: () => all, readOnly, persist });
   DECKS.mount({ matches: () => all, readOnly, repaint });
   DATA_IO.mount({ store, repaint, reload: () => load() });
   BACKUPS.mount({ matches: () => all, readOnly });

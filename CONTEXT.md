@@ -16,6 +16,10 @@ container. Knows nothing about the dashboard or about sharing.
 **Chrome** — the UI wrapped around a viewer core: controls, chapter chips, banners, modal or
 page furniture. The dashboard and the share viewer have different chrome and the same core.
 
+**Timestamped note** — a line of text pinned to one millisecond of a match's replay, written from
+the replay's own drawer. Stored on the match record, not with the recording, so it survives an
+export and outlives the replay; never part of a share.
+
 **CSS rehydration** — restoring stylesheet text that was replaced by a content-hash reference
 at capture time. A replay cannot render correctly until it has happened.
 

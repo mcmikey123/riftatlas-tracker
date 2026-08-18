@@ -40,7 +40,7 @@ The extension no longer uses the browser's own confirm, prompt and alert boxes. 
 
 ## What it records
 
-Per match: your and your opponent's legend + champion, room code, mode, player names, running score, turn count, **match duration**, the **full game log** (with each line attributed to you, your opponent, or the system), and your own **notes**. Open a row in **Matches** to see the game summary, notes box and raw log.
+Per match: your and your opponent's legend + champion, room code, mode, player names, running score, turn count, **match duration**, the **full game log** (with each line attributed to you, your opponent, or the system), and your own **notes** — both the free-text kind and the **timestamped notes** you write while watching the replay. Open a row in **Matches** to see the game summary, notes box, the list of timestamped notes and the raw log.
 
 The **game summary** reads the log and reports a playstyle verdict — Aggressive, Balanced, Passive, Reactive or "No read" — from how many units each side committed to battlefields, battlefields conquered, cards lost to trash, showdown actions and focus passes. It also tells you how many log lines it understood, so you can judge how much to trust it.
 
@@ -80,6 +80,28 @@ While you play, the extension records the *codes* of your own cards that become 
 ## Replays
 
 Each match is recorded as a **replay**: the site's own markup and stylesheets, captured as they changed and played back through [rrweb](https://github.com/rrweb-io/rrweb) in a scripting-disabled iframe. It looks exactly like the game did, because it *is* the game's own HTML — not a redrawn board. Open a row in **Matches** and click **Open full screen** beside **Replay**. Matches without a recording don't show the button. The viewer plays at **0.5× to 6×** — pick the rate from the control beside the clock; a whole match reviews in a couple of minutes at 6× — and the same control is in the shared-link viewer.
+
+### Notes pinned to a moment
+
+Press **✎ Notes** in the replay (or `n`) and a drawer opens beside the board. Click into the box
+and two things happen at once: **the replay pauses, and the note is pinned to the moment it
+stopped** — so a note is about the board that prompted it, not about wherever the replay had got
+to by the time you finished the sentence. The pinned time is shown above the box; **Clear** lets
+go of it and the label follows the clock again, and Escape drops a half-written note before it
+closes the window. Ctrl/⌘+Enter saves.
+
+Saved notes are listed in the drawer in playback order — each timestamp seeks back to its own
+moment — and appear as small markers on the seek bar.
+
+They are also summarised on the match itself: open the row in **Matches** and every note is there
+under **Replay notes**, with its timestamp as a button that opens the replay at exactly that
+point. Delete one from either place.
+
+Notes live **on the match record**, not with the recording, and three things follow from that:
+they are in **Export JSON**, they come back through **Import JSON**, and an **archive** file keeps
+them. They also outlive the replay itself — when retention drops an old recording, its notes stay
+on the match and the timestamps become plain text, since there is no longer anything to open.
+Notes are **never** part of a shared link: a share is the replay, not what you thought about it.
 
 It costs roughly 1–3 MB compressed per match, kept in the extension's own IndexedDB rather than `chrome.storage.local`. Recording is **always at full fidelity** — a frame per settled game event, start to finish. It is never thinned out to save space, because a replay that quietly skips frames is no longer the match you played, and nothing on screen would tell you which parts were missing.
 

@@ -17,8 +17,12 @@ import { state, emit, resetPaging } from "./state.js";
 
 const T = window.RATrackerTable;
 const S = window.RATrackerSeries;
+/* Timestamped replay notes: written in the replay modal, summarised here.
+ * This side only reads the list off the match and asks for one delete; the
+ * rules and the write are replay-notes.js's, mounted by legacy.js. */
+const NOTES = window.RATrackerReplayNotes;
 const {
-  esc, champ, fmtDuration, fmtDay, fmtTime, fmtScore,
+  esc, champ, fmtClock, fmtDuration, fmtDay, fmtTime, fmtScore,
 } = window.RATrackerFormat;
 
 const LEGACY = () => window.RATrackerLegacy;
@@ -178,6 +182,18 @@ function resultCell(m, readOnly) {
     </select>`;
 }
 
+/* One dot for "there is writing on this match", whichever kind it is. A row
+ * that carried the dot only for the free-text box would read as "no notes" on a
+ * match reviewed entirely through timestamped ones. */
+function noteDot(m) {
+  const timed = NOTES.notesOf(m).length;
+  if (!m.notes && !timed) return "";
+  const what = [m.notes ? "notes" : "", timed ? `${timed} timestamped note${timed === 1 ? "" : "s"}` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  return `<span class="note-dot" title="${esc(what)}">●</span>`;
+}
+
 function row(m, deciderIds, readOnly) {
   const open = state.openRows.has(m.id);
   const picked = state.selection.has(m.id);
@@ -202,7 +218,7 @@ function row(m, deciderIds, readOnly) {
     <span class="cell">${resultCell(m, readOnly)}</span>
     <span class="cell cell-source">${
       live ? '<span class="src-live"><span class="dot dot-accent"></span>in game</span>' : esc(m.resultSource || "auto")
-    }${m.notes ? '<span class="note-dot" title="Has notes">●</span>' : ""}</span>
+    }${noteDot(m)}</span>
     <span class="cell cell-more"><button class="row-more" data-rowmenu="${esc(m.id)}"
       aria-haspopup="true" aria-expanded="${state.openRowMenu === m.id}" aria-label="Row actions">⋯</button>${rowMenu(m, readOnly)}</span>
   </div>`;
@@ -278,6 +294,8 @@ function detail(m, readOnly) {
       <textarea class="notes" data-notes="${esc(m.id)}" rows="4" ${readOnly ? "readonly" : ""}
         placeholder="What happened? What would you do differently?">${esc(m.notes || "")}</textarea>
 
+      ${timedNotesBlock(m, readOnly)}
+
       ${
         !m.endedAt && !readOnly
           ? `<span class="block-label">Result</span>
@@ -302,6 +320,57 @@ function detail(m, readOnly) {
       }
     </div>
   </div>`;
+}
+
+/**
+ * Every note written against this match's replay, in playback order.
+ *
+ * The summary is the point of the feature as much as the drawer is: notes are
+ * written one at a time while watching and read all at once afterwards, and
+ * this row is where a match is read. Each timestamp opens the replay at the
+ * moment it names - `data-visual` with a `data-at`, which is the same attribute
+ * the Open full screen button uses, so there is still one path from a click to
+ * a modal.
+ *
+ * A match whose recording has since been deleted keeps its notes and loses the
+ * jump: retention drops the oldest replays and the notes outlive them, so the
+ * timestamps become plain text rather than buttons that would open nothing.
+ */
+function timedNotesBlock(m, readOnly) {
+  const list = NOTES.notesOf(m);
+  if (!list.length) return "";
+  const canOpen = LEGACY().hasVisual(m.id);
+  const items = list
+    .map(
+      (n) => `<li class="tn-item">
+        ${
+          canOpen
+            ? `<button class="tn-at" data-visual="${esc(m.id)}" data-at="${n.atMs}"
+                 title="Open the replay at this moment">${esc(fmtClock(n.atMs))}</button>`
+            : `<span class="tn-at tn-at-gone" title="The recording for this match is gone, so there is nothing to open">${esc(
+                fmtClock(n.atMs)
+              )}</span>`
+        }
+        <span class="tn-text">${esc(n.text)}</span>
+        ${
+          readOnly
+            ? ""
+            : `<button class="tn-del" data-notedrop="${esc(m.id)}:${esc(n.id)}"
+                 title="Delete this note" aria-label="Delete this note">✕</button>`
+        }
+      </li>`
+    )
+    .join("");
+  return `<div class="notes-head">
+      <span class="block-label">Replay notes</span>
+      <span class="tn-count">${list.length}</span>
+    </div>
+    <ul class="tn-list">${items}</ul>
+    ${
+      canOpen
+        ? '<p class="tn-hint">Written from the replay\u2019s notes drawer, and pinned to the moment you started each one.</p>'
+        : '<p class="tn-hint">The recording these were written against has been deleted, so there is nothing left to jump to.</p>'
+    }`;
 }
 
 /* The picker keeps the same data-deck attribute legacy.js listens for, so
@@ -503,6 +572,19 @@ export function mountMatches() {
     if (more) {
       state.openRowMenu = state.openRowMenu === more.dataset.rowmenu ? null : more.dataset.rowmenu;
       emit();
+      return;
+    }
+
+    /* Deleting one note. No confirm: a note is a line of text this same panel
+     * can retype in seconds, where the dialogs elsewhere in this row guard a
+     * match, a log and a recording that nothing can bring back. The write is
+     * replay-notes.js's, and legacy.js repaints on the back of it. */
+    const noteDrop = e.target.closest?.("[data-notedrop]");
+    if (noteDrop) {
+      const cut = noteDrop.dataset.notedrop.indexOf(":");
+      if (cut > 0) {
+        NOTES.remove(noteDrop.dataset.notedrop.slice(0, cut), noteDrop.dataset.notedrop.slice(cut + 1));
+      }
       return;
     }
 

@@ -418,6 +418,11 @@
 <!-- What a replay record says about itself: which of its counters were
      measured, what its state means in words, whether it can be played. -->
 <script src="replay-panel.js"></script>
+<!-- Timestamped replay notes: what a note is, which id the next one gets, and
+     the one write onto the match record they live on. Before replay-html.js,
+     which reads it as it evaluates for the drawer's caps and its markers, and
+     before view-replays.js and legacy.js, which hand it the match array. -->
+<script src="replay-notes.js"></script>
 <script src="../vendor/rrweb-replay.min.js"></script>
 <script src="../replay/replay-timeline.js"></script>
 <script src="../replay/replay-core.js"></script>

@@ -866,6 +866,78 @@ select.rp-speed { padding: 2px 6px; }
 .vr-share { flex: 0 0 auto; margin: 0 0 8px; }
 .vr-share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* --- timestamped replay notes --- */
+/* The stage and the drawer share one row, so opening the drawer takes width
+   off the board rather than height off the column. The board is refitted by the
+   ResizeObserver replay-html.js already keeps on the stage. */
+.vr-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 8px; }
+.vr-notes {
+  flex: 0 0 288px; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; overflow: hidden;
+  background: #0b1424; border: 1px solid var(--border); border-radius: 8px;
+}
+.vr-notes[hidden] { display: none; }
+.vr-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.vr-notes-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+/* The list is the part that scrolls, so a match with forty notes on it does not
+   push the composer off the bottom of the drawer. */
+.vr-notes-list { flex: 1 1 auto; min-height: 40px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.vr-notes-empty { margin: 0; font-size: 11.5px; color: var(--ink-3); }
+.vr-notes-item {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 6px;
+  padding-bottom: 6px; border-bottom: 1px solid rgba(134, 168, 246, 0.14);
+}
+.vr-notes-seek { padding: 1px 7px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.vr-notes-text { font-size: 12px; line-height: 1.4; color: var(--ink-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+.vr-notes-del, .tn-del {
+  background: none; border: 0; color: var(--ink-3); cursor: pointer;
+  font-size: 12px; line-height: 1; padding: 2px 4px;
+}
+.vr-notes-del:hover, .tn-del:hover { color: var(--loss); }
+.vr-notes-new { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+/* The moment the draft is pinned to. It follows the clock until the box is
+   focused and then stops dead, which is the whole contract of the feature and
+   so is the one line in the drawer set in the accent colour. */
+.vr-notes-at { font-size: 11.5px; color: var(--ink-3); }
+.vr-notes-when { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+.vr-notes-draft {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: inherit;
+}
+.vr-notes-draft:focus { outline: none; border-color: var(--accent); }
+.vr-notes-actions { display: flex; gap: 6px; }
+.vr-notes-error { margin: 0; font-size: 11.5px; color: #f3c0c0; }
+.vr-notes-hint { margin: 0; font-size: 11px; color: var(--ink-3); }
+/* The scrubber's markers. The overlay is inset by half a thumb at each end so a
+   note at 0:00 or at the very end lands under the thumb that shows it, and it
+   takes no pointer events at all - a marker that swallowed a press would break
+   the drag it sits on top of, and seeking to a note is the drawer's job. */
+.vr-track { flex: 1; min-width: 80px; position: relative; display: flex; }
+.vr-marks { position: absolute; left: 8px; right: 8px; top: 0; bottom: 0; pointer-events: none; }
+.vr-mark {
+  position: absolute; top: 50%; width: 2px; height: 14px; margin: -7px 0 0 -1px;
+  background: var(--accent); border-radius: 1px; box-shadow: 0 0 0 1px rgba(11, 20, 36, 0.9);
+}
+
+/* The same notes, read back in the match's expanded row. */
+.tn-count {
+  font-size: 11px; color: var(--ink-3); border: 1px solid var(--border);
+  border-radius: 999px; padding: 0 7px;
+}
+.tn-list { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tn-item { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 8px; }
+.tn-at {
+  padding: 1px 8px; font-size: 11px; font-variant-numeric: tabular-nums;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--accent); cursor: pointer;
+}
+.tn-at:hover { background: #27395c; }
+/* No recording left to open, so it is a label rather than a control. */
+.tn-at-gone { color: var(--ink-3); cursor: default; }
+.tn-text { font-size: 12px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+.tn-hint { margin: 0 0 12px; font-size: 11px; color: var(--ink-3); }
+
 /* --- replay sharing --- */
 /* The disclosure leads and stays visible in every state, including once the
    link exists: what a share exposes and the fact that it cannot be unshared

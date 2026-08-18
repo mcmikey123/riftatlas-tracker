@@ -170,6 +170,13 @@ function element(tag, attributes) {
     const root = rootOf(node);
     if (root.document) root.document.activeElement = node;
   };
+  // The other half of focus: the replay's notes drawer gives the page back its
+  // focus when a draft is abandoned, and a fixture without this would make that
+  // path throw where a browser does nothing.
+  node.blur = () => {
+    const root = rootOf(node);
+    if (root.document && root.document.activeElement === node) root.document.activeElement = null;
+  };
 
   node.matches = (selector) => matchCompound(node, compound(selector));
   node.closest = (selector) => {
