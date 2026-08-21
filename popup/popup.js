@@ -1,9 +1,14 @@
 /* Rift Atlas Stats Tracker - toolbar popup
  *
  * A read-only glance at the live data: whether a match is being recorded right
- * now, how today has gone, and the way to the dashboard. It writes nothing -
- * not a setting, not a series regrouping, not a backup - so opening the icon can
- * never change what the dashboard will show.
+ * now, how today has gone, who you are about to play and how that has gone
+ * before, and the way to the dashboard.
+ *
+ * It writes nothing about your matches - not a setting, not a series
+ * regrouping, not a backup - so opening the icon can never change what the
+ * dashboard will show. The ONE thing it saves is the matchup note you type
+ * into it, under its own `matchupNotes` key: notes exist to be read right
+ * before a game, so right before a game is where they are written too.
  *
  * Archive mode is deliberately absent. Viewing an archive file is a state of one
  * dashboard tab, held in that page's memory and never written to storage, so the
@@ -30,6 +35,12 @@
   const LIVE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
   const DEFAULT_SETTINGS = { visualReplayEnabled: true, visualReplayKeepMatches: 25 };
+
+  /* How long a champion seen in a lobby or mulligan stays worth scouting.
+   * content.js restamps `pendingOpponent` every half minute while they are on
+   * screen, so anything older than this is a game that never happened or one
+   * that is long over - not tonight's opponent. */
+  const PENDING_MAX_AGE_MS = 45 * 60 * 1000;
 
   const $ = (id) => document.getElementById(id);
 
@@ -175,6 +186,61 @@
       </div>`;
   }
 
+  // ---- scouting ---------------------------------------------------------
+
+  /**
+   * Which champion to scout: the live match's opponent, else whoever the
+   * content script recently saw across the table on a pregame screen. Null
+   * when there is nobody current - a scout line about last week's opponent
+   * would be noise wearing the clothes of a warning.
+   */
+  function scoutTarget(live, pending, now) {
+    if (live) {
+      const name = champ(live.opponentChampion || live.opponentLegend);
+      return name === "Unknown" ? null : { name, live: true };
+    }
+    if (pending && Number.isFinite(pending.at) && now - pending.at < PENDING_MAX_AGE_MS) {
+      const name = champ(pending.champion || pending.legend);
+      return name === "Unknown" ? null : { name, live: false };
+    }
+    return null;
+  }
+
+  /** Your history against one champion: record, rate, and the last few results. */
+  function scoutRecord(ordered, name) {
+    const vs = ordered.filter((m) => champ(m.opponentChampion || m.opponentLegend) === name);
+    let wins = 0;
+    let losses = 0;
+    const lastFive = [];
+    for (const m of vs) {
+      if (m.result === "win") wins++;
+      else if (m.result === "loss") losses++;
+      else continue;
+      if (lastFive.length < 5) lastFive.push(m.result);
+    }
+    return { games: vs.length, wins, losses, rate: wins + losses ? wins / (wins + losses) : null, lastFive };
+  }
+
+  function renderScout(ordered, target, note) {
+    const r = scoutRecord(ordered, target.name);
+    const dots = r.lastFive.length
+      ? `<span class="scout-dots" title="Your last ${r.lastFive.length} decided against ${esc(target.name)}, newest first">${r.lastFive
+          .map((x) => `<span class="recent-dot dot-${x}"></span>`)
+          .join("")}</span>`
+      : "";
+    const record = r.wins + r.losses
+      ? `<span class="win">${r.wins}</span>–<span class="loss">${r.losses}</span> · ${fmtPercent(r.rate)}`
+      : "first meeting";
+    return `
+      <div class="scout">
+        <div class="label">${target.live ? "Scouting · in game" : "Scouting · up next"}</div>
+        <div class="scout-line"><span class="scout-who">vs ${esc(target.name)}</span>
+          <span class="scout-record">${record}</span>${dots}</div>
+        <textarea class="scout-note" data-scout-note="${esc(target.name)}" rows="2"
+          placeholder="Matchup note — shows here whenever you face ${esc(target.name)}">${esc(note || "")}</textarea>
+      </div>`;
+  }
+
   /* The three most recent matches other than the one already shown above, so a
    * live match is not reported twice with two different faces. */
   function renderRecent(ordered, live) {
@@ -196,20 +262,24 @@
       </div>`;
   }
 
-  function render(matches, now) {
+  function render(matches, now, pending, notes) {
     const ordered = byNewest(matches);
+    const live = liveMatch(ordered, now);
+    const target = scoutTarget(live, pending, now);
+    const scout = target ? renderScout(ordered, target, (notes || {})[target.name]) : "";
     if (!ordered.length) {
       $("state").innerHTML =
+        scout +
         '<p class="empty">Play a match on play.riftatlas.com with the extension installed.</p>';
       return;
     }
-    const live = liveMatch(ordered, now);
     // A history made up entirely of matches that never ended and have since gone
     // stale has no live match and no finished one; the head block is dropped
     // rather than invented, and the figures below still stand.
     const head = live || lastFinished(ordered);
     $("state").innerHTML =
       (head ? renderNow(head, now, head === live) + '<div class="divider"></div>' : "") +
+      scout +
       renderTiles(ordered, now) +
       renderRecent(ordered, live);
   }
@@ -251,11 +321,53 @@
     window.close();
   });
 
-  chrome.storage.local.get({ matches: [], settings: DEFAULT_SETTINGS }, (data) => {
-    void chrome.runtime.lastError;
-    renderStatus(Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}));
-    render((data && data.matches) || [], Date.now());
+  chrome.storage.local.get(
+    { matches: [], settings: DEFAULT_SETTINGS, pendingOpponent: null, matchupNotes: {} },
+    (data) => {
+      void chrome.runtime.lastError;
+      renderStatus(Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}));
+      render(
+        (data && data.matches) || [],
+        Date.now(),
+        (data && data.pendingOpponent) || null,
+        (data && data.matchupNotes) || {}
+      );
+    }
+  );
+
+  /* The matchup note, saved as it is typed. Debounced on input and flushed on
+   * blur, because a popup closes the instant the pointer leaves it and a note
+   * that only saved on blur would lose its last edit to that. Read-merge-write
+   * against the stored object, so a note typed here can never clobber one
+   * typed for a different champion in another window. */
+  let noteTimer = null;
+  function saveNote(el) {
+    const name = el.dataset.scoutNote;
+    const text = el.value.slice(0, 500);
+    chrome.storage.local.get({ matchupNotes: {} }, (data) => {
+      void chrome.runtime.lastError;
+      const notes = Object.assign({}, (data && data.matchupNotes) || {});
+      if (text.trim()) notes[name] = text;
+      else delete notes[name];
+      chrome.storage.local.set({ matchupNotes: notes });
+    });
+  }
+  $("state").addEventListener("input", (e) => {
+    const el = e.target;
+    if (!el || !el.dataset || !el.dataset.scoutNote) return;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => saveNote(el), 400);
   });
+  $("state").addEventListener(
+    "blur",
+    (e) => {
+      const el = e.target;
+      if (!el || !el.dataset || !el.dataset.scoutNote) return;
+      clearTimeout(noteTimer);
+      saveNote(el);
+    },
+    true
+  );
 
   renderFootprint();
 })();

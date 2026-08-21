@@ -247,6 +247,11 @@ function detail(m, readOnly) {
       <span class="block-label">Game summary</span>
       <div class="verdict-row">
         <span class="verdict-badge verdict-${esc(verdictClass)}">${esc(a.verdict)}</span>
+        ${
+          m.wentFirst === true || m.wentFirst === false
+            ? `<span class="verdict-badge verdict-order">${m.wentFirst ? "Went first" : "Went second"}</span>`
+            : ""
+        }
         ${a.verdict === "No read" ? "" : `<span class="verdict-detail">${esc(a.detail)}</span>`}
       </div>
       ${metrics}

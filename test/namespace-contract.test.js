@@ -1988,6 +1988,7 @@ test("the references that cannot be resolved statically are these, and only thes
     "background.js: RATrackerIdb is a property of an object, so its members are not checked here",
     "dashboard/legacy.js: RATrackerIdb is a property of an object, so its members are not checked here",
     "dashboard/share-pipeline.js: the global object is an argument to a call, so the namespaces on it are not checked here",
+    "dashboard/share-series.js: the global object is an argument to a call, so the namespaces on it are not checked here",
     "share/clipboard.js: the global object is an argument to a call, so the namespaces on it are not checked here",
     'share/worker/public/viewer.js: a namespace read off the global object by expression, not by name: "root[name]"',
     "share/worker/public/viewer.js: the global object is an argument to a call, so the namespaces on it are not checked here",

@@ -186,15 +186,30 @@
   }
 
   /**
+   * The game field as it appears in a fragment ("g2"), or null. It names one
+   * game of a SERIES share, 1-based because the chips it selects between are
+   * labelled Game 1..n; on a single-match share it means nothing and the
+   * viewer's own clamp ignores it. Same posture as the other trailing fields:
+   * a convenience that must never cost the recipient the share.
+   */
+  function parseLinkGame(text) {
+    if (typeof text !== "string" || !/^g[0-9]+$/.test(text)) return null;
+    const n = Number(text.slice(1));
+    return Number.isSafeInteger(n) && n >= 1 ? n : null;
+  }
+
+  /**
    * `atSeconds` is optional and omitted from the link entirely when absent, so
    * every existing caller keeps producing exactly the link it produced before.
    */
-  function buildLink({ endpoint, objectId, keyBytes, atSeconds, atSpeed }) {
+  function buildLink({ endpoint, objectId, keyBytes, atSeconds, atSpeed, atGame }) {
     const n = toPosition(atSeconds);
     const moment = n === null ? "" : "." + Math.floor(n);
     const tenths = toLinkSpeed(atSpeed);
     const speed = tenths === null ? "" : ".s" + tenths;
-    return `${normaliseEndpoint(endpoint)}/#${LINK_VERSION}.${objectId}.${toBase64Url(keyBytes)}${moment}${speed}`;
+    const g = Number(atGame);
+    const game = Number.isSafeInteger(g) && g >= 1 ? ".g" + g : "";
+    return `${normaliseEndpoint(endpoint)}/#${LINK_VERSION}.${objectId}.${toBase64Url(keyBytes)}${moment}${speed}${game}`;
   }
 
   function parseLink(input) {
@@ -212,16 +227,18 @@
     // and only when there is a real field in front of it: a genuine fifth field
     // still means the link was rewritten.
     if (parts.length > 3 && parts[parts.length - 1] === "") parts.pop();
-    // Three to five: the two optional trailing fields are the playback position
-    // (bare digits) and the playback speed ("s20"). Read by shape and each
-    // allowed once, so a link that came back in either order still opens; a
-    // sixth field, or two of a kind, means the link was rewritten rather than
-    // extended, and that is a mangled link rather than a future format.
-    if (parts.length < 3 || parts.length > 5) throw new ShareLinkError("link fragment is malformed");
+    // Three to six: the three optional trailing fields are the playback
+    // position (bare digits), the playback speed ("s20") and, on a series
+    // share, the game ("g2"). Read by shape and each allowed once, so a link
+    // that came back in any order still opens; a seventh field, or two of a
+    // kind, means the link was rewritten rather than extended, and that is a
+    // mangled link rather than a future format.
+    if (parts.length < 3 || parts.length > 6) throw new ShareLinkError("link fragment is malformed");
 
     const [version, objectId, keyText] = parts;
     let timeText;
     let speedText;
+    let gameText;
     /* Each field is claimed by its shape and by nothing else. Letting a second
      * speed-shaped field fall through to the seconds slot instead would read
      * "s20.s40" as a rate plus an unparseable position - which is to say, it
@@ -232,6 +249,9 @@
       if (/^s[0-9]+$/.test(extra)) {
         if (speedText !== undefined) throw new ShareLinkError("link fragment is malformed");
         speedText = extra;
+      } else if (/^g[0-9]+$/.test(extra)) {
+        if (gameText !== undefined) throw new ShareLinkError("link fragment is malformed");
+        gameText = extra;
       } else {
         if (timeText !== undefined) throw new ShareLinkError("link fragment is malformed");
         timeText = extra;
@@ -257,15 +277,17 @@
     }
     if (keyBytes.length !== KEY_BYTES) throw new ShareLinkError("link key is the wrong length");
 
-    // Neither is clamped here - this file has no idea how long the recording is
-    // or what rates the controls offer. The clamps are replay-timeline.js's
-    // `startPosition` and `normaliseSpeed`, which do.
+    // None of these are clamped here - this file has no idea how long the
+    // recording is, what rates the controls offer, or how many games the
+    // payload holds. The clamps are replay-timeline.js's `startPosition` and
+    // `normaliseSpeed`, and the viewer's own game list.
     return {
       version,
       objectId,
       keyBytes,
       atSeconds: parseLinkSeconds(timeText),
       atSpeed: parseLinkSpeed(speedText),
+      atGame: parseLinkGame(gameText),
     };
   }
 
@@ -335,6 +357,7 @@
     toLinkSpeed,
     fromLinkSpeed,
     parseLinkSpeed,
+    parseLinkGame,
     buildLink,
     parseLink,
     hostFor

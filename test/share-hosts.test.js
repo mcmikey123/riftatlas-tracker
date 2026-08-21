@@ -398,3 +398,59 @@ test("links that predate the speed field still parse, and report no rate", () =>
   assert.strictEqual(parseLink(`${FRAG}.95`).atSpeed, null);
   assert.strictEqual(parseLink(`${FRAG}.0`).atSeconds, 0, "zero is still a position");
 });
+
+// ---- the optional game field (series shares) ---------------------------
+
+const GAME_HOSTS = require("../share/hosts.js");
+const GK = "A".repeat(43); // a well-formed base64url key field
+const GOID = "B".repeat(22);
+
+test("a series link carries a game field, in any order with the others", () => {
+  const gameOnly = GAME_HOSTS.parseLink(`https://host/#1.${GOID}.${GK}.g2`);
+  assert.equal(gameOnly.atGame, 2);
+  assert.equal(gameOnly.atSeconds, null);
+
+  const all3 = GAME_HOSTS.parseLink(`https://host/#1.${GOID}.${GK}.75.s20.g3`);
+  assert.equal(all3.atSeconds, 75);
+  assert.equal(all3.atSpeed, 20);
+  assert.equal(all3.atGame, 3);
+
+  // Chat clients reflow links; the order must not matter.
+  const swapped = GAME_HOSTS.parseLink(`https://host/#1.${GOID}.${GK}.g3.s20.75`);
+  assert.equal(swapped.atSeconds, 75);
+  assert.equal(swapped.atSpeed, 20);
+  assert.equal(swapped.atGame, 3);
+});
+
+test("a plain link still parses exactly as before, with no game", () => {
+  const parsed = GAME_HOSTS.parseLink(`https://host/#1.${GOID}.${GK}.12`);
+  assert.equal(parsed.atSeconds, 12);
+  assert.equal(parsed.atGame, null);
+});
+
+test("a seventh field, or two game fields, is a mangled link", () => {
+  for (const frag of [`1.${GOID}.${GK}.12.g2.g3`, `1.${GOID}.${GK}.12.s20.g2.9`]) {
+    assert.throws(() => GAME_HOSTS.parseLink("https://host/#" + frag), /malformed/);
+  }
+});
+
+test("a mangled game field reads as no game, never as a broken link", () => {
+  // Same posture as the other trailing fields: it is a convenience, and
+  // losing it must not cost the recipient the share.
+  for (const field of ["g", "g-1", "gx", "G2"]) {
+    assert.equal(GAME_HOSTS.parseLinkGame(field), null);
+  }
+});
+
+test("buildLink appends the game only when one is named, after the others", () => {
+  const keyBytes = new Uint8Array(32);
+  const base = { endpoint: "https://host", objectId: GOID, keyBytes };
+  assert.ok(!GAME_HOSTS.buildLink(base).includes(".g"));
+  assert.ok(GAME_HOSTS.buildLink({ ...base, atGame: 2 }).endsWith(".g2"));
+  const link = GAME_HOSTS.buildLink({ ...base, atSeconds: 9, atSpeed: 2, atGame: 2 });
+  assert.ok(link.endsWith(".9.s20.g2"));
+  const roundTrip = GAME_HOSTS.parseLink(link);
+  assert.equal(roundTrip.atSeconds, 9);
+  assert.equal(roundTrip.atSpeed, 20);
+  assert.equal(roundTrip.atGame, 2);
+});

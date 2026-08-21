@@ -153,11 +153,12 @@
    * differs from a whole-stream frame: 3,760,696 B (3.59 MB) against the frame's
    * 3,644,834 B (3.48 MB) on the measured worst case.
    */
-  function checkPayloadSize(bytes, limit) {
+  function checkPayloadSize(bytes, limit, what) {
+    const subject = what || "This replay";
     const size = Number(bytes);
     const cap = Number(limit);
     if (!Number.isFinite(size) || size <= 0) {
-      return { ok: false, kind: "empty", message: "This replay produced an empty share." };
+      return { ok: false, kind: "empty", message: subject + " produced an empty share." };
     }
     if (!Number.isFinite(cap) || cap <= 0) {
       // The cap is MAX_UPLOAD_BYTES, a constant a few lines up this same file -
@@ -170,14 +171,14 @@
       };
     }
     if (size > cap) {
-      return { ok: false, kind: "tooLarge", message: oversizeMessage(size, cap) };
+      return { ok: false, kind: "tooLarge", message: oversizeMessage(size, cap, subject) };
     }
     return { ok: true, bytes: size, limit: cap };
   }
 
-  function oversizeMessage(bytes, limit) {
+  function oversizeMessage(bytes, limit, what) {
     return (
-      `This replay is ${fmtSize(bytes)} once compressed and encrypted, over the ` +
+      `${what || "This replay"} is ${fmtSize(bytes)} once compressed and encrypted, over the ` +
       `${fmtSize(limit)} a share may be. It can't be shared.`
     );
   }
@@ -239,6 +240,13 @@
       endpoint: String(f.endpoint == null ? "" : f.endpoint).replace(/\/+$/, ""),
       createdAt: Number(f.createdAt)
     };
+    // Optional and preserved: a series share names itself, because its matchId
+    // can only point at one of the games inside it. Absent on ordinary shares,
+    // and readShareList rebuilds records through here, so the field must be
+    // carried or every stored label would vanish on the next render.
+    if (f.label != null && String(f.label).trim()) {
+      record.label = String(f.label).slice(0, 80);
+    }
     // A record missing any field is worse than no record: the shares list would
     // show an entry whose link cannot be rebuilt and whose expiry is unknowable.
     for (const name of ["matchId", "objectId", "key", "endpoint"]) {
