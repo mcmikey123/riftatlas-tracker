@@ -63,6 +63,7 @@
     ["RAReplayCore", "available"],
     ["RAReplayCore", "create"],
     ["RAReplayTimeline", "MAX_CHIPS"],
+    ["RAReplayTimeline", "SEEK"],
     ["RAReplayTimeline", "SPEEDS"],
     ["RAReplayTimeline", "evenly"],
     ["RAReplayTimeline", "targetOwnsKey"],
@@ -74,6 +75,7 @@
     ["RAShare", "parseSharePayload"],
     ["RAShareHosts", "buildLink"],
     ["RAShareHosts", "fromLinkSeconds"],
+    ["RAShareHosts", "parseLinkGame"],
     ["RAShareHosts", "fromLinkSpeed"],
     ["RAShareHosts", "parseLink"],
     ["RAShareHosts", "toLinkSeconds"],
@@ -103,8 +105,21 @@
   };
 
   const ui = {};
-  let playback = null;
+  let playback = null; // the stable facade wireTransport is bound to
   let running = false;
+
+  /* The games this share carries - one for an ordinary share - and which is
+   * mounted. A series payload holds several; the page keeps ONE playback core
+   * alive and switching game tears the old core down and mounts the next
+   * through the same controls. The transport is wired once, to a facade that
+   * forwards to the current core, because wiring it per game would stack a
+   * listener per switch, each closed over a core already destroyed. */
+  let games = [];
+  let seriesInfo = null;
+  let currentGame = -1;
+  let shareLink = null;
+  let chapterChips = [];
+  let transportCallbacks = null; // {onTime, onPlayState}, captured at first wire
 
   /** Let the browser paint before a step that blocks the thread for ~300 ms. */
   function repaint() {
@@ -197,14 +212,10 @@
    * unstyled — no exception, no console error, just an ugly-looking replay.
    * Both halves of that are checked rather than trusted.
    */
-  function rehydrate(payload) {
+  function rehydrate(rawEvents, assets) {
     const { ViewerError, unresolvedCssRefs, emptyCssTextCount } = root.RAShareViewer;
-    const events = Array.isArray(payload.events) ? payload.events : [];
+    const events = Array.isArray(rawEvents) ? rawEvents : [];
     if (events.length < 2) throw new ViewerError("format", "share carries no replayable events");
-
-    // Keyed off the payload's own assets, never meta.cssRefs: the store's
-    // hashes and the payload's keyspace can legitimately diverge.
-    const assets = new Map(Object.entries(payload.assets || {}));
 
     const missing = unresolvedCssRefs(events, assets);
     if (missing.length) {
@@ -217,9 +228,51 @@
     return rehydrated;
   }
 
+  /**
+   * The payload as a list of playable games, whatever shape it arrived in:
+   * `{ meta, events, assets }` is one game, `{ series, games: [...], assets }`
+   * is several sharing one asset pool. Every game is rehydrated and validated
+   * up front, so a series whose third game is broken fails here, honestly,
+   * rather than when its chip is clicked.
+   *
+   * Assets are keyed off the payload's own map, never meta.cssRefs: the
+   * store's hashes and the payload's keyspace can legitimately diverge.
+   */
+  function gamesOf(payload) {
+    const assets = new Map(Object.entries((payload && payload.assets) || {}));
+    if (payload && Array.isArray(payload.games) && payload.games.length) {
+      seriesInfo = payload.series || {};
+      return payload.games.map(function (g, i) {
+        return {
+          label: String((g && g.label) || "Game " + (i + 1)).slice(0, 24),
+          result: g && (g.result === "win" || g.result === "loss") ? g.result : null,
+          meta: (g && g.meta) || {},
+          events: rehydrate(g && g.events, assets)
+        };
+      });
+    }
+    return [
+      {
+        label: null,
+        result: null,
+        meta: (payload && payload.meta) || {},
+        events: rehydrate(payload && payload.events, assets)
+      }
+    ];
+  }
+
   /** What this recording is, for the line under the title. */
-  function summarise(meta, marks, total) {
+  function summarise(game, marks, total) {
+    const meta = game.meta;
     const bits = [];
+    if (games.length > 1) {
+      const opp = seriesInfo && seriesInfo.opponentName;
+      bits.push(
+        (seriesInfo && seriesInfo.format ? String(seriesInfo.format).toUpperCase() + " series" : "Series") +
+          (opp ? " vs " + opp : "")
+      );
+      bits.push(game.label + (game.result ? " · " + game.result : ""));
+    }
     const started = Number(meta.startedAt);
     if (Number.isFinite(started) && started > 0) bits.push(new Date(started).toLocaleString());
     if (marks.length) bits.push(marks.length + (marks.length === 1 ? " board state" : " board states"));
@@ -243,6 +296,71 @@
     });
     ui.chapters.hidden = false;
     return buttons;
+  }
+
+  function clearChildren(el) {
+    if (el) el.textContent = "";
+  }
+
+  /**
+   * The sharer's flags, read-only: chips that seek, and dots on the seek
+   * track. They arrived in the game's meta, put there when the share was
+   * built - this page cannot add or remove one, only visit them. The chips'
+   * click listener is wired once in wireOnce, not here, so a series that
+   * renders this per game does not stack one listener per switch.
+   */
+  function renderFlags(flags, totalMs) {
+    const list = (Array.isArray(flags) ? flags : [])
+      .map(function (f) {
+        return f && Number.isFinite(Number(f.ms))
+          ? { ms: Math.max(0, Math.round(Number(f.ms))), text: String(f.text || "").slice(0, 80) }
+          : null;
+      })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        return a.ms - b.ms;
+      });
+    if (!list.length) return;
+
+    for (const f of list) {
+      const b = doc.createElement("button");
+      b.type = "button";
+      b.className = "btn chapter flag";
+      b.dataset.ms = String(f.ms);
+      b.textContent = "⚑ " + root.RAShareViewer.fmtClock(f.ms) + (f.text ? " · " + f.text : "");
+      b.title = "Jump to a moment the sharer flagged";
+      ui.flags.appendChild(b);
+    }
+    ui.flags.hidden = false;
+
+    if (ui.flagmarks && totalMs > 0) {
+      ui.flagmarks.innerHTML = list
+        .map(function (f) {
+          return '<span class="flagdot" style="left:' + Math.min(100, (f.ms / totalMs) * 100).toFixed(2) + '%"></span>';
+        })
+        .join("");
+    }
+  }
+
+  /** The series' game switcher: one chip per game, drawn once per page. */
+  function renderGameChips() {
+    if (games.length < 2) return;
+    games.forEach(function (g, i) {
+      const b = doc.createElement("button");
+      b.type = "button";
+      b.className = "btn chapter game";
+      b.dataset.game = String(i);
+      b.textContent = g.label + (g.result ? " · " + g.result : "");
+      b.title = "Watch " + g.label;
+      ui.games.appendChild(b);
+    });
+    ui.games.hidden = false;
+  }
+
+  function paintGameChips() {
+    ui.games.querySelectorAll("[data-game]").forEach(function (b) {
+      b.classList.toggle("on", Number(b.dataset.game) === currentGame);
+    });
   }
 
   /**
@@ -386,34 +504,84 @@
    * Back into "one second earlier"; this button is the explicit gesture
    * instead.
    */
-  function copyMoment(link, button) {
+  function copyMoment(button) {
     /* The rate is read off the control rather than the core, because the
      * control is where the transport writes back whatever the core accepted -
      * so it is the one place that cannot disagree with what is actually
      * playing. buildLink drops it when it is 1x, which is why an ordinary
-     * link is still the ordinary link. */
+     * link is still the ordinary link. The game is named only when there is
+     * more than one to name. */
     const url = root.RAShareHosts.buildLink({
       endpoint: root.location.origin,
-      objectId: link.objectId,
-      keyBytes: link.keyBytes,
+      objectId: shareLink.objectId,
+      keyBytes: shareLink.keyBytes,
       atSeconds: root.RAShareHosts.toLinkSeconds(playback.getTime()),
-      atSpeed: parseFloat(ui.speed.value)
+      atSpeed: parseFloat(ui.speed.value),
+      atGame: games.length > 1 ? currentGame + 1 : null
     });
     root.RAClipboard.copyToButton(url, button);
   }
 
-  function mount(meta, events, link) {
-    const { ViewerError, fmtClock } = root.RAShareViewer;
+  /* ---- one transport, several games --------------------------------------
+   *
+   * wireTransport binds the controls ONCE, and its listeners close over the
+   * playback object create() handed back. Rebinding per game would stack a
+   * listener per switch, each closed over a core already destroyed - so what
+   * create() hands back is this facade, and switching game swaps the core
+   * BEHIND it. The chip arrays are mutated in place for the same reason: the
+   * transport's paint closed over them at wire time.
+   */
+  let core = null; // the live RAReplayCore controller for the mounted game
+  const chapterEls = [];
+  const facade = {
+    get totalTime() {
+      return core ? core.totalTime : 0;
+    },
+    getTime: () => (core ? core.getTime() : 0),
+    isPlaying: () => !!(core && core.isPlaying()),
+    seek: (ms, reason) => core && core.seek(ms, reason),
+    endDrag: () => core && core.endDrag(),
+    play: () => core && core.play(),
+    pause: () => core && core.pause(),
+    togglePlay: () => core && core.togglePlay(),
+    stepTo: (dir) => core && core.stepTo(dir),
+    setSpeed: (v) => (core ? core.setSpeed(v) : 1),
+    refit: () => core && core.refit()
+  };
+
+  /**
+   * Mount one game into the stage: the per-game chrome - chapters, flags,
+   * notices, the sub line - and a fresh core wired to the transport's own
+   * painters. Returns the core, or null when the recording will not play.
+   *
+   * `startAtMs` is non-null only on the first mount of the game a timestamped
+   * link named; a chip click passes null and the game opens at its start.
+   */
+  function createCoreFor(index, startAtMs) {
     const { MAX_CHIPS, timeline, evenly, truncationText } = root.RAReplayTimeline;
+    const g = games[index];
 
-    const marks = timeline(events);
+    clearChildren(ui.chapters);
+    ui.chapters.hidden = true;
+    clearChildren(ui.flags);
+    ui.flags.hidden = true;
+    if (ui.flagmarks) ui.flagmarks.innerHTML = "";
+    clearChildren(ui.notices);
+    currentGame = index;
+    paintGameChips();
+
+    const marks = timeline(g.events);
     const chips = evenly(marks, MAX_CHIPS);
+    chapterChips.length = 0;
+    Array.prototype.push.apply(chapterChips, chips);
+    const els = renderChapters(chips);
+    chapterEls.length = 0;
+    Array.prototype.push.apply(chapterEls, els);
 
-    if (meta.state === "truncated") notice(truncationText(meta, null, marks) + ".");
-    if (meta.incomplete || meta.truncatedAtChunk != null) {
+    if (g.meta.state === "truncated") notice(truncationText(g.meta, null, marks) + ".");
+    if (g.meta.incomplete || g.meta.truncatedAtChunk != null) {
       notice("The tail of this recording was lost, so the replay ends before the match did.", true);
     }
-    const chapterEls = renderChapters(chips);
 
     // The stage has to be laid out before create(): the core fits the board to
     // stage.clientWidth/clientHeight, and a hidden stage measures zero, which
@@ -421,13 +589,69 @@
     ui.status.hidden = true;
     ui.player.hidden = false;
 
+    const fresh = root.RAReplayCore.create({
+      stage: ui.stage,
+      scaleEl: ui.scale,
+      events: g.events,
+      meta: g.meta,
+      marks,
+      autoplay: true,
+      // Every link plays on open here, the one naming a moment included: a
+      // recipient opening a link someone sent them is starting to watch, and
+      // a frozen board with a play button is a worse answer to "look at this"
+      // than the moment playing out. The core owns the rule either way - see
+      // shouldAutoplay - and prefers-reduced-motion still overrides.
+      playFromMoment: true,
+      // null here means "no moment given"; 0 means second zero.
+      startAtMs: startAtMs,
+      onTime: transportCallbacks.onTime,
+      onPlayState: transportCallbacks.onPlayState
+    });
+    if (!fresh) return null;
+
+    ui.sub.textContent = summarise(g, marks, fresh.totalTime);
+    renderFlags(g.meta.flags, fresh.totalTime);
+    // Fit once more after layout settles; the first fit runs inside create(),
+    // before the chapter and flag rows have taken their final height.
+    root.requestAnimationFrame(function () {
+      facade.refit();
+    });
+    watchCardArt();
+    return fresh;
+  }
+
+  /** Switch the mounted game. A chip click, or the link's own g-field. */
+  function showGame(index) {
+    const i = Math.min(Math.max(0, index), games.length - 1);
+    if (i === currentGame) return;
+    if (core) {
+      core.pause();
+      core.destroy();
+    }
+    core = createCoreFor(i, null);
+    if (!core) {
+      ui.player.hidden = true;
+      failed(new root.RAShareViewer.ViewerError("playback"));
+      return;
+    }
+    // The rate the viewer chose is a property of their review, not of one
+    // game, so the fresh core inherits it - written back from what the core
+    // accepted, the same rule the transport's own change handler follows.
+    ui.speed.value = String(core.setSpeed(parseFloat(ui.speed.value)));
+  }
+
+  function mount(link) {
+    const { ViewerError } = root.RAShareViewer;
+
     // The transport row - the clock, the chips' highlight, play, step, seek and
     // the keys - is the same row the extension's modal draws, and lives in
-    // replay/replay-transport.js so the two cannot drift on it again. This page
-    // keeps only what is its own: the copy-link button below, and the notices.
+    // replay/replay-transport.js so the two cannot drift on it. This page
+    // keeps only what is its own: the game switcher, the flags, the copy-link
+    // button and the notices.
+    const first = link.atGame ? Math.min(Math.max(0, link.atGame - 1), games.length - 1) : 0;
     playback = root.RAReplayTransport.wireTransport({
-      chips,
-      fmtClock,
+      chips: chapterChips,
+      fmtClock: root.RAShareViewer.fmtClock,
       els: {
         play: ui.play,
         prev: ui.prev,
@@ -438,28 +662,11 @@
         chapterEls,
         chapterHost: ui.chapters
       },
-      create: (callbacks) =>
-        root.RAReplayCore.create({
-          stage: ui.stage,
-          scaleEl: ui.scale,
-          events,
-          meta,
-          marks,
-          autoplay: true,
-          // Every link plays on open here, the one naming a moment included: a
-          // recipient opening a link someone sent them is starting to watch, and
-          // a frozen board with a play button is a worse answer to "look at this"
-          // than the moment playing out. The dashboard's modal passes no such
-          // flag and still opens paused, where a moment is a position being
-          // examined rather than one being sent. The core owns the rule either
-          // way - see shouldAutoplay - so neither surface can drift on it, and
-          // prefers-reduced-motion still overrides both.
-          playFromMoment: true,
-          // null here means "no moment given"; 0 means second zero.
-          startAtMs: root.RAShareHosts.fromLinkSeconds(link.atSeconds),
-          onTime: callbacks.onTime,
-          onPlayState: callbacks.onPlayState
-        })
+      create: (callbacks) => {
+        transportCallbacks = callbacks;
+        core = createCoreFor(first, root.RAShareHosts.fromLinkSeconds(link.atSeconds));
+        return core ? facade : null;
+      }
     });
     if (!playback) {
       ui.player.hidden = true;
@@ -475,11 +682,18 @@
     const linkSpeed = root.RAShareHosts.fromLinkSpeed(link.atSpeed);
     if (linkSpeed !== null) ui.speed.value = String(playback.setSpeed(linkSpeed));
 
-    ui.sub.textContent = summarise(meta, marks, playback.totalTime);
-    ui.copyAt.addEventListener("click", () => copyMoment(link, ui.copyAt));
-    // Fit once more after layout settles; the first fit runs inside create(),
-    // before the chapter row has necessarily taken its final height.
-    root.requestAnimationFrame(() => playback.refit());
+    ui.copyAt.addEventListener("click", () => copyMoment(ui.copyAt));
+    // The flag chips carry data-ms like the chapters do, but live in their own
+    // row, outside the transport's chapterHost - so their seek is wired here,
+    // once, against the facade.
+    ui.flags.addEventListener("click", (e) => {
+      const ms = e.target && e.target.dataset ? e.target.dataset.ms : undefined;
+      if (ms !== undefined) playback.seek(parseInt(ms, 10) || 0, root.RAReplayTimeline.SEEK.CHAPTER);
+    });
+    ui.games.addEventListener("click", (e) => {
+      const i = e.target && e.target.dataset ? e.target.dataset.game : undefined;
+      if (i !== undefined) showGame(Number(i));
+    });
 
     /* Anything appearing above the player steals height from the stage, and the
      * board keeps whatever scale it was fitted at — so it sits clipped until the
@@ -488,10 +702,8 @@
      * a transform on a child, which changes no layout, so it cannot feed itself.
      * Nothing disconnects it because this page never tears the player down. */
     if (typeof root.ResizeObserver === "function") {
-      new root.ResizeObserver(() => playback.refit()).observe(ui.stage);
+      new root.ResizeObserver(() => facade.refit()).observe(ui.stage);
     }
-
-    watchCardArt();
   }
 
   /* Every transport key this page answers is one the extension's modal answers
@@ -536,10 +748,12 @@
 
       working("Rebuilding the board…");
       await repaint();
-      const events = rehydrate(payload);
 
       try {
-        mount((payload && payload.meta) || {}, events, link);
+        games = gamesOf(payload);
+        shareLink = link;
+        renderGameChips();
+        mount(link);
       } catch (err) {
         // Everything from here down is the engine refusing the recording, which
         // is one remedy — reading it — not the generic "something went wrong".
@@ -556,7 +770,7 @@
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
       "player", "play", "prev", "next", "seek", "clock", "speed", "full", "copyAt", "chapters",
-      "stage", "scale"]) {
+      "flags", "flagmarks", "games", "stage", "scale"]) {
       ui[id] = doc.getElementById(id);
     }
     // The one element addressed by class: it is the page's layout root, and the

@@ -272,6 +272,29 @@
             }
             root.RATrackerVisualReplay.openModal(m, payload, {
               shareMoment: (request) => root.RATrackerShareMoment.shareMoment(request, m),
+              /* Flags are bookmarks ON THE MATCH RECORD - they survive
+               * export/import with it, and deleting the recording leaves them
+               * on the record it described. Not offered in archive mode,
+               * where the writer refuses anyway. */
+              flags: readOnly()
+                ? null
+                : {
+                    list: Array.isArray(m.replayFlags) ? m.replayFlags : [],
+                    prompt: () =>
+                      root.RATrackerNotify.dialog().textPrompt({
+                        title: "Flag this moment",
+                        body: "<p>A bookmark saved on the match record. It shows on the replay's timeline here, and rides along in a share.</p>",
+                        label: "Label (optional)",
+                        placeholder: "e.g. the misplay",
+                        confirmLabel: "Add flag",
+                      }),
+                    save: (list) => {
+                      const fresh = matches().find((x) => x.id === m.id);
+                      if (!fresh) return;
+                      fresh.replayFlags = list;
+                      root.RATrackerStorage.writeMatches(matches());
+                    },
+                  },
             });
           },
           (err) => {

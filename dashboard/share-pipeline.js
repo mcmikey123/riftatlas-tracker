@@ -90,6 +90,9 @@
   let readReplay = null;
   // A full re-render, for the one branch below that changes what a row shows.
   let render = () => {};
+  // The flags a share should carry for a match, or null - the match array is
+  // the dashboard's too. Supplied by mount().
+  let matchFlags = () => null;
 
   /* Read just enough of an object to recognise it: the four magic bytes. Used
    * both to verify a fresh upload and to re-check an old share from the shares
@@ -181,9 +184,17 @@
     setShare(matchId, { phase: "encrypting" });
     await paintYield();
     const key = await window.RAShare.generateKey({});
+    /* Flags ride along in the meta: they are part of what the sharer is
+     * pointing at, and the share viewer draws them read-only. Copied at build
+     * time from the match record, which is where they live. */
+    const flags = matchFlags(matchId);
     const frame = await window.RAShare.buildSharePayload(
       // assets arrives as a Map; JSON needs a plain object.
-      { meta: replay.meta, events, assets: Object.fromEntries(assets) },
+      {
+        meta: flags ? Object.assign({}, replay.meta, { flags }) : replay.meta,
+        events,
+        assets: Object.fromEntries(assets),
+      },
       key,
       {}
     );
@@ -430,6 +441,7 @@
   function mount(deps) {
     readReplay = deps.readReplay;
     render = deps.render;
+    if (deps.matchFlags) matchFlags = deps.matchFlags;
 
     document.addEventListener("click", (e) => {
       // The panel is toggled in place rather than through a render, so opening
@@ -476,10 +488,15 @@
     ShareUploadError,
     shareFailure,
     fetchObjectHead,
+    verifyObject,
+    rememberShare,
     beginShare,
     startRowShare,
     busyWith,
     loadEndpoint,
+    // The endpoint uploads go to, for the one other uploader (the series
+    // share) - which must never read the setting a second time and drift.
+    endpoint: () => shareEndpoint,
     mount,
   };
 })(typeof window !== "undefined" ? window : globalThis);

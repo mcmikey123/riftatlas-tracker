@@ -36,8 +36,13 @@
    * pipeline and the endpoint setting, none of which this file has or should
    * have, so a modal opened without one simply has no such button rather than a
    * dead one.
+   *
+   * `withFlags` does the same for the flag button: saving a bookmark needs the
+   * match array and the writer, so a modal opened without a flags handler
+   * simply has no button. The flag ROW renders either way - a shared or
+   * archived replay whose meta brought flags shows them read-only.
    */
-  function renderShell(container, match, meta, marks, chips, withMoment) {
+  function renderShell(container, match, meta, marks, chips, withMoment, withFlags) {
     const truncated = meta.state === "truncated";
     const lostTail = !!meta.incomplete || meta.truncatedAtChunk != null;
 
@@ -55,8 +60,9 @@
         <button class="rp-btn vr-play" title="Play / pause (space)" aria-label="Play">▶</button>
         <button class="rp-btn vr-prev" title="Previous board state (←)">◀</button>
         <button class="rp-btn vr-next" title="Next board state (→)">▶|</button>
-        <input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1">
+        <span class="rp-sliderwrap"><input class="rp-slider vr-slider" type="range" min="0" max="1000" value="0" step="1"><span class="rp-flagmarks vr-flagmarks" aria-hidden="true"></span></span>
         <span class="rp-meta vr-time"></span>
+        ${withFlags ? `<button class="rp-btn vr-flag" title="Flag this moment — a bookmark saved on the match">⚑ Flag</button>` : ""}
         <select class="rp-btn rp-speed vr-speed" title="Playback speed" aria-label="Playback speed">${SPEEDS.map(
           (s) => `<option value="${s}"${s === 1 ? " selected" : ""}>${s}×</option>`
         ).join("")}</select>
@@ -68,6 +74,7 @@
         }
       </div>
       ${withMoment ? '<div class="vr-share" aria-live="polite" hidden></div>' : ""}
+      <div class="rp-flags vr-flags" hidden></div>
       ${
         chips.length > 1
           ? `<div class="rp-chapters">${chips
@@ -93,6 +100,9 @@
       nextBtn: container.querySelector(".vr-next"),
       fullBtn: container.querySelector(".vr-full"),
       speedSel: container.querySelector(".vr-speed"),
+      flagBtn: container.querySelector(".vr-flag"),
+      flagsRow: container.querySelector(".vr-flags"),
+      flagMarks: container.querySelector(".vr-flagmarks"),
       momentBtn: container.querySelector(".vr-moment"),
       momentPanel: container.querySelector(".vr-share"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
@@ -106,7 +116,7 @@
    * drives, or null if the recording will not play; `destroy` is the teardown
    * for everything wired here and for the core underneath.
    */
-  function wireControls(handles, meta, events, marks, chips, shareMoment) {
+  function wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt) {
     const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
       handles;
 
@@ -142,6 +152,70 @@
         }),
     });
     if (!playback) return null;
+
+    /* Flags: timestamped bookmarks. They live on the MATCH RECORD, not on the
+     * recording - `flagsOpt.save` is the caller's writer - so they survive
+     * export/import with the record, and a share carries a copy in its meta.
+     * Editable only when a caller supplied the writer; a replay whose meta
+     * brought flags and no writer renders them read-only.
+     *
+     * The chips carry data-ms, so the transport's container-delegated chapter
+     * seek drives them with no second click path. */
+    let flags = ((flagsOpt && flagsOpt.list) || (meta && meta.flags) || [])
+      .filter((f) => f && Number.isFinite(Number(f.ms)))
+      .map((f) => ({ ms: Math.max(0, Math.round(Number(f.ms))), text: String(f.text || "").slice(0, 80) }))
+      .sort((a, b) => a.ms - b.ms);
+
+    function paintFlags() {
+      const total = playback.totalTime;
+      if (handles.flagMarks) {
+        handles.flagMarks.innerHTML = flags
+          .map((f) => {
+            const pct = Math.min(100, (f.ms / total) * 100).toFixed(2);
+            return `<span class="rp-flagdot" style="left:${pct}%"></span>`;
+          })
+          .join("");
+      }
+      if (handles.flagsRow) {
+        handles.flagsRow.hidden = !flags.length;
+        handles.flagsRow.innerHTML = flags
+          .map(
+            (f, i) => `<span class="rp-flagchip"><button class="rp-btn rp-chapter" data-ms="${f.ms}"
+              title="Jump to ${fmtClock(f.ms)}">⚑ ${fmtClock(f.ms)}${f.text ? " · " + esc(f.text) : ""}</button>${
+              flagsOpt ? `<button class="rp-flagdel" data-flagdel="${i}" title="Remove this flag">✕</button>` : ""
+            }</span>`
+          )
+          .join("");
+      }
+    }
+    paintFlags();
+
+    if (flagsOpt && handles.flagBtn) {
+      handles.flagBtn.addEventListener("click", async () => {
+        // The moment is read at the click; the label is typed at leisure. The
+        // replay holds still under the prompt and resumes if it was running.
+        const at = Math.round(playback.getTime());
+        const wasPlaying = playback.isPlaying();
+        playback.pause();
+        const text = await flagsOpt.prompt();
+        if (wasPlaying) playback.play();
+        if (text === null) return; // cancelled: no flag
+        flags = [...flags, { ms: at, text: String(text).trim().slice(0, 80) }]
+          .sort((a, b) => a.ms - b.ms)
+          .slice(0, 50);
+        flagsOpt.save(flags);
+        paintFlags();
+      });
+    }
+    if (flagsOpt) {
+      container.addEventListener("click", (e) => {
+        const del = e.target.closest?.("[data-flagdel]");
+        if (!del) return;
+        flags = flags.filter((_, i) => i !== Number(del.dataset.flagdel));
+        flagsOpt.save(flags);
+        paintFlags();
+      });
+    }
 
     /**
      * The moment panel is a band in the same column as the stage, so opening it
@@ -309,6 +383,7 @@
    */
   function mount(container, match, payload, options) {
     const shareMoment = (options && options.shareMoment) || null;
+    const flagsOpt = (options && options.flags) || null;
     const meta = (payload && payload.meta) || {};
     const events = (payload && payload.events) || [];
     if (events.length < 2) {
@@ -324,8 +399,8 @@
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
 
-    const handles = renderShell(container, match, meta, marks, chips, !!shareMoment);
-    const ctl = wireControls(handles, meta, events, marks, chips, shareMoment);
+    const handles = renderShell(container, match, meta, marks, chips, !!shareMoment, !!flagsOpt);
+    const ctl = wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt);
     if (!ctl) {
       container.innerHTML = '<p class="rp-empty">This recording could not be played back.</p>';
       return null;
