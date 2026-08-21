@@ -24,12 +24,13 @@ Turn on **Daily auto-backup to Downloads** in the dashboard's **Settings** view 
 
 ## The dashboard
 
-The dashboard is seven views behind a left nav, not one long scrolling page. The header, the filter row and the banners are shared by all of them, and switching views reloads nothing.
+The dashboard is eight views behind a left nav, not one long scrolling page. The header, the filter row and the banners are shared by all of them, and switching views reloads nothing.
 
 - **Overview** — the stat tiles (including your **recent form** over the last 10 and 20 decided games), a **win rate by week** chart, and the three aggregate tables (win rate vs opponent champion, by your deck, by your champion), plus **Detect decks from cards played**.
 - **Matchups** — the champion-by-champion grid: every champion you have played down the side, every one you have faced along the top, and in each cell your win rate over that matchup's decided games with the number of games it rests on beside it. Clicking a cell opens **Matches** narrowed to that matchup, by driving the same filter and search controls a hand would.
 - **Matches** — your full history. Every column sorts, a search box covers opponent, room code, either champion and deck name, a date range narrows the set, and rows come 25 to a page. The old 13 columns are now 12 cells carrying the same 13 fields — date and time stack, your champion, opponent and their champion become one Matchup cell, and mode and room stack — with **Delete** moved into each row's ⋯ menu beside Share replay and Copy match id. Nothing was dropped.
 - **Series** — best-of series, described below.
+- **Notes** — every note you have written, grouped by the champion you faced when you wrote it, newest first, with the game beside each one: when it was played, which champion and deck you had, and how it ended. Each group states how many notes it holds and your record in those games — the noted games, not the matchup. It carries its own date range (**last week**, **last month**, **last year**, all time) rather than using the shared filter row, so there is one date control over the list instead of two that can disagree.
 - **Replays** — the **Visual replay capture** panel.
 - **Shared links** — the replays you have shared from this browser.
 - **Settings** — every setting, with its explanation beside it rather than hidden in a tooltip.
@@ -40,7 +41,7 @@ The extension no longer uses the browser's own confirm, prompt and alert boxes. 
 
 ## What it records
 
-Per match: your and your opponent's legend + champion, room code, mode, player names, running score, turn count, **match duration**, the **full game log** (with each line attributed to you, your opponent, or the system), and your own **notes**. Open a row in **Matches** to see the game summary, notes box and raw log.
+Per match: your and your opponent's legend + champion, room code, mode, player names, running score, turn count, **match duration**, the **full game log** (with each line attributed to you, your opponent, or the system), and your own **notes**. Open a row in **Matches** to see the game summary, notes box and raw log. What you write in those notes boxes is collected in **Notes**, so a note is readable without remembering which match it was on.
 
 The **game summary** reads the log and reports a playstyle verdict — Aggressive, Balanced, Passive, Reactive or "No read" — from how many units each side committed to battlefields, battlefields conquered, cards lost to trash, showdown actions and focus passes. It also tells you how many log lines it understood, so you can judge how much to trust it.
 
