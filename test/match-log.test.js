@@ -127,3 +127,53 @@ test("9. a timestamp containing regex metacharacters is not escaped, and throws"
   // "1.2" matches "142", so text the caller never meant is stripped.
   assert.equal(stripRepeatedTime("142 points", "1.2"), "points");
 });
+
+// ---- who went first ----------------------------------------------------
+
+/* The reader the capture runs live and the dashboard's backfill both call.
+ * mergeLog caps a stored log by shifting the OLDEST lines out - exactly the
+ * lines this reads - so the truncation guard is the part that most deserves
+ * these tests. */
+
+const { whoWentFirst, logStartsAtGameStart } = require("../capture/match-log.js");
+
+const turnEnd = (actor) => line("16:02", "Ended their turn.", actor);
+
+test("the actor who ends the first turn is the player who took it", () => {
+  const log = [
+    line("16:00", "Rolled 16, monke rolled 4."),
+    line("16:01", "Kept their mulligan.", "self"),
+    line("16:01", "Played Ashe.", "self"),
+    turnEnd("self"),
+    turnEnd("opponent"),
+  ];
+  assert.equal(whoWentFirst(log, MAX), true);
+  assert.equal(whoWentFirst([turnEnd("opponent"), turnEnd("self")], MAX), false);
+});
+
+test("a system-attributed turn end carries no side and is skipped", () => {
+  const log = [line("16:02", "The ended the turn.", "system"), turnEnd("opponent")];
+  assert.equal(whoWentFirst(log, MAX), false);
+});
+
+test("a log with no turn end at all cannot answer", () => {
+  assert.equal(whoWentFirst([line("16:01", "Played Ashe.", "self")], MAX), null);
+  assert.equal(whoWentFirst([], MAX), null);
+  assert.equal(whoWentFirst(undefined, MAX), null);
+});
+
+test("a log at the cap is not trusted unless its opening survives", () => {
+  // 500 lines with no mulligan in front: the head may have been dropped, and
+  // the first SURVIVING turn end could be anyone's.
+  const capped = Array.from({ length: MAX }, () => turnEnd("self"));
+  assert.equal(whoWentFirst(capped, MAX), null);
+  assert.equal(logStartsAtGameStart(capped, MAX), false);
+
+  // The same log with a mulligan before the first turn end provably starts at
+  // the start, so the answer stands.
+  const intact = [line("16:01", "Kept their mulligan.", "self"), ...capped.slice(1)];
+  assert.equal(whoWentFirst(intact, MAX), true);
+
+  // One line under the cap was never trimmed, so it needs no other proof.
+  assert.equal(whoWentFirst(capped.slice(1), MAX), true);
+});

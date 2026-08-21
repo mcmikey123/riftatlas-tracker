@@ -117,7 +117,30 @@
     return out;
   }
 
-  root.RATrackerAnalysis = { analyse };
+  /* "Conquered Sunken Temple and scored 2." - the battlefield's name sits
+   * between the verb and the score clause, and the row's actor bar says who
+   * took it. The one reliable place battlefield names appear in a log. */
+  const CONQUER_RE = /\bconquered\s+(.+?)(?:\s+and\s+scored\s+\d+)?\s*[.!?]?$/i;
+
+  /**
+   * Every conquest in a log, in order: [{ name, actor }]. Names come back as
+   * the log printed them; system-attributed lines are kept with their actor so
+   * the caller can decide, but the aggregator only counts self and opponent.
+   */
+  function conquests(log) {
+    const out = [];
+    for (const e of Array.isArray(log) ? log : []) {
+      if (!e || typeof e.text !== "string") continue;
+      const m = CONQUER_RE.exec(e.text);
+      if (!m) continue;
+      const name = m[1].trim();
+      if (!name || name.length > 60) continue; // a clause, not a name
+      out.push({ name, actor: e.actor || "system" });
+    }
+    return out;
+  }
+
+  root.RATrackerAnalysis = { analyse, conquests };
 })(typeof window !== "undefined" ? window : globalThis);
 
 if (typeof module !== "undefined" && module.exports) {

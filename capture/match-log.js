@@ -65,7 +65,48 @@
     return merged;
   }
 
-  root.RATMatchLog = { mergeLog, logSig, stripRepeatedTime };
+  /** Whether this log still starts where the game did. mergeLog caps a stored
+   * log by shifting the OLDEST lines out, so a log at the cap may have lost its
+   * opening - and the opening is the only place `whoWentFirst` can read the
+   * truth from. A log shorter than the cap was never trimmed; at the cap, only
+   * a pre-game line (a mulligan) surviving in front of the first turn end
+   * proves the head is intact. */
+  function logStartsAtGameStart(log, maxLog) {
+    if (log.length < maxLog) return true;
+    const firstTurnEnd = log.findIndex((e) => e && /\bended (their|your|the) turn\b/i.test(e.text || ""));
+    const firstMull = log.findIndex((e) => e && /\bmulligan\b/i.test(e.text || ""));
+    return firstMull !== -1 && (firstTurnEnd === -1 || firstMull < firstTurnEnd);
+  }
+
+  /**
+   * Who took the first turn: true = you did, false = they did, null = the log
+   * cannot say. The player who ends the first turn is the player who took it,
+   * and the line's actor bar says whose action it was. A line attributed to
+   * the system carries no side, so it is skipped rather than guessed at.
+   *
+   * Answered only when the log provably starts at the game's start - see
+   * `logStartsAtGameStart`; the first SURVIVING turn end of a trimmed log
+   * could be anyone's. `maxLog` is the same cap the caller merges with.
+   *
+   * Lives here rather than in dashboard/analysis.js because the capture reads
+   * it live - the lifecycle stamps `wentFirst` on the record as soon as the
+   * first turn ends - and this file is already in both worlds: a capture
+   * module the manifest loads, and a dashboard script for the backfill.
+   */
+  function whoWentFirst(log, maxLog) {
+    const lines = Array.isArray(log) ? log : [];
+    if (!lines.length || !logStartsAtGameStart(lines, maxLog || 500)) return null;
+    for (const e of lines) {
+      if (!e || typeof e.text !== "string") continue;
+      if (/\bended (their|your|the) turn\b/i.test(e.text)) {
+        if (e.actor === "self") return true;
+        if (e.actor === "opponent") return false;
+      }
+    }
+    return null;
+  }
+
+  root.RATMatchLog = { mergeLog, logSig, stripRepeatedTime, whoWentFirst, logStartsAtGameStart };
 })(typeof window !== "undefined" ? window : globalThis);
 
 if (typeof module !== "undefined" && module.exports) {

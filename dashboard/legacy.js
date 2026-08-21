@@ -264,6 +264,10 @@
       getLog(id, () => render());
       return null;
     },
+    // What the cache already holds, with no fetch started. The bulk analyses
+    // use it in archive mode, where the file's logs were all poured into the
+    // cache on open and storage has nothing.
+    cachedLog: (id) => logCache.get(id) || null,
     analyse: (m) => analyse(m),
     render: () => render(),
   };
@@ -316,7 +320,17 @@
    *
    * Their order against the listener below is immaterial: no click carries an
    * attribute from both sides, and every branch returns. */
-  SHARE_PIPELINE.mount({ readReplay, render: () => render() });
+  SHARE_PIPELINE.mount({
+    readReplay,
+    render: () => render(),
+    // The flags a share should carry for a match, or null. Read at build time
+    // from the record, which is where flags live.
+    matchFlags: (id) => {
+      const m = all.find((x) => x.id === id);
+      return m && Array.isArray(m.replayFlags) && m.replayFlags.length ? m.replayFlags : null;
+    },
+  });
+  window.RATrackerShareSeries.mount({ readReplay, matches: () => all, readOnly });
   SHARES_VIEW.mount({
     matchById: (id) => all.find((m) => m.id === id) || null,
     readOnly,
