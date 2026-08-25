@@ -25,6 +25,11 @@ globalThis.chrome = {
   },
 };
 
+/* The page-side card the sighting offers. Stubbed so the tests can see what
+ * would have been drawn - and because it throwing must never break a watch. */
+const cards = [];
+globalThis.RATPageUI = { showScoutCard: (s) => cards.push(s) };
+
 require("../capture/sticky-memory.js");
 require("../capture/match-log.js"); // board-read reads stripRepeatedTime off it
 require("../capture/board-read.js");

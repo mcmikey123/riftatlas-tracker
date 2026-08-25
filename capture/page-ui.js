@@ -72,6 +72,9 @@
    */
   function showConfirmToast(record, actions) {
     removeToast();
+    // The match is over; a scouting card still up is about a game that no
+    // longer needs scouting, and the two would stack in the same corner.
+    removeScoutCard();
     const el = document.createElement("div");
     el.id = "ra-tracker-toast";
     el.className = "ra-tracker-block"; // keeps our own UI out of the visual replay
@@ -115,12 +118,62 @@
     }
   }
 
-  /* Is this node part of the toast? It prints the detected result in words, so
-   * end detection reading it back would end the match the toast is asking
+  // ---------- the scouting card ----------
+
+  /* Shown when an opponent is first seen across the table - the one moment a
+   * record against their champion is worth a glance. Purely informational:
+   * one card, no buttons, click anywhere on it to dismiss, gone on its own in
+   * twenty seconds. The popup carries the same line for as long as the
+   * opponent is current; this is the announcement, not the reference. */
+  const SCOUT_MS = 20000;
+  let scoutEl = null;
+
+  /**
+   * @param {{name, wins, losses, decided, rate, note}} s - what
+   *   capture/scout.js worked out about the opponent on screen.
+   */
+  function showScoutCard(s) {
+    removeScoutCard();
+    const el = document.createElement("div");
+    el.id = "ra-tracker-scout";
+    el.className = "ra-tracker-block"; // keeps our own UI out of the visual replay
+    const record = s.decided
+      ? `<b class="rat-win">${s.wins}</b>–<b class="rat-loss">${s.losses}</b> (${Math.round(
+          s.rate * 100
+        )}%)`
+      : "first meeting";
+    el.innerHTML = `
+      <div class="rat-title">Rift Atlas Tracker &mdash; scouting</div>
+      <div class="rat-sub">vs <b>${escapeHtml(s.name)}</b> &mdash; ${record}</div>
+      ${s.note ? `<div class="rat-note">${escapeHtml(s.note)}</div>` : ""}
+      <div class="rat-hint">${
+        s.note ? "Your matchup note." : "Write a matchup note in the extension popup and it shows here next time."
+      } Click to dismiss.</div>
+    `;
+    el.addEventListener("click", removeScoutCard);
+    document.body.appendChild(el);
+    scoutEl = el;
+    setTimeout(removeScoutCard, SCOUT_MS);
+  }
+
+  function removeScoutCard() {
+    if (scoutEl) {
+      scoutEl.remove();
+      scoutEl = null;
+    }
+  }
+
+  /* Is this node part of our own UI? The confirm toast prints the detected
+   * result in words, and a scouting note is free text that can say "victory"
+   * - either one read back by end detection would end the match it is talking
    * about. */
   function isOwnToast(node) {
     const host = node && node.nodeType === 3 ? node.parentElement : node;
-    return !!(host && host.closest && host.closest("#ra-tracker-toast"));
+    if (!host || !host.closest) return false;
+    // Two lookups rather than one comma list: the fake DOM the tests drive
+    // this against matches selectors as strings, and a guard that only its
+    // tests can see through is the guard at its most dangerous.
+    return !!(host.closest("#ra-tracker-toast") || host.closest("#ra-tracker-scout"));
   }
 
   root.RATPageUI = {
@@ -129,6 +182,8 @@
     reportStorageFailure,
     showConfirmToast,
     removeToast,
+    showScoutCard,
+    removeScoutCard,
     isOwnToast,
     escapeHtml,
   };

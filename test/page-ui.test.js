@@ -37,6 +37,15 @@ test("our own toast is recognised, by element and by text node", () => {
   assert.equal(pageUI.isOwnToast(inside), true);
   assert.equal(pageUI.isOwnToast(text("WIN detected", inside)), true, "text nodes resolve to their parent");
 
+  /* The scouting card holds free text - a note can legitimately say
+   * "victory" - so end detection must refuse it the same way. */
+  const scoutCard = el({ sel: ["#ra-tracker-scout"] });
+  const noteNode = el({ kids: [] });
+  scoutCard.children.push(noteNode);
+  noteNode.parentElement = scoutCard;
+  assert.equal(pageUI.isOwnToast(noteNode), true);
+  assert.equal(pageUI.isOwnToast(text("easy victory if they keep runes", noteNode)), true);
+
   const elsewhere = el({});
   assert.equal(pageUI.isOwnToast(elsewhere), false);
   assert.equal(pageUI.isOwnToast(text("VICTORY", elsewhere)), false);
