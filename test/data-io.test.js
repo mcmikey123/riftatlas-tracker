@@ -24,7 +24,7 @@ const IO = require("../dashboard/data-io.js");
 
 /** legacy.js's CSV builder as it stood before the move. */
 function referenceCsv(bundle) {
-  const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","seriesId","seriesGame","seriesFormat","seriesSource","notes"];
+  const cols = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","wentFirst","deckName","deckSource","seriesId","seriesGame","seriesFormat","seriesSource","notes"];
   const extra = ["duration","verdict","myCommits","oppCommits","myConquers","oppConquers","myTrashed","oppTrashed","logLines"];
   const lines = [cols.concat(extra).join(",")].concat(
     bundle.matches.map((m) => {
@@ -81,7 +81,7 @@ const fullMatch = (over) =>
     over
   );
 
-test("the CSV is exactly what the pre-move export wrote", () => {
+test("the CSV is exactly what the pre-move export wrote, plus the wentFirst column", () => {
   const bundles = [
     { matches: [] },
     { matches: [fullMatch()] },

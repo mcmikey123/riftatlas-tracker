@@ -103,6 +103,26 @@ body {
 .tile-value .win { color: var(--win); }
 .tile-value .loss { color: var(--loss); }
 
+/* --- scouting --- */
+.scout {
+  display: grid; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 11px;
+}
+.scout-line { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.scout-who { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scout-record { font-variant-numeric: tabular-nums; color: var(--ink-2); flex: none; }
+.scout-record .win { color: var(--win); }
+.scout-record .loss { color: var(--loss); }
+.scout-dots { margin-left: auto; display: flex; gap: 3px; flex: none; }
+.scout-note {
+  width: 100%; resize: vertical; min-height: 34px;
+  background: var(--surface-sunk); border: 1px solid var(--rule); border-radius: 6px;
+  padding: 6px 8px; color: var(--ink); font: 12px/1.4 var(--font-ui);
+}
+.scout-note::placeholder { color: var(--ink-3); }
+.scout-note:focus { outline: none; border-color: var(--accent); }
+
 /* --- last three --- */
 .recent { display: grid; gap: 5px; }
 .recent-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }

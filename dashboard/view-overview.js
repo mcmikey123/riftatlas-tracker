@@ -222,6 +222,99 @@
     sub.textContent = bits.join(" · ");
   }
 
+  // ---- going first vs second ---------------------------------------------
+
+  /** One half of the split as a row: label, bar, record. Pure; tested. */
+  function gfRowHtml(label, side) {
+    const pct = side.rate === null ? 0 : Math.round(side.rate * 100);
+    return `<div class="gf-row">
+    <span class="gf-label">${esc(label)}</span>
+    <div class="bar-wrap"><div class="bar-track">${
+      side.rate === null ? "" : `<div class="bar rate-${rateStep(side.rate)}" style="width:${pct}%"></div>`
+    }</div><span class="pct">${fmtPercent(side.rate)}</span></div>
+    <span class="gf-record">${side.wins}–${side.losses}${
+      side.games > side.decided ? ` of ${side.games}` : ""
+    }</span>
+  </div>`;
+  }
+
+  /** The whole card body for a split. Pure; tested. */
+  function goingFirstHtml(split) {
+    if (!split.first.games && !split.second.games) {
+      return `<p class="gf-empty">None of these matches say who went first yet.
+      New matches record it as they are played; <b>Detect from game logs</b> fills it in
+      for the history you already have.</p>`;
+    }
+    // The unknowns are stated, never hidden: a split shown without its
+    // denominator would read as if it covered the whole filtered set.
+    const note = split.unknown
+      ? `<p class="gf-note">${split.unknown} match${
+          split.unknown === 1 ? "" : "es"
+        } in this view don't say who went first.</p>`
+      : "";
+    return gfRowHtml("Going first", split.first) + gfRowHtml("Going second", split.second) + note;
+  }
+
+  function paintGoingFirst(rows) {
+    const box = $("[data-goingfirst]");
+    if (!box) return;
+    box.innerHTML = goingFirstHtml(STATS.goingFirstSplit(rows));
+  }
+
+  /**
+   * Fill in `wentFirst` for the history, from the logs already stored. Reads
+   * every log once, works out who opened each game, asks, then writes - the
+   * same shape as "Detect decks from cards played": derived data reaches a
+   * record only through an explicit, confirmed action.
+   *
+   * The reader is capture/match-log.js's `whoWentFirst` - the very function
+   * the capture runs live - so the backfill cannot answer a game differently
+   * from how recording it would have.
+   */
+  async function detectGoingFirst() {
+    const notify = root.RATrackerNotify;
+    const all = matches() || [];
+    const candidates = all.filter((m) => m.wentFirst !== true && m.wentFirst !== false);
+    if (!candidates.length) {
+      notify.say("Every match already says who went first.", "success");
+      return;
+    }
+
+    const logs = await root.RATrackerLogs.readLogs(candidates.map((m) => m.id), {
+      readOnly,
+      cachedLog: (id) => window.RATrackerLegacy.cachedLog(id),
+    });
+    const resolved = new Map();
+    for (const m of candidates) {
+      const w = root.RATMatchLog.whoWentFirst(logs.get(m.id) || []);
+      if (w !== null) resolved.set(m.id, w);
+    }
+    if (!resolved.size) {
+      notify.say("None of the stored logs could say who went first.", "info");
+      return;
+    }
+
+    const ok = await notify.ask({
+      title: "Detect who went first?",
+      body: `<p>${logs.size} of ${candidates.length} unanswered matches have a stored game log, and
+      ${resolved.size} of those logs say who took the first turn. Write the answer to those
+      ${resolved.size} records? The rest are left alone rather than guessed at.</p>`,
+      confirmLabel: `Write ${resolved.size}`,
+    });
+    if (!ok) return;
+
+    for (const m of all) {
+      if (resolved.has(m.id)) m.wentFirst = resolved.get(m.id);
+    }
+    window.RATrackerStorage.writeMatches(all, () => {
+      notify.say(
+        `Recorded who went first for ${resolved.size} match${resolved.size === 1 ? "" : "es"}.`,
+        "success"
+      );
+      render();
+    });
+  }
+
   // ---- win rate by week --------------------------------------------------
 
   /* More weeks than this and each column is thinner than its own gap. The chart
@@ -354,6 +447,7 @@
     setText("#tDuration", t.duration);
     paintForm(rows);
     renderTrend(rows);
+    paintGoingFirst(rows);
 
     renderAgg($("#vsTable tbody"), rows, (m) => champ(m.opponentChampion || m.opponentLegend));
     renderAgg($("#deckTable tbody"), rows, deckOf);
@@ -395,6 +489,16 @@
       render();
     });
 
+    const detect = $("#detectFirst");
+    if (detect) {
+      detect.addEventListener("click", () => {
+        if (readOnly()) return;
+        detectGoingFirst().catch((err) =>
+          console.error("[RA-Tracker] going-first detection failed:", err)
+        );
+      });
+    }
+
     mountTrendTip();
   }
 
@@ -406,6 +510,8 @@
     weekLabel,
     labelled,
     tipText,
+    gfRowHtml,
+    goingFirstHtml,
     /* The Matchups view is a module and cannot import this file, so it takes
      * the filtered set from here rather than sampling the controls a second
      * time. One predicate, one answer to "which matches are we describing". */

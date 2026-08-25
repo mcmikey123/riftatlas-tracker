@@ -77,11 +77,14 @@
    * orphan here has nothing left to say but so.
    */
   function matchLabel(record, match) {
-    if (!match) return "match no longer in your history";
+    if (!match) return record.label || "match no longer in your history";
     const when = fmtStamp(match.startedAt);
-    return `${when} · ${champ(match.myChampion || match.myLegend)} vs ${champ(
+    const base = `${when} · ${champ(match.myChampion || match.myLegend)} vs ${champ(
       match.opponentChampion || match.opponentLegend
     )}`;
+    // A labelled record is a series share: the matchId is only its first game,
+    // and the label is what says so.
+    return record.label ? `${record.label} · from ${base}` : base;
   }
 
   /** What a re-check answered, or nothing at all when it has not been asked. */

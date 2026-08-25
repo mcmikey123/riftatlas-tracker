@@ -148,7 +148,34 @@ select.btn { cursor: pointer; }
   overflow: hidden; clip-path: inset(50%);
   white-space: nowrap;
 }
-.seek { flex: 1 1 120px; min-width: 80px; accent-color: var(--accent); }
+/* The wrapper takes the slider's place in the flex row so flag dots can be
+   positioned over the track. */
+.seekwrap { flex: 1 1 120px; min-width: 80px; position: relative; display: flex; }
+.seek { width: 100%; accent-color: var(--accent); }
+.flagmarks { position: absolute; inset: 0 8px; pointer-events: none; }
+.flagdot {
+  position: absolute; top: 50%; width: 6px; height: 6px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: var(--accent); opacity: 0.9;
+}
+.flags {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.flag { font-variant-numeric: tabular-nums; }
+/* The series' game switcher. Chips like the chapters, above the transport,
+   because "which game" outranks "which turn". */
+.games {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.game { font-weight: 600; }
 .clock {
   font-size: 11px;
   color: var(--ink-3);

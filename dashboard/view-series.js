@@ -132,6 +132,9 @@ function suggestionStrip(suggestion) {
 function seriesRow(s, readOnly) {
   const open = state.openSeries.has(s.id);
   const dates = `${fmtTime(s.startedAt)}${s.endedAt ? " – " + fmtTime(s.endedAt) : ""}`;
+  // Offered only when there is something to put in the link. The whole flow -
+  // disclosure, upload, the link dialog - is share-series.js's.
+  const canShare = !readOnly && s.games.some((m) => LEGACY().hasVisual(m.id));
   return `<div class="srow ${open ? "on" : ""}">
     <span class="cell expander ${open ? "on" : ""}" data-sertoggle="${esc(s.id)}" role="button" tabindex="0">${open ? "▾" : "▸"}</span>
     <span class="cell cell-date"><span class="d1">${esc(fmtDay(s.startedAt))}</span><span class="d2">${esc(dates)}</span></span>
@@ -142,7 +145,12 @@ function seriesRow(s, readOnly) {
     <span class="cell"><span class="ser-result"><span class="dot dot-${RESULT_DOT[s.result]}"></span>${esc(RESULT_LABEL[s.result])}</span></span>
     <span class="cell dim decks">${esc(s.decks.join(", "))}</span>
     <span class="cell num dim">${s.totalMs === null ? "—" : esc(fmtDuration(s.totalMs))}</span>
-    <span class="cell"></span>
+    <span class="cell">${
+      canShare
+        ? `<button class="row-more" data-sershare="${esc(s.id)}"
+             title="Share this series' recorded games as one encrypted link">⤴</button>`
+        : ""
+    }</span>
   </div>`;
 }
 
@@ -281,6 +289,16 @@ export function mountSeries() {
     const group = e.target.closest?.("[data-groupseries]");
     if (group) {
       groupSelection(group.dataset.groupseries);
+      return;
+    }
+
+    const share = e.target.closest?.("[data-sershare]");
+    if (share) {
+      /* The series object is derived, so it is derived again here the same way
+       * the render derived it - from the raw matches through detect() - rather
+       * than smuggled through the DOM. */
+      const s = S.group(editable()).find((x) => x.id === share.dataset.sershare);
+      if (s) window.RATrackerShareSeries.shareSeries(s);
       return;
     }
 

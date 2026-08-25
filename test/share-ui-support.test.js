@@ -668,3 +668,40 @@ test("only an endpoint that said nothing is labelled as silence", () => {
     assert.strictEqual(/couldn't reach/i.test(o.message), silent, `message contradicts ${where}`);
   }
 });
+
+// ---- series share records and messages ---------------------------------
+
+const SERIES_UI = require("../share/share-ui-support.js");
+
+test("a share record carries an optional label, and keeps it through a re-read", () => {
+  const base = {
+    matchId: "m1",
+    objectId: "A".repeat(22),
+    key: "B".repeat(43),
+    endpoint: "https://host",
+    createdAt: 1000,
+  };
+  assert.equal(SERIES_UI.shareRecord(base).label, undefined, "ordinary shares gain no field");
+  const labelled = SERIES_UI.shareRecord(Object.assign({ label: "BO3 series vs monke · 3 games" }, base));
+  assert.equal(labelled.label, "BO3 series vs monke · 3 games");
+  // readShareList rebuilds records through shareRecord; a label that did not
+  // survive that would vanish from the panel on the very next render.
+  const rows = SERIES_UI.readShareList([labelled]);
+  assert.equal(rows[0].label, "BO3 series vs monke · 3 games");
+});
+
+test("a blank label is not stored, and a long one is bounded", () => {
+  const base = {
+    matchId: "m1", objectId: "A".repeat(22), key: "B".repeat(43),
+    endpoint: "https://host", createdAt: 1000,
+  };
+  assert.equal(SERIES_UI.shareRecord(Object.assign({ label: "   " }, base)).label, undefined);
+  assert.equal(SERIES_UI.shareRecord(Object.assign({ label: "x".repeat(200) }, base)).label.length, 80);
+});
+
+test("the size check names what was measured", () => {
+  const over = SERIES_UI.checkPayloadSize(SERIES_UI.MAX_UPLOAD_BYTES + 1, SERIES_UI.MAX_UPLOAD_BYTES, "This series");
+  assert.match(over.message, /^This series is /);
+  const single = SERIES_UI.checkPayloadSize(SERIES_UI.MAX_UPLOAD_BYTES + 1, SERIES_UI.MAX_UPLOAD_BYTES);
+  assert.match(single.message, /^This replay is /, "the default wording is unchanged");
+});

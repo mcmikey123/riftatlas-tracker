@@ -66,8 +66,18 @@
         // subsequent read and silently break all saves.
         const matches = (data.matches || []).filter((x) => x && x.id);
         const idx = matches.findIndex((x) => x.id === record.id);
-        if (idx >= 0) matches[idx] = lean;
-        else matches.push(lean);
+        if (idx >= 0) {
+          // The dashboard writes two fields this side never sets on a live
+          // match - replay flags, and a backfilled wentFirst - and this save
+          // replaces the record wholesale. Carry them over rather than letting
+          // a periodic save quietly undo a bookmark made mid-game.
+          const kept = matches[idx];
+          if (lean.replayFlags == null && kept.replayFlags != null) lean.replayFlags = kept.replayFlags;
+          if (lean.wentFirst == null && kept.wentFirst != null) lean.wentFirst = kept.wentFirst;
+          matches[idx] = lean;
+        } else {
+          matches.push(lean);
+        }
         chrome.storage.local.set({ matches });
       });
     } catch (err) {
@@ -117,6 +127,7 @@
       deckName: "",
       deckSource: null, // 'picker' | 'board' | 'url' | 'last' | 'manual' | …
       matchFormat: null, // 'bo1' | 'bo3' | null when the lobby never said
+      wentFirst: null, // true = you opened, false = they did, null = never read
       log: [], // [{t, actor: self|opponent|system, text}]
       schemaVersion: SCHEMA_VERSION,
     };
@@ -239,6 +250,16 @@
     // Count-based merge: append only the occurrences we haven't stored yet.
     // Survives React re-rendering the whole list (node identity is useless).
     m.log = root.RATMatchLog.mergeLog(m.log, entries, MAX_LOG);
+    // Who opened the game, read off the log's first turn end. Decided once,
+    // early - the first turn ends within the log's first few dozen lines, long
+    // before the cap could trim the opening out from under the read.
+    if (m.wentFirst == null) {
+      const w = root.RATMatchLog.whoWentFirst(m.log, MAX_LOG);
+      if (w !== null) {
+        m.wentFirst = w;
+        console.info("[RA-Tracker] first turn:", w ? "you" : "opponent");
+      }
+    }
   }
 
   function refresh(board) {

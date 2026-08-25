@@ -20,14 +20,14 @@ Turn on **Daily auto-backup to Downloads** in the dashboard's **Settings** view 
 4. Click **Load unpacked** and select the `riftatlas-tracker` folder.
 5. Open play.riftatlas.com and play — matches record automatically.
 
-**Clicking the extension's icon no longer opens the dashboard.** It opens a small popup instead, showing whether the next match will be recorded, today's record, your streak and your last three results. The dashboard is one click further on, behind the popup's **Open dashboard** button. Pin the icon via the puzzle-piece menu to keep the popup within reach.
+**Clicking the extension's icon no longer opens the dashboard.** It opens a small popup instead, showing whether the next match will be recorded, today's record, your streak and your last three results — and, when an opponent is across the table (in the mulligan, the battlefield pick, or mid-game), a **scouting line**: your record against their champion, your last five results against them, and a **matchup note** you can type right there and will see again next time you face them. The dashboard is one click further on, behind the popup's **Open dashboard** button. Pin the icon via the puzzle-piece menu to keep the popup within reach.
 
 ## The dashboard
 
 The dashboard is eight views behind a left nav, not one long scrolling page. The header, the filter row and the banners are shared by all of them, and switching views reloads nothing.
 
-- **Overview** — the stat tiles (including your **recent form** over the last 10 and 20 decided games), a **win rate by week** chart, and the three aggregate tables (win rate vs opponent champion, by your deck, by your champion), plus **Detect decks from cards played**.
-- **Matchups** — the champion-by-champion grid: every champion you have played down the side, every one you have faced along the top, and in each cell your win rate over that matchup's decided games with the number of games it rests on beside it. Clicking a cell opens **Matches** narrowed to that matchup, by driving the same filter and search controls a hand would.
+- **Overview** — the stat tiles (including your **recent form** over the last 10 and 20 decided games), a **win rate by week** chart, a **going first vs second** split, and the three aggregate tables (win rate vs opponent champion, by your deck, by your champion), plus **Detect decks from cards played**. New matches record who took the first turn as they are played; **Detect from game logs** fills the answer in for the history you already have, from the logs already stored, and asks before writing anything.
+- **Matchups** — the champion-by-champion grid: every champion you have played down the side, every one you have faced along the top, and in each cell your win rate over that matchup's decided games with the number of games it rests on beside it. Clicking a cell opens **Matches** narrowed to that matchup, by driving the same filter and search controls a hand would (each cell's tooltip carries the going-first split when its games say). Below the grid, **Battlefields** reads the conquests out of your stored game logs — on request, since it is a heavier lookup — and shows which battlefields you win on, with the conquest counts for each side.
 - **Matches** — your full history. Every column sorts, a search box covers opponent, room code, either champion and deck name, a date range narrows the set, and rows come 25 to a page. The old 13 columns are now 12 cells carrying the same 13 fields — date and time stack, your champion, opponent and their champion become one Matchup cell, and mode and room stack — with **Delete** moved into each row's ⋯ menu beside Share replay and Copy match id. Nothing was dropped.
 - **Series** — best-of series, described below.
 - **Notes** — every note you have written, grouped by the champion you faced when you wrote it, newest first, with the game beside each one: when it was played, which champion and deck you had, and how it ended. Each group states how many notes it holds and your record in those games — the noted games, not the matchup. It carries its own date range (**last week**, **last month**, **last year**, all time) rather than using the shared filter row, so there is one date control over the list instead of two that can disagree.
@@ -41,7 +41,7 @@ The extension no longer uses the browser's own confirm, prompt and alert boxes. 
 
 ## What it records
 
-Per match: your and your opponent's legend + champion, room code, mode, player names, running score, turn count, **match duration**, the **full game log** (with each line attributed to you, your opponent, or the system), and your own **notes**. Open a row in **Matches** to see the game summary, notes box and raw log. What you write in those notes boxes is collected in **Notes**, so a note is readable without remembering which match it was on.
+Per match: your and your opponent's legend + champion, room code, mode, player names, running score, turn count, **match duration**, **who took the first turn** (read off the game log's first turn end), the **full game log** (with each line attributed to you, your opponent, or the system), and your own **notes**. Open a row in **Matches** to see the game summary, notes box and raw log. What you write in those notes boxes is collected in **Notes**, so a note is readable without remembering which match it was on.
 
 The **game summary** reads the log and reports a playstyle verdict — Aggressive, Balanced, Passive, Reactive or "No read" — from how many units each side committed to battlefields, battlefields conquered, cards lost to trash, showdown actions and focus passes. It also tells you how many log lines it understood, so you can judge how much to trust it.
 
@@ -54,6 +54,8 @@ For Bo3 games, consecutive games against the same opponent are grouped for you, 
 Matches recorded before the extension started reading the format have no format to go on, so those fall back to a 45-minute gap between games. That is the only place timing is still used, and there is no setting for it — a spinner would be a lot of control for a set of matches that only ever shrinks.
 
 The **Series** view shows one row per series, expandable into its games. Its tiles are the reason it exists: series win rate beside game win rate, how often you recover after losing game one, and how often you reach a decider. Your matches already held all of that; the old dashboard had nowhere to show it.
+
+A series with recorded games can be **shared as one link** (the ⤴ on its row): every game that still has a replay goes into a single encrypted upload, and the viewer gets a game switcher — Game 1, Game 2, Game 3, each with its result. Same properties as a single share: encrypted in this browser, 7-day expiry, no unsharing. Games whose replay the retention setting already deleted can't be included, and the dialog says which.
 
 **Grouping done for you is worked out fresh each time the page draws it, and is never written to your match records.** Two things follow from that:
 
@@ -81,6 +83,8 @@ While you play, the extension records the *codes* of your own cards that become 
 ## Replays
 
 Each match is recorded as a **replay**: the site's own markup and stylesheets, captured as they changed and played back through [rrweb](https://github.com/rrweb-io/rrweb) in a scripting-disabled iframe. It looks exactly like the game did, because it *is* the game's own HTML — not a redrawn board. Open a row in **Matches** and click **Open full screen** beside **Replay**. Matches without a recording don't show the button. The viewer plays at **0.5× to 6×** — pick the rate from the control beside the clock; a whole match reviews in a couple of minutes at 6× — and the same control is in the shared-link viewer.
+
+While watching, press **⚑ Flag** to bookmark the moment on screen, with an optional label. Flags live on the **match record**, not the recording — they survive export/import, and deleting the replay keeps them — and they show as dots on the scrubber and chips under the controls, in your own viewer and, read-only, in anything you share.
 
 It costs roughly 1–3 MB compressed per match, kept in the extension's own IndexedDB rather than `chrome.storage.local`. Recording is **always at full fidelity** — a frame per settled game event, start to finish. It is never thinned out to save space, because a replay that quietly skips frames is no longer the match you played, and nothing on screen would tell you which parts were missing.
 

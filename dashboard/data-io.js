@@ -121,7 +121,7 @@
    * the match array on its own. Every cell goes through csvCell, which quotes
    * per RFC 4180 and neutralises the values a spreadsheet would otherwise
    * evaluate - column 7 is an opponent's chosen display name. */
-  const CSV_COLUMNS = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","deckName","deckSource","seriesId","seriesGame","seriesFormat","seriesSource","notes"];
+  const CSV_COLUMNS = ["startedAt","endedAt","durationMs","mode","roomCode","myName","opponentName","myLegend","myChampion","opponentLegend","opponentChampion","myScore","opponentScore","turns","result","resultSource","endReason","wentFirst","deckName","deckSource","seriesId","seriesGame","seriesFormat","seriesSource","notes"];
   const CSV_DERIVED = ["duration","verdict","myCommits","oppCommits","myConquers","oppConquers","myTrashed","oppTrashed","logLines"];
 
   /** The whole CSV, header row included. Decidable from the bundle alone. */

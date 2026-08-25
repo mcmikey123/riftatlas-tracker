@@ -140,10 +140,20 @@
       mineCount.set(mine, (mineCount.get(mine) || 0) + 1);
       theirsCount.set(theirs, (theirsCount.get(theirs) || 0) + 1);
       const key = mine + "\u0000" + theirs;
-      const c = cells.get(key) || { games: 0, wins: 0, losses: 0 };
+      const c =
+        cells.get(key) ||
+        { games: 0, wins: 0, losses: 0, first: { wins: 0, losses: 0 }, second: { wins: 0, losses: 0 } };
       c.games++;
       if (m.result === "win") c.wins++;
       if (m.result === "loss") c.losses++;
+      // The going-first split, kept per cell so a matchup that only looks even
+      // can show it is really "fine on the play, poor on the draw". Rows with
+      // no answer are simply absent from both halves.
+      const half = m.wentFirst === true ? c.first : m.wentFirst === false ? c.second : null;
+      if (half) {
+        if (m.result === "win") half.wins++;
+        if (m.result === "loss") half.losses++;
+      }
       cells.set(key, c);
     }
     for (const c of cells.values()) {
@@ -163,9 +173,80 @@
     };
   }
 
+  /**
+   * The going-first split over `rows`: one record for games you opened, one
+   * for games you didn't, and how many rows carry no answer at all.
+   *
+   * `unknown` is reported, never hidden: most histories predate the field, and
+   * a split shown without its denominator would read as if it covered them.
+   */
+  function goingFirstSplit(rows) {
+    const side = () => ({ games: 0, wins: 0, losses: 0 });
+    const first = side();
+    const second = side();
+    let unknown = 0;
+    for (const m of rows || []) {
+      const s = m && m.wentFirst === true ? first : m && m.wentFirst === false ? second : null;
+      if (!s) {
+        unknown++;
+        continue;
+      }
+      s.games++;
+      if (m.result === "win") s.wins++;
+      if (m.result === "loss") s.losses++;
+    }
+    for (const s of [first, second]) {
+      s.decided = s.wins + s.losses;
+      s.rate = s.decided ? s.wins / s.decided : null;
+    }
+    return { first, second, unknown };
+  }
+
+  /**
+   * Per-battlefield performance over games whose logs were read.
+   *
+   * `games` is [{ result, conquests: [{name, actor}] }] - the caller runs
+   * RATrackerAnalysis.conquests over each log, because loading logs is the
+   * page's business and this file has no storage.
+   *
+   * A battlefield's row counts the games it APPEARED in (someone conquered it
+   * at least once that game), your match record in those games, and the
+   * conquest count for each side. Ordered by games seen, names breaking ties,
+   * same rule as the matchup grid.
+   */
+  function battlefieldStats(games) {
+    const rows = new Map();
+    for (const g of games || []) {
+      const seen = new Set();
+      for (const c of g.conquests || []) {
+        const r = rows.get(c.name) || {
+          name: c.name, games: 0, wins: 0, losses: 0, myTakes: 0, oppTakes: 0,
+        };
+        if (c.actor === "self") r.myTakes++;
+        else if (c.actor === "opponent") r.oppTakes++;
+        if (!seen.has(c.name)) {
+          seen.add(c.name);
+          r.games++;
+          if (g.result === "win") r.wins++;
+          if (g.result === "loss") r.losses++;
+        }
+        rows.set(c.name, r);
+      }
+    }
+    const out = [...rows.values()];
+    for (const r of out) {
+      const decided = r.wins + r.losses;
+      r.decided = decided;
+      r.rate = decided ? r.wins / decided : null;
+    }
+    return out.sort((a, b) => b.games - a.games || a.name.localeCompare(b.name));
+  }
+
   // Same dual export as table.js: a global for the browser, CommonJS for
   // `node --test`.
-  const api = { recentForm, weekStart, weeklyWinRate, matchupMatrix };
+  const api = {
+    recentForm, weekStart, weeklyWinRate, matchupMatrix, goingFirstSplit, battlefieldStats,
+  };
 
   root.RATrackerStats = api;
 

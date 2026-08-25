@@ -27,7 +27,14 @@ const $ = (s) => document.querySelector(s);
 function cellTip(mine, theirs, c) {
   const record = `${c.wins}–${c.losses}` + (c.games > c.decided ? ` of ${c.games} games` : "");
   const rate = c.rate === null ? "no decided games" : fmtPercent(c.rate);
-  return `${mine} vs ${theirs}: ${rate} (${record}) — click to open these matches`;
+  // The going-first split, when any of the cell's games carry it. Absent
+  // otherwise: "first 0–0" would look like data about games that never said.
+  const halves = [];
+  if (c.first && c.first.wins + c.first.losses) halves.push(`first ${c.first.wins}–${c.first.losses}`);
+  if (c.second && c.second.wins + c.second.losses)
+    halves.push(`second ${c.second.wins}–${c.second.losses}`);
+  const split = halves.length ? ` · going ${halves.join(", ")}` : "";
+  return `${mine} vs ${theirs}: ${rate} (${record})${split} — click to open these matches`;
 }
 
 function cellHtml(mine, theirs, c) {
@@ -40,13 +47,74 @@ function cellHtml(mine, theirs, c) {
   </button></td>`;
 }
 
+/* The last battlefield analysis, kept across re-renders. Logs are a bulk read
+ * the page must not repeat every three seconds, so the table is computed when
+ * asked and the card says which draw of the filters it belongs to. */
+let bf = null; // { rows, games, withLogs }
+
+function battlefieldCard() {
+  const head = `<div class="card-head"><h2>Battlefields</h2>
+    <span class="card-actions"><button class="btn btn-sm" data-bfanalyse>${
+      bf ? "Analyse again" : "Analyse game logs"
+    }</button></span></div>
+    <p class="card-band">Which battlefields you win on, read from the conquests in your stored game
+    logs. A battlefield counts a match when either side conquered it at least once that game.
+    Reading every log is a heavier lookup than the grid above, so it runs when you ask, over the
+    filters as they stood.</p>`;
+
+  if (!bf) return `<div class="card">${head}</div>`;
+  if (!bf.rows.length) {
+    return `<div class="card">${head}
+      <p class="empty-view">No conquests found in the ${bf.withLogs} stored log${
+        bf.withLogs === 1 ? "" : "s"
+      } these filters cover.</p></div>`;
+  }
+
+  const rows = bf.rows
+    .map((r) => {
+      const pct = r.rate === null ? 0 : Math.round(r.rate * 100);
+      return `<tr>
+        <td>${esc(r.name)}</td>
+        <td>${r.games}</td><td>${r.wins}</td><td>${r.losses}</td>
+        <td>${r.myTakes}–${r.oppTakes}</td>
+        <td><div class="bar-wrap"><div class="bar-track">${
+          r.rate === null ? "" : `<div class="bar rate-${rateStep(r.rate)}" style="width:${pct}%"></div>`
+        }</div><span class="pct">${fmtPercent(r.rate)}</span></div></td>
+      </tr>`;
+    })
+    .join("");
+
+  return `<div class="card">${head}
+    <table class="agg bf">
+      <thead><tr><th>Battlefield</th><th>Games</th><th>W</th><th>L</th><th>Conquests for–against</th><th>Match win rate</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="card-band">From ${bf.withLogs} of ${bf.games} filtered matches that still have a log.</p>
+  </div>`;
+}
+
+async function analyseBattlefields() {
+  const A = window.RATrackerAnalysis;
+  const LEGACY = window.RATrackerLegacy;
+  const rows = OVERVIEW.filtered();
+  const logs = await window.RATrackerLogs.readLogs(rows.map((m) => m.id), {
+    readOnly: LEGACY.readOnly,
+    cachedLog: LEGACY.cachedLog,
+  });
+  const games = rows
+    .filter((m) => logs.has(m.id))
+    .map((m) => ({ result: m.result, conquests: A.conquests(logs.get(m.id)) }));
+  bf = { rows: STATS.battlefieldStats(games), games: rows.length, withLogs: games.length };
+}
+
 export function renderMatrix(container) {
   if (!container) return;
 
   const grid = STATS.matchupMatrix(OVERVIEW.filtered());
   if (!grid.size) {
     container.innerHTML =
-      '<p class="empty-view">No matches under the current filters, so there are no matchups to grid.</p>';
+      '<p class="empty-view">No matches under the current filters, so there are no matchups to grid.</p>' +
+      battlefieldCard();
     return;
   }
 
@@ -75,12 +143,23 @@ export function renderMatrix(container) {
           <tbody>${body}</tbody>
         </table>
       </div>
-    </div>`;
+    </div>
+    ${battlefieldCard()}`;
 }
 
 export function mountMatrix(container) {
   if (!container) return;
   container.addEventListener("click", (e) => {
+    const analyse = e.target.closest?.("[data-bfanalyse]");
+    if (analyse) {
+      analyse.disabled = true;
+      analyse.textContent = "Reading logs…";
+      analyseBattlefields()
+        .catch((err) => console.error("[RA-Tracker] battlefield analysis failed:", err))
+        .then(() => window.RATrackerLegacy.render());
+      return;
+    }
+
     const cell = e.target.closest?.("[data-mine]");
     if (!cell) return;
 

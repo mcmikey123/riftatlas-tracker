@@ -131,6 +131,8 @@ test("the grid aggregates per matchup and rates only the decided games", () => {
     losses: 1,
     decided: 2,
     rate: 0.5,
+    first: { wins: 0, losses: 0 },
+    second: { wins: 0, losses: 0 },
   });
   assert.equal(grid.cell("Ashe", "Jinx").rate, 1);
   assert.equal(grid.cell("Jinx", "Ashe"), null, "an unplayed matchup is no cell at all");
@@ -157,4 +159,66 @@ test("champions come through the legend fallback and the champ() split", () => {
 test("a matchup with no decided games has a null rate, not zero", () => {
   const grid = STATS.matchupMatrix([game("Ashe", "Viktor", "unknown")]);
   assert.equal(grid.cell("Ashe", "Viktor").rate, null);
+});
+
+// ---- going-first split -------------------------------------------------
+
+test("the going-first split rates each half and counts the silent rows", () => {
+  const g = (wentFirst, result) => ({ wentFirst, result });
+  const s = STATS.goingFirstSplit([
+    g(true, "win"), g(true, "win"), g(true, "loss"),
+    g(false, "loss"), g(false, "win"),
+    g(null, "win"), g(undefined, "loss"),
+  ]);
+  assert.deepEqual(
+    { games: s.first.games, wins: s.first.wins, losses: s.first.losses, rate: s.first.rate },
+    { games: 3, wins: 2, losses: 1, rate: 2 / 3 }
+  );
+  assert.equal(s.second.rate, 0.5);
+  assert.equal(s.unknown, 2, "rows with no answer are counted, never folded into a half");
+});
+
+test("the matrix keeps a going-first split per cell", () => {
+  const grid = STATS.matchupMatrix([
+    Object.assign(game("Ashe", "Viktor", "win"), { wentFirst: true }),
+    Object.assign(game("Ashe", "Viktor", "loss"), { wentFirst: false }),
+    game("Ashe", "Viktor", "win"), // no answer: in the totals, in neither half
+  ]);
+  const c = grid.cell("Ashe", "Viktor");
+  assert.deepEqual(c.first, { wins: 1, losses: 0 });
+  assert.deepEqual(c.second, { wins: 0, losses: 1 });
+  assert.equal(c.wins, 2);
+});
+
+// ---- battlefield stats -------------------------------------------------
+
+test("a battlefield counts each game once, and every conquest by side", () => {
+  const rows = STATS.battlefieldStats([
+    {
+      result: "win",
+      conquests: [
+        { name: "Sunken Temple", actor: "self" },
+        { name: "Sunken Temple", actor: "self" },
+        { name: "The Grand Arena", actor: "opponent" },
+      ],
+    },
+    { result: "loss", conquests: [{ name: "Sunken Temple", actor: "opponent" }] },
+  ]);
+  const temple = rows.find((r) => r.name === "Sunken Temple");
+  assert.deepEqual(
+    { games: temple.games, wins: temple.wins, losses: temple.losses, my: temple.myTakes, opp: temple.oppTakes },
+    { games: 2, wins: 1, losses: 1, my: 2, opp: 1 }
+  );
+  assert.equal(temple.rate, 0.5);
+});
+
+test("battlefields are ordered by games seen, names breaking ties", () => {
+  const seen = (name) => ({ result: "win", conquests: [{ name, actor: "self" }] });
+  const rows = STATS.battlefieldStats([seen("B"), seen("B"), seen("A"), seen("C")]);
+  assert.deepEqual(rows.map((r) => r.name), ["B", "A", "C"]);
+});
+
+test("battlefield stats over nothing is an empty list", () => {
+  assert.deepEqual(STATS.battlefieldStats([]), []);
+  assert.deepEqual(STATS.battlefieldStats(undefined), []);
 });

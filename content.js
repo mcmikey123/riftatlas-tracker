@@ -35,6 +35,10 @@
       globalThis.RATDeckScan.watch();
       globalThis.RATMatchFormat.watch();
     }
+    // Unlike those two, the opponent stays worth watching during the game -
+    // their champion card can appear late - so this one is not gated on `live`.
+    // Self-throttled the same way.
+    globalThis.RATScout.watch();
 
     if (board && phase === "in_game") {
       if (!live) capture().start(board);

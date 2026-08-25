@@ -157,12 +157,24 @@
         <div class="tile"><span class="tile-label">Recent form</span><span class="tile-row"><span class="tile-value" id="tForm">&ndash;</span><span class="tile-sub" id="tFormSub"></span></span></div>
       </div>
 
-      <div class="card card-trend">
-        <div class="card-head">
-          <h2>Win rate by week</h2>
-          <span class="trend-note" data-trend-note></span>
+      <div class="over-row">
+        <div class="card card-trend">
+          <div class="card-head">
+            <h2>Win rate by week</h2>
+            <span class="trend-note" data-trend-note></span>
+          </div>
+          <div class="trend" data-trend></div>
         </div>
-        <div class="trend" data-trend></div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Going first vs second</h2>
+            <span class="card-actions">
+              <button id="detectFirst" class="btn btn-sm" data-mutates>Detect from game logs</button>
+            </span>
+          </div>
+          <div class="gf" data-goingfirst></div>
+        </div>
       </div>
 
       <div class="agg-grid">
@@ -416,6 +428,11 @@
 <script src="series.js"></script>
 <script src="table.js"></script>
 <script src="stats.js"></script>
+<!-- The bulk log fetch behind the going-first backfill and the battlefield
+     table, and the log reader that says who took the first turn - the same
+     file the capture loads, so the backfill and the live read cannot drift. -->
+<script src="logs.js"></script>
+<script src="../capture/match-log.js"></script>
 <!-- The dialog's pure helpers - button ordering and the validation contract.
      Classic, so node --test can require() them; dialog.js reads them off the
      global. -->
@@ -465,6 +482,9 @@
 <script src="share-panel.js"></script>
 <script src="share-pipeline.js"></script>
 <script src="share-moment.js"></script>
+<!-- Sharing a whole series as one link. After the pipeline, whose endpoint,
+     error classes and verification it reuses. -->
+<script src="share-series.js"></script>
 <script src="shares-view.js"></script>
 <!-- The toast and the dialog live in the module half; this is how a classic
      script reaches them, and the fallback for when it is loaded on its own. -->
