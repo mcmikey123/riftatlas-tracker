@@ -30,6 +30,13 @@ export const state = {
     dateRange: { preset: "all", from: null, to: null },
   },
 
+  /* The Notes view dates its own list. It is not part of `filters` above
+   * because the filter row is hidden on that view - one date control on
+   * screen, not two narrowing the same list and disagreeing about it - and,
+   * like the rest of this block, it is deliberately not remembered across a
+   * reload. */
+  notes: { range: "all" },
+
   /* Matches and Series each own one of these. Kept separate so sorting or
    * searching one table does not reorder the other. Only Matches paginates, so
    * only Matches carries a page. */

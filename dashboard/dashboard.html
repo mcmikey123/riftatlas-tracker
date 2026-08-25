@@ -85,6 +85,7 @@
     <button class="nav-item" data-goto="matrix">Matchups</button>
     <button class="nav-item" data-goto="matches">Matches <span class="nav-count" data-count="matches"></span></button>
     <button class="nav-item" data-goto="series">Series <span class="nav-count" data-count="series"></span></button>
+    <button class="nav-item" data-goto="notes">Notes <span class="nav-count" data-count="notes"></span></button>
     <button class="nav-item" data-nav-live="replays" data-goto="replays">Replays <span class="nav-count" data-count="replays"></span></button>
     <button class="nav-item" data-nav-live="shares" data-goto="shares">Shared links <span class="nav-count" data-count="shares"></span></button>
     <span class="nav-rule" aria-hidden="true"></span>
@@ -229,6 +230,13 @@
     <!-- ====================== Series ====================== -->
     <section class="view" data-view="series" hidden>
       <div data-series></div>
+    </section>
+
+    <!-- ======================= Notes ======================= -->
+    <!-- No filter row above this one: the view carries its own date range,
+         and two date controls over one list can disagree about it. -->
+    <section class="view" data-view="notes" hidden>
+      <div data-notes-view></div>
     </section>
 
     <!-- ====================== Replays ====================== -->

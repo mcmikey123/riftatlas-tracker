@@ -25,7 +25,7 @@ const { esc, fmtBytes } = window.RATrackerFormat;
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
-export const VIEWS = ["overview", "matrix", "matches", "series", "replays", "shares", "settings"];
+export const VIEWS = ["overview", "matrix", "matches", "series", "notes", "replays", "shares", "settings"];
 
 /* Hidden in archive mode rather than disabled - see the header comment. */
 const LIVE_ONLY = new Set(["replays", "shares"]);
@@ -33,7 +33,10 @@ const LIVE_ONLY = new Set(["replays", "shares"]);
 /* The views the filter row actually applies to. Replays is a list of
    recordings, Shared links a register of uploads, and Settings is not data at
    all - none of them narrow by champion, deck, mode or date, so a filter row
-   above them is a control that does nothing to what is underneath it. */
+   above them is a control that does nothing to what is underneath it.
+   Notes is out for a different reason: it carries a date range of its own, and
+   a second one above it would narrow the same list from two controls that can
+   disagree. */
 const FILTERED = new Set(["overview", "matrix", "matches", "series"]);
 
 // ---- view switching ----------------------------------------------------

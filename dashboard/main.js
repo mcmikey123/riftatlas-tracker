@@ -16,6 +16,7 @@ import { mountShell, paintShell, VIEWS } from "./shell.js";
 import { renderMatches, mountMatches } from "./view-matches.js";
 import { renderSeries, mountSeries } from "./view-series.js";
 import { renderMatrix, mountMatrix } from "./view-matrix.js";
+import { renderNotes, mountNotes, hasNote } from "./view-notes.js";
 import * as dialog from "./dialog.js";
 import { toast } from "./toast.js";
 
@@ -87,6 +88,10 @@ function counts(all, withSeries) {
   return {
     matches: all.length,
     series: SERIES.group(withSeries).length,
+    /* Every note there is, not the ones the Notes view's own range is showing:
+     * a nav count that moved when you narrowed a window inside a view would be
+     * describing that control rather than your history. */
+    notes: all.filter(hasNote).length,
     // Null until the service worker has answered, so the nav shows nothing
     // rather than claiming zero recordings exist.
     replays: records.length ? records.length : null,
@@ -134,6 +139,9 @@ function render() {
   /* The Overview's own tiles, chart and tables are painted by view-overview.js
    * off legacy.js's render; only Matchups is this half's to draw. */
   renderMatrix($("[data-matrix]"));
+  /* `all` rather than `withSeries`: a note is written on a match and belongs to
+   * it whether or not the match turned out to be part of a series. */
+  renderNotes($("[data-notes-view]"), all);
   paintSettings(withSeries);
 }
 
@@ -233,6 +241,7 @@ function boot() {
   mountMatches();
   mountSeries();
   mountMatrix($("[data-matrix]"));
+  mountNotes($("[data-notes-view]"));
   mountSettings();
   subscribe(render);
 

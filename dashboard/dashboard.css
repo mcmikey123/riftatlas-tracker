@@ -457,6 +457,49 @@ tbody tr:hover { background: rgba(134, 168, 246, 0.06); }
 .gf-record { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .gf-empty, .gf-note { color: var(--ink-3); font-size: 12px; margin: 0; padding: 0 16px 12px; }
 .gf .gf-empty, .gf .gf-note { padding: 0; }
+/* --- note summary -------------------------------------------------------
+   The range chips reuse .chip, so a control that narrows a list looks the same
+   here as a result chip does in the table - one chip shape on the page, with
+   `on` carrying the selection in the accent every other selected thing uses. */
+.note-ranges { gap: 5px; }
+.note-range { cursor: pointer; }
+.note-range:hover { border-color: var(--accent); color: var(--ink); }
+.note-range.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+/* Static because this view reads notes and does not edit games: a result that
+   looked pressable here would promise an edit that is over in Matches. */
+.chip-static { cursor: default; }
+
+.note-body { display: flex; flex-direction: column; }
+.note-lead {
+  margin: 0; padding: 12px 16px; font-size: 12px; color: var(--ink-2);
+  border-bottom: 1px solid var(--rule);
+}
+.note-group + .note-group { border-top: 1px solid var(--rule); }
+.note-group-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 11px 16px; background: var(--surface-sunk);
+}
+.note-champ { font-size: 13px; color: var(--ink); }
+.note-meta { font: 11.5px var(--font-mono); color: var(--ink-3); }
+
+.note-table { width: 100%; border-collapse: collapse; }
+.note-table th {
+  font: 10.5px var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ink-3); text-align: left; font-weight: 400; padding: 8px 12px 6px;
+}
+.note-table th:first-child, .note-table td:first-child { padding-left: 16px; }
+.note-table th:last-child, .note-table td:last-child { padding-right: 16px; }
+.note-table td { padding: 9px 12px; vertical-align: top; border-top: 1px solid var(--rule); }
+.note-row .d1 { display: block; font-size: 12.5px; color: var(--ink); }
+.note-row .d2 { display: block; font: 11px var(--font-mono); color: var(--ink-3); margin-top: 2px; }
+.note-when, .note-you, .note-result { white-space: nowrap; width: 1%; }
+.note-result .d2 { margin-top: 4px; }
+/* The note is the point of the row, so it takes whatever width is left - and
+   pre-wrap, because a note written over several lines was written that way. */
+.note-text {
+  font-size: 12.5px; line-height: 1.6; color: var(--ink-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 
 /* --- matchup matrix ----------------------------------------------------- */
 .mx-scroll { overflow-x: auto; }
