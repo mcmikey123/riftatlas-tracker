@@ -10,6 +10,54 @@
  * pieces the store leaves injectable - compression and hashing - are supplied
  * here, which is also what keeps `store/replay-store.js` testable under node. */
 importScripts("store/idb.js", "store/css-assets.js", "store/replay-store.js");
+/* The scout badge's decision is dashboard/stats.js's scoutBadge, which reads
+ * champion names through format.js - loaded in that order for the same reason
+ * dashboard.html loads them in it. */
+importScripts("dashboard/format.js", "dashboard/stats.js");
+
+/* ---- the scout badge ----------------------------------------------------
+ *
+ * An extension cannot open its own popup, so the scouting line announces
+ * itself here instead: when an opponent is across the table - published by
+ * capture/scout.js, or already on the live match record - the icon carries
+ * your win rate against their champion. What to say is stats.js's scoutBadge,
+ * pure and tested; this side only reads storage and paints.
+ *
+ * Repainted from the storage events the capture already produces (the live
+ * match saves every three seconds, the pregame publisher stamps every half
+ * minute), plus once at worker start, so a suspended worker wakes into the
+ * right badge. A stale badge between sessions clears on the first of those.
+ */
+const BADGE_BACKGROUND = "#86a8f6"; // --accent, dashboard/dashboard.css
+const BADGE_TEXT = "#0d1626"; // --bg: dark ink on the accent, like the tiles
+const BASE_TITLE = "Rift Atlas Stats Tracker";
+
+function paintScoutBadge() {
+  try {
+    chrome.storage.local.get({ matches: [], pendingOpponent: null }, (data) => {
+      const badge = globalThis.RATrackerStats.scoutBadge(
+        (data && data.matches) || [],
+        (data && data.pendingOpponent) || null,
+        Date.now()
+      );
+      chrome.action.setBadgeText({ text: badge ? badge.text : "" });
+      chrome.action.setTitle({ title: badge ? BASE_TITLE + " — " + badge.title : BASE_TITLE });
+      if (badge) {
+        chrome.action.setBadgeBackgroundColor({ color: BADGE_BACKGROUND });
+        if (chrome.action.setBadgeTextColor) chrome.action.setBadgeTextColor({ color: BADGE_TEXT });
+      }
+    });
+  } catch (err) {
+    // A badge is a convenience; nothing about capture or storage may fail on it.
+    console.warn("[Rift Atlas] scout badge not painted:", err);
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes.pendingOpponent || changes.matches) paintScoutBadge();
+});
+paintScoutBadge();
 
 const VISUAL_PREFIX = "ra:visual:";
 /* How many matches keep a visual track. This is the *primary* storage control -

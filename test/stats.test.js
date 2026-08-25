@@ -222,3 +222,46 @@ test("battlefield stats over nothing is an empty list", () => {
   assert.deepEqual(STATS.battlefieldStats([]), []);
   assert.deepEqual(STATS.battlefieldStats(undefined), []);
 });
+
+// ---- the scout badge ---------------------------------------------------
+
+test("the badge names the live opponent's rate, and never a stale one", () => {
+  const now = Date.parse("2026-08-25T12:00:00Z");
+  const live = {
+    startedAt: new Date(now - 5 * 60000).toISOString(),
+    endedAt: null,
+    opponentChampion: "Viktor",
+  };
+  const history = [
+    game("Ashe", "Viktor", "win"),
+    game("Ashe", "Viktor", "win"),
+    game("Ashe", "Viktor", "loss"),
+  ];
+  const badge = STATS.scoutBadge([live, ...history], null, now);
+  assert.deepEqual(badge.text, "67%");
+  assert.match(badge.title, /vs Viktor: 2–1 \(67%\)/);
+
+  // A match that never closed but is hours old is not a live opponent.
+  const stale = Object.assign({}, live, { startedAt: new Date(now - 4 * 3600000).toISOString() });
+  assert.equal(STATS.scoutBadge([stale, ...history], null, now), null);
+});
+
+test("a freshly seen pregame opponent lights the badge; an old one does not", () => {
+  const now = Date.parse("2026-08-25T12:00:00Z");
+  const history = [game("Ashe", "Viktor", "loss")];
+  const fresh = { champion: "Viktor", at: now - 60000 };
+  assert.equal(STATS.scoutBadge(history, fresh, now).text, "0%");
+  const old = { champion: "Viktor", at: now - 46 * 60000 };
+  assert.equal(STATS.scoutBadge(history, old, now), null);
+});
+
+test("a first meeting still says so - no history is when scouting needs the cue", () => {
+  const now = Date.parse("2026-08-25T12:00:00Z");
+  const badge = STATS.scoutBadge([], { champion: "Teemo", at: now }, now);
+  assert.equal(badge.text, "1st");
+  assert.match(badge.title, /first meeting/);
+});
+
+test("nobody current, no badge", () => {
+  assert.equal(STATS.scoutBadge([], null, Date.now()), null);
+});

@@ -242,10 +242,68 @@
     return out.sort((a, b) => b.games - a.games || a.name.localeCompare(b.name));
   }
 
+  /* The freshness windows the toolbar badge shares with the popup's scouting
+   * block (popup/popup.js) - the badge is the cue and the popup the reading,
+   * so the two must agree on when an opponent counts as current. */
+  const SCOUT_LIVE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+  const SCOUT_PENDING_MAX_AGE_MS = 45 * 60 * 1000;
+
+  /**
+   * What the toolbar icon's badge should say, or null for no badge.
+   *
+   * The extension cannot open its own popup, so the badge is how a scouting
+   * line announces itself: your win rate against the champion across the
+   * table, on the icon, the moment they are seen. The target is the LIVE
+   * match's opponent first - that read has worked since the first release -
+   * and only then a freshly seen pregame opponent, so the badge lights even
+   * if the pregame scrape misses.
+   *
+   * "1st" for a first meeting rather than nothing: no history is exactly when
+   * a reminder that scouting exists is worth having.
+   */
+  function scoutBadge(rows, pending, now) {
+    const at = now === undefined ? Date.now() : now;
+
+    let name = null;
+    for (const m of rows || []) {
+      if (!m || m.endedAt) continue;
+      const t = startedMs(m);
+      if (t === null || at - t > SCOUT_LIVE_MAX_AGE_MS) continue;
+      const c = champ(m.opponentChampion || m.opponentLegend);
+      if (c !== "Unknown") {
+        name = c;
+        break;
+      }
+    }
+    if (!name && pending && Number.isFinite(pending.at) && at - pending.at < SCOUT_PENDING_MAX_AGE_MS) {
+      const c = champ(pending.champion || pending.legend);
+      if (c !== "Unknown") name = c;
+    }
+    if (!name) return null;
+
+    let wins = 0;
+    let losses = 0;
+    for (const m of rows || []) {
+      if (champ(m.opponentChampion || m.opponentLegend) !== name) continue;
+      if (m.result === "win") wins++;
+      else if (m.result === "loss") losses++;
+    }
+    const decided = wins + losses;
+    if (!decided) {
+      return { text: "1st", title: `vs ${name}: first meeting — click to scout` };
+    }
+    const pct = Math.round((wins / decided) * 100) + "%";
+    return {
+      text: pct,
+      title: `vs ${name}: ${wins}–${losses} (${pct}) — click for your record and matchup note`,
+    };
+  }
+
   // Same dual export as table.js: a global for the browser, CommonJS for
   // `node --test`.
   const api = {
     recentForm, weekStart, weeklyWinRate, matchupMatrix, goingFirstSplit, battlefieldStats,
+    scoutBadge,
   };
 
   root.RATrackerStats = api;
