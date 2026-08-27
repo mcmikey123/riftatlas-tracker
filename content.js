@@ -104,6 +104,11 @@
       attributeFilter: [
         "data-room-phase",
         "data-turn-number",
+        // Both scores live on the board root now, so a point scored is an
+        // attribute change here and nowhere else. Without these the only thing
+        // that would notice a win is the three-second poll.
+        "data-viewer-score",
+        "data-opponent-score",
         "aria-pressed",
         "class",
       ],

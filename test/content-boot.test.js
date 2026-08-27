@@ -129,18 +129,25 @@ test("every global content.js reaches for is published by the time it runs", () 
 
 /** The board the tests below play a whole match on, plus its score track. */
 function boardInPlay(scoreText) {
-  const score = el({ sel: ['[aria-pressed="true"] span'], text: scoreText });
+  // Both scores are attributes on the board root, so the game-state element is
+  // the whole score track as far as anything here is concerned.
+  const gameState = el({
+    sel: ['[data-testid="game-state"]'],
+    dataset: {
+      roomPhase: "in_game",
+      roomMode: "ranked",
+      turnNumber: "3",
+      viewerScore: scoreText,
+      opponentScore: "0",
+    },
+  });
   const page = el({
     kids: [
-      el({
-        sel: ['[data-testid="game-state"]'],
-        dataset: { roomPhase: "in_game", roomMode: "ranked", turnNumber: "3" },
-      }),
+      gameState,
       el({ sel: ['[data-testid="room-code"]'], dataset: { roomCode: "ABC123" } }),
-      el({ sel: ['[role="group"][aria-label="Your score track"]'], kids: [score] }),
     ],
   });
-  return { page, score };
+  return { page, gameState };
 }
 
 test("a board in play starts a match, and the sweep keeps it", () => {
@@ -171,9 +178,9 @@ test("ending a match, resuming it and ending it again drives the toast both ways
    *   a "VICTORY" banner ends it, and raises the toast;
    *   the next sweep sees the same room at the same turn with nothing decisive
    *   behind that end, reads it as false, and takes the toast down again;
-   *   the score track then reaches 8, which ends it for real.
+   *   the score on the board then reaches 8, which ends it for real.
    */
-  const { page, score } = boardInPlay("0");
+  const { page, gameState } = boardInPlay("0");
   const h = boot(page);
 
   h.sweep();
@@ -188,7 +195,7 @@ test("ending a match, resuming it and ending it again drives the toast both ways
     "the same board at the same turn is a false end, and the record is reopened"
   );
 
-  score.ownText = "8";
+  gameState.dataset.viewerScore = "8";
   h.sweep();
   assert.equal(h.sandbox.RATLifecycle.current(), null, "first to 8 ends it for good");
 

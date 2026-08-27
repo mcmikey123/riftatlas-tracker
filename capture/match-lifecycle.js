@@ -208,7 +208,7 @@
     const { verdict, clearLatch } = root.RATMatchStart.decideStart(lastEnded, {
       roomCode: code,
       turnNow: root.RATBoard.turnNumber(board) || 0,
-      myScore: root.RATBoard.myScore(),
+      myScore: root.RATBoard.myScore(board),
     });
     if (clearLatch) lastEnded = null;
     if (verdict === "suppress") return;
@@ -275,8 +275,8 @@
       m.myName = m.myName || names.mine;
       m.opponentName = m.opponentName || names.opponent;
     }
-    const myScore = read.myScore();
-    const oppScore = read.opponentScore();
+    const myScore = read.myScore(board);
+    const oppScore = read.opponentScore(board);
     if (myScore !== null && myScore > m.myScore) m.myScore = myScore;
     if (oppScore !== null && oppScore > m.opponentScore) m.opponentScore = oppScore;
     const turn = read.turnNumber(board);

@@ -9,8 +9,8 @@
  * None of these match on class names except where the site gives us nothing
  * else. This site's classes are generated utilities with literal colour values
  * baked in and are rewritten every restyle, so where one is unavoidable (the
- * opponent's score track, the actor bar on a log row) it is matched on the
- * colour it encodes and backed by a fallback.
+ * actor bar on a log row) it is matched on the colour it encodes and backed by
+ * a fallback.
  */
 (function (root) {
   "use strict";
@@ -81,32 +81,37 @@
     return names;
   }
 
-  function myScore() {
-    const group = document.querySelector(SEL.myScoreGroup);
+  /* Both scores come off the board root, next to the authoritative sequence
+   * the server stamps there - so they are the same reading for both players,
+   * and neither depends on how the track happens to be drawn this month.
+   *
+   * The tracks themselves are the fallback, and they hold no number: each node
+   * draws an SVG constellation and puts its value in the aria-label alone
+   * ("Set your score to 4"). The current node is `data-active`, which both
+   * tracks carry; `aria-pressed` is only on the track you can click, so it is
+   * tried second rather than first. A track that says neither reads as null.
+   */
+  const NODE_VALUE_RE = /(\d+)\s*$/;
+
+  function trackScore(selector) {
+    const group = document.querySelector(selector);
     if (!group) return null;
-    const active = group.querySelector('[aria-pressed="true"] span');
-    const n = active ? parseInt(active.textContent, 10) : NaN;
+    const current =
+      group.querySelector('[data-active="true"]') ||
+      group.querySelector('[aria-pressed="true"]');
+    const hit = NODE_VALUE_RE.exec(current?.getAttribute("aria-label") ?? "");
+    const n = hit ? parseInt(hit[1], 10) : NaN;
     return Number.isFinite(n) ? n : null;
   }
 
-  function opponentScore() {
-    const group = document.querySelector(SEL.oppScoreGroup);
-    if (!group) return null;
-    // Opponent nodes have no aria-pressed; the current one carries a distinct
-    // amber highlight. Fall back to the node with the longest class string.
-    const nodes = [...group.children];
-    if (!nodes.length) return null;
-    let current =
-      nodes.find((n) => n.className.includes("108,75,39")) || // amber gradient
-      nodes.find((n) => n.className.includes("255,224,181")); // amber ring
-    if (!current) {
-      current = nodes.reduce((a, b) =>
-        a.className.length >= b.className.length ? a : b
-      );
-    }
-    const n = parseInt(current.querySelector("span")?.textContent ?? "", 10);
-    return Number.isFinite(n) ? n : null;
+  function rootScore(board, key, selector) {
+    const n = parseInt(board?.dataset[key] ?? "", 10);
+    return Number.isFinite(n) ? n : trackScore(selector);
   }
+
+  const myScore = (board) => rootScore(board, "viewerScore", SEL.myScoreGroup);
+  const opponentScore = (board) =>
+    rootScore(board, "opponentScore", SEL.oppScoreGroup);
 
   // ---------- match log ----------
   //

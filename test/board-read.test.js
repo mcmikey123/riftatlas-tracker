@@ -111,81 +111,96 @@ test("a face-down card names nobody", () => {
 
 const scoreGroup = (selector, kids) => el({ sel: [selector], kids });
 
-test("your score is the pressed node of your track", () => {
+/* A board root as the site stamps it: both scores are attributes on the element
+ * the phase and turn number already come from. */
+const boardEl = (dataset) => el({ dataset });
+
+/* A score track as the site draws it: constellation nodes holding no text at
+ * all, each one naming its value in an aria-label, the current one marked
+ * data-active. Only the track you can click also carries aria-pressed. */
+const trackNode = (value, { active = false, pressed = null } = {}) =>
+  el({
+    sel: active ? ['[data-active="true"]'] : pressed ? ['[aria-pressed="true"]'] : [],
+    attrs: { "aria-label": `Set your score to ${value}` },
+  });
+
+const scoreTrack = (selector, kids) => el({ sel: [selector], kids });
+
+const MY_TRACK = '[role="group"][aria-label="Your score track"]';
+const OPP_TRACK = '[role="group"][aria-label="Opponent score track"]';
+
+test("both scores come off the board root", () => {
+  const gs = boardEl({ viewerScore: "8", opponentScore: "3" });
+  onPage(el({}), () => {
+    assert.equal(board.myScore(gs), 8);
+    assert.equal(board.opponentScore(gs), 3);
+  });
+});
+
+test("a zero on the root is a zero, not a miss", () => {
+  /* The one reading the old text scrape could not tell apart from an
+   * unreadable track, and the reason a fresh board is not silently 8-0. */
+  const gs = boardEl({ viewerScore: "0", opponentScore: "0" });
+  onPage(el({}), () => {
+    assert.equal(board.myScore(gs), 0);
+    assert.equal(board.opponentScore(gs), 0);
+  });
+});
+
+test("without the root attributes, the track's active node answers", () => {
+  // The nodes hold no text - the number is in the aria-label alone.
   const page = el({
     kids: [
-      scoreGroup('[role="group"][aria-label="Your score track"]', [
-        el({ kids: [el({ tag: "span", text: "5", sel: ['[aria-pressed="true"] span'] })] }),
+      scoreTrack(MY_TRACK, [
+        trackNode(0),
+        trackNode(5, { active: true, pressed: true }),
+        trackNode(8),
       ]),
+      scoreTrack(OPP_TRACK, [trackNode(1), trackNode(4, { active: true })]),
     ],
   });
-  onPage(page, () => assert.equal(board.myScore(), 5));
+  const gs = boardEl({});
+  onPage(page, () => {
+    assert.equal(board.myScore(gs), 5);
+    // The opponent's track is not clickable, so it has no aria-pressed at all:
+    // data-active is the only mark the two tracks share.
+    assert.equal(board.opponentScore(gs), 4);
+  });
 });
 
-test("an unreadable score track is null, not zero", () => {
-  onPage(el({}), () => assert.equal(board.myScore(), null, "no track at all"));
-
-  const empty = el({
-    kids: [scoreGroup('[role="group"][aria-label="Your score track"]', [])],
+test("aria-pressed still answers where data-active is not written", () => {
+  const page = el({
+    kids: [scoreTrack(MY_TRACK, [trackNode(0), trackNode(6, { pressed: true })])],
   });
-  onPage(empty, () => assert.equal(board.myScore(), null, "a track with nothing pressed"));
-
-  const nonsense = el({
-    kids: [
-      scoreGroup('[role="group"][aria-label="Your score track"]', [
-        el({ kids: [el({ tag: "span", text: "—", sel: ['[aria-pressed="true"] span'] })] }),
-      ]),
-    ],
-  });
-  onPage(nonsense, () => assert.equal(board.myScore(), null, "a track showing no number"));
+  onPage(page, () => assert.equal(board.myScore(boardEl({})), 6));
 });
 
-test("the opponent's score is found by the amber highlight, then by fallback", () => {
-  /* Their nodes carry no aria-pressed, so the current one is identified by a
-   * colour baked into a generated class name - with the longest class string
-   * as a fallback, because that colour is exactly the kind of thing a restyle
-   * changes. */
-  const node = (className, value) =>
-    el({ className, kids: [el({ tag: "span", text: value, sel: ["span"] })] });
-
-  const gradient = el({
-    kids: [
-      scoreGroup('[role="group"][aria-label="Opponent score track"]', [
-        node("bg-[rgb(20,20,20)]", "1"),
-        node("bg-[rgb(108,75,39)]", "4"),
-        node("bg-[rgb(20,20,20)]", "7"),
-      ]),
-    ],
+test("an unreadable score is null, not zero", () => {
+  const blank = boardEl({});
+  onPage(el({}), () => {
+    assert.equal(board.myScore(blank), null, "no root attribute and no track");
+    assert.equal(board.myScore(null), null, "no board at all");
   });
-  onPage(gradient, () => assert.equal(board.opponentScore(), 4, "the amber gradient"));
 
-  const ring = el({
-    kids: [
-      scoreGroup('[role="group"][aria-label="Opponent score track"]', [
-        node("plain", "1"),
-        node("ring-[rgb(255,224,181)]", "6"),
-      ]),
-    ],
-  });
-  onPage(ring, () => assert.equal(board.opponentScore(), 6, "the amber ring"));
-
-  const restyled = el({
-    kids: [
-      scoreGroup('[role="group"][aria-label="Opponent score track"]', [
-        node("a", "1"),
-        node("this-node-carries-far-more-classes-than-the-others", "3"),
-        node("b", "5"),
-      ]),
-    ],
-  });
-  onPage(restyled, () =>
-    assert.equal(board.opponentScore(), 3, "neither colour: the busiest node wins")
+  const nothingCurrent = el({ kids: [scoreTrack(MY_TRACK, [trackNode(0), trackNode(1)])] });
+  onPage(nothingCurrent, () =>
+    assert.equal(board.myScore(blank), null, "a track with nothing marked current")
   );
 
-  const empty = el({
-    kids: [scoreGroup('[role="group"][aria-label="Opponent score track"]', [])],
+  const unlabelled = el({
+    kids: [scoreTrack(MY_TRACK, [el({ sel: ['[data-active="true"]'], attrs: {} })])],
   });
-  onPage(empty, () => assert.equal(board.opponentScore(), null));
+  onPage(unlabelled, () =>
+    assert.equal(board.myScore(blank), null, "a current node naming no number")
+  );
+
+  onPage(el({}), () =>
+    assert.equal(
+      board.myScore(boardEl({ viewerScore: "" })),
+      null,
+      "an empty attribute is not a zero"
+    )
+  );
 });
 
 // ---------- player names ----------
