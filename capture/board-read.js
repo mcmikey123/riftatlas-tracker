@@ -8,9 +8,10 @@
  *
  * None of these match on class names except where the site gives us nothing
  * else. This site's classes are generated utilities with literal colour values
- * baked in and are rewritten every restyle, so where one is unavoidable (the
- * actor bar on a log row) it is matched on the colour it encodes and backed by
- * a fallback.
+ * baked in and are rewritten every restyle, so the two readings that still
+ * need one are both hedged: the actor bar on a log row is matched on the
+ * colour it encodes and backed by a fallback, and the letter rails ARE the
+ * fallback, behind a reading of the same names that needs no classes at all.
  */
 (function (root) {
   "use strict";
@@ -85,10 +86,11 @@
    * positioned from the left.
    *
    * Kept as the fallback, but it is the weakest reading in this file and the
-   * only one whose failure is a wrong answer rather than no answer - the rail
-   * selector matches the badges' own inner grid too, so the pool it picks the
-   * FIRST match from is no longer only rails. The single-character filter is
-   * all that currently keeps a badge out of it. */
+   * only one whose failure is a wrong answer rather than no answer - it takes
+   * the FIRST match in the document, and the badges' own inner grid answers
+   * the same selector. Since the rails only run when a badge is missing, that
+   * pool always contains the badge that DID answer, so the badges are skipped
+   * outright rather than left to the single-character span filter. */
   function railNames() {
     const names = { mine: null, opponent: null };
     try {
@@ -96,6 +98,10 @@
         ".grid.content-center.justify-items-center"
       );
       for (const rail of rails) {
+        // A badge's own grid is not a rail: it would spell that player's name
+        // onto whichever side is missing a badge, and the lifecycle keeps the
+        // first name it is handed for the rest of the match.
+        if (rail.closest("[data-player-identity-trigger]")) continue;
         const spans = [...rail.querySelectorAll("span")].filter(
           (s) => s.textContent.length === 1
         );

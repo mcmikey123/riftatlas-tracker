@@ -281,10 +281,16 @@
     if (oppScore !== null && oppScore > m.opponentScore) m.opponentScore = oppScore;
     const turn = read.turnNumber(board);
     if (Number.isFinite(turn) && turn > m.turns) m.turns = turn;
-    /* Who went first, taken off the board while turn 1 is still live. The log
-     * fallback in captureLog() can only answer while the opening is still
-     * inside the capped log, so a game we watch from turn 1 should never have
-     * to go looking for it there. */
+    /* The log gets first refusal on who went first: it reads the turn end
+     * itself, where the board only names whoever is on turn now. If this
+     * site's turn number ever counts rounds rather than player-turns, turn 1
+     * is still showing after the opener has ended theirs and the board would
+     * name the SECOND player as the opener - so where both can answer, the
+     * one that is not inferring wins. */
+    captureLog();
+    /* Who went first, off the board while turn 1 is still live. The log can
+     * only answer while the opening is still inside the capped log, so a game
+     * we watch from turn 1 should never have to go looking for it there. */
     if (m.wentFirst == null && turn === 1) {
       const side = read.activeSide(board);
       if (side) {
@@ -292,7 +298,6 @@
         console.info("[RA-Tracker] first turn:", m.wentFirst ? "you" : "opponent");
       }
     }
-    captureLog();
     root.RATDeckCards.collect(board, m.id);
     root.RATRec && root.RATRec.mark(Number.isFinite(turn) ? turn : m.turns);
 

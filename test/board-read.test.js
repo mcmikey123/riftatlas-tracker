@@ -3,11 +3,11 @@
 /* The board scrapes, driven against a page.
  *
  * These moved out of content.js verbatim, where nothing could reach them. Each
- * one exists because the site gives us no clean hook for the fact it reads -
- * player names are a rail of rotated single letters, the opponent's current
- * score is identified by a colour baked into a generated class name - so each
- * carries a heuristic and a fallback, and a heuristic nothing drives is a
- * heuristic that rots.
+ * one exists because the site gives us no single clean hook for the fact it
+ * reads - a score is an attribute on the board root or else a track node that
+ * spells its value in an aria-label, a name is an identity badge or else a
+ * rail of rotated single letters - so each carries a reading and a fallback,
+ * and a fallback nothing drives is a fallback that rots.
  *
  * The contract they share is that a MISS IS NOT A ZERO. Every caller treats
  * null as "keep what you had", so a half-rendered score track must read as
@@ -109,8 +109,6 @@ test("a face-down card names nobody", () => {
 
 // ---------- scores ----------
 
-const scoreGroup = (selector, kids) => el({ sel: [selector], kids });
-
 /* A board root as the site stamps it: both scores are attributes on the element
  * the phase and turn number already come from. */
 const boardEl = (dataset) => el({ dataset });
@@ -118,9 +116,12 @@ const boardEl = (dataset) => el({ dataset });
 /* A score track as the site draws it: constellation nodes holding no text at
  * all, each one naming its value in an aria-label, the current one marked
  * data-active. Only the track you can click also carries aria-pressed. */
-const trackNode = (value, { active = false, pressed = null } = {}) =>
+const trackNode = (value, { active = false, pressed = false } = {}) =>
   el({
-    sel: active ? ['[data-active="true"]'] : pressed ? ['[aria-pressed="true"]'] : [],
+    sel: [
+      ...(active ? ['[data-active="true"]'] : []),
+      ...(pressed ? ['[aria-pressed="true"]'] : []),
+    ],
     attrs: { "aria-label": `Set your score to ${value}` },
   });
 
@@ -175,6 +176,19 @@ test("aria-pressed still answers where data-active is not written", () => {
   onPage(page, () => assert.equal(board.myScore(boardEl({})), 6));
 });
 
+test("data-active outranks an aria-pressed sitting on a different node", () => {
+  /* The two marks can disagree: aria-pressed is what your track was last
+   * clicked to, data-active is where the game says you are. The stale one is
+   * earlier in the track, so document order would pick it if order were what
+   * decided this. */
+  const page = el({
+    kids: [
+      scoreTrack(MY_TRACK, [trackNode(2, { pressed: true }), trackNode(7, { active: true })]),
+    ],
+  });
+  onPage(page, () => assert.equal(board.myScore(boardEl({})), 7));
+});
+
 test("an unreadable score is null, not zero", () => {
   const blank = boardEl({});
   onPage(el({}), () => {
@@ -221,23 +235,27 @@ test("the side on turn is whichever player id the root names", () => {
 
 // ---------- player names ----------
 
+/** The one-character-per-span grid a rail is made of - and, as it turns out,
+ *  the same grid an identity badge draws its initials in. */
+const letterGrid = (className, letters) =>
+  el({
+    className: "grid content-center justify-items-center",
+    sel: [".grid.content-center.justify-items-center"],
+    kids: letters.map((c) => el({ tag: "span", className, text: c, sel: ["span"] })),
+  });
+
 const rail = (className, letters, containerClass) =>
   el({
     className: containerClass,
     sel: ['div[class*="absolute"]'],
-    kids: [
-      el({
-        className: "grid content-center justify-items-center",
-        sel: [".grid.content-center.justify-items-center"],
-        kids: letters.map((c) => el({ tag: "span", className, text: c, sel: ["span"] })),
-      }),
-    ],
+    kids: [letterGrid(className, letters)],
   });
 
-const badge = (side, label) =>
+const badge = (side, label, initials) =>
   el({
-    sel: [`[data-player-identity-trigger="${side}"]`],
+    sel: [`[data-player-identity-trigger="${side}"]`, "[data-player-identity-trigger]"],
     attrs: { "aria-label": label },
+    kids: initials ? [letterGrid("", initials)] : [],
   });
 
 test("names come off the identity badges, which say whose they are", () => {
@@ -268,6 +286,26 @@ test("the rails fill in only the badge that is missing", () => {
   });
   onPage(page, () =>
     assert.deepEqual(board.playerNames(), { mine: "ME", opponent: "Oathion" })
+  );
+});
+
+test("a badge's own initials are not read as the other player's name", () => {
+  /* The rails only run when a badge is missing, so the badge that DID answer
+   * is still in the document - drawn in the same grid the rail selector asks
+   * for, and sitting in a left-positioned container that makes it look like
+   * the left rail. Read as one, it would spell the opponent's initials onto
+   * YOUR name, and the lifecycle keeps the first name it is handed. */
+  const page = el({
+    kids: [
+      el({
+        className: "absolute left-[10px]",
+        sel: ['div[class*="absolute"]'],
+        kids: [badge("opponent", "Oathion menu", ["O", "A"])],
+      }),
+    ],
+  });
+  onPage(page, () =>
+    assert.deepEqual(board.playerNames(), { mine: null, opponent: "Oathion" })
   );
 });
 

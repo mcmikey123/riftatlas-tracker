@@ -127,7 +127,7 @@ test("every global content.js reaches for is published by the time it runs", () 
   assert.deepEqual(h.warnings, [], "a swallowed throw here is a capture that never runs");
 });
 
-/** The board the tests below play a whole match on, plus its score track. */
+/** The board the tests below play a whole match on, scores and all. */
 function boardInPlay(scoreText) {
   // Both scores are attributes on the board root, so the game-state element is
   // the whole score track as far as anything here is concerned.
@@ -173,7 +173,7 @@ test("ending a match, resuming it and ending it again drives the toast both ways
    * left the suite green and every finished match throwing inside the tick,
    * where content.js catches it and prints one warning per frame.
    *
-   * So the score track is on the board and the match is played to its end:
+   * So the board carries both scores and the match is played to its end:
    *
    *   a "VICTORY" banner ends it, and raises the toast;
    *   the next sweep sees the same room at the same turn with nothing decisive

@@ -554,6 +554,30 @@ test("who went first is taken off the board while turn 1 is live", () => {
   assert.equal(m.wentFirst, true, "turn 2 is not who went first");
 });
 
+test("a board that opens on the opponent records them as going first", () => {
+  /* The other half of the same read. `false` is an answer and has to survive
+   * as one: every guard downstream tests wentFirst for null, so a side that
+   * answered must never look like a side that did not. */
+  const h = harness();
+  h.board.activeSide = "opponent";
+  const m = h.play();
+  assert.equal(m.wentFirst, false);
+  assert.ok(h.logs.some((l) => l.includes("first turn: opponent")));
+});
+
+test("the log outranks the board on who went first", () => {
+  /* Both can answer on turn 1, and they can disagree: the log reads the turn
+   * END, the board only names whoever is on turn right now. Should the site's
+   * turn number ever count rounds instead of player-turns, turn 1 is still
+   * showing once the opener has passed and the board would name the player
+   * who went SECOND. The reading that is not inferring goes first. */
+  const h = harness();
+  h.board.activeSide = "self";
+  h.board.log = [{ t: "16:11", actor: "opponent", text: "Oathion ended their turn." }];
+  const m = h.play();
+  assert.equal(m.wentFirst, false);
+});
+
 test("a match joined after turn 1 leaves who went first to the log", () => {
   // Nothing on the board says who opened once the opening turn has passed, and
   // a guess from whoever happens to be on turn now would be wrong half the time.
