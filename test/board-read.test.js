@@ -203,6 +203,22 @@ test("an unreadable score is null, not zero", () => {
   );
 });
 
+// ---------- who is on turn ----------
+
+test("the side on turn is whichever player id the root names", () => {
+  const gs = (dataset) => el({ dataset });
+  onPage(el({}), () => {
+    const ids = { viewerPlayerId: "plr_me", opponentPlayerId: "plr_them" };
+    assert.equal(board.activeSide(gs({ ...ids, activePlayerId: "plr_me" })), "self");
+    assert.equal(board.activeSide(gs({ ...ids, activePlayerId: "plr_them" })), "opponent");
+    // A third id belongs to neither of them, and is not a guess to make.
+    assert.equal(board.activeSide(gs({ ...ids, activePlayerId: "plr_other" })), null);
+    assert.equal(board.activeSide(gs(ids)), null, "nobody on turn");
+    assert.equal(board.activeSide(gs({})), null, "a root carrying no ids");
+    assert.equal(board.activeSide(null), null, "no board at all");
+  });
+});
+
 // ---------- player names ----------
 
 const rail = (className, letters, containerClass) =>
@@ -217,6 +233,43 @@ const rail = (className, letters, containerClass) =>
       }),
     ],
   });
+
+const badge = (side, label) =>
+  el({
+    sel: [`[data-player-identity-trigger="${side}"]`],
+    attrs: { "aria-label": label },
+  });
+
+test("names come off the identity badges, which say whose they are", () => {
+  const page = el({
+    kids: [badge("player", "curtyo menu"), badge("opponent", "Oathion menu")],
+  });
+  onPage(page, () =>
+    assert.deepEqual(board.playerNames(), { mine: "curtyo", opponent: "Oathion" })
+  );
+});
+
+test("a badge naming nobody is not a name", () => {
+  const page = el({ kids: [badge("player", "menu"), badge("opponent", "")] });
+  onPage(page, () =>
+    assert.deepEqual(board.playerNames(), { mine: null, opponent: null })
+  );
+});
+
+test("the rails fill in only the badge that is missing", () => {
+  /* The two readings are independent: one badge answering is no reason to
+   * stop looking for the other, and no reason to overwrite the one that did. */
+  const page = el({
+    kids: [
+      badge("opponent", "Oathion menu"),
+      rail("rotate-90", ["M", "E"], "absolute left-[10px]"),
+      rail("rotate-90", ["W", "R", "O", "N", "G"], "absolute right-[10px]"),
+    ],
+  });
+  onPage(page, () =>
+    assert.deepEqual(board.playerNames(), { mine: "ME", opponent: "Oathion" })
+  );
+});
 
 test("names are read off the rotated letter rails, left rail first", () => {
   const page = el({

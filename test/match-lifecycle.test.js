@@ -95,6 +95,7 @@ function harness(seed) {
       turnNumber: () => board.turn,
       cardAlt: (owner, zone) => board.cards[owner + "/" + zone] || null,
       playerNames: () => board.names,
+      activeSide: () => board.activeSide || null,
       myScore: () => board.myScore,
       opponentScore: () => board.opponentScore,
       logEntries: () => board.log.slice(),
@@ -535,6 +536,39 @@ test("the turn count follows the board and is handed to the recorder", () => {
   h.life.refresh(h.board.element);
   assert.equal(m.turns, 7);
   assert.ok(h.recorder.includes("rec-mark:7"));
+});
+
+test("who went first is taken off the board while turn 1 is live", () => {
+  /* The log fallback can only answer while the opening is still inside the
+   * capped log, so a game watched from its first turn must never depend on it.
+   * The reading is taken once and then left alone - the board goes on naming a
+   * different active player every turn after this one. */
+  const h = harness();
+  h.board.activeSide = "self";
+  const m = h.play();
+  assert.equal(m.wentFirst, true);
+
+  h.board.turn = 2;
+  h.board.activeSide = "opponent";
+  h.life.refresh(h.board.element);
+  assert.equal(m.wentFirst, true, "turn 2 is not who went first");
+});
+
+test("a match joined after turn 1 leaves who went first to the log", () => {
+  // Nothing on the board says who opened once the opening turn has passed, and
+  // a guess from whoever happens to be on turn now would be wrong half the time.
+  const h = harness();
+  h.board.turn = 4;
+  h.board.activeSide = "self";
+  const m = h.play();
+  assert.equal(m.wentFirst, null);
+});
+
+test("a board that names nobody on turn 1 leaves who went first unread", () => {
+  const h = harness();
+  h.board.activeSide = null;
+  const m = h.play();
+  assert.equal(m.wentFirst, null);
 });
 
 test("scores only ever climb", () => {

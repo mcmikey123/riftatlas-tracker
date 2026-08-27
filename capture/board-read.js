@@ -52,9 +52,44 @@
     return null;
   }
 
-  function playerNames() {
-    // Player names are rendered as vertical letter rails next to the score tracks.
-    // rotate-90 letters read top-to-bottom in order; -rotate-90 read reversed.
+  /* Which side is on turn, from the ids the board root carries. Null when it
+   * names nobody, or names somebody who is neither of the two players. */
+  function activeSide(board) {
+    const d = board?.dataset;
+    if (!d || !d.activePlayerId) return null;
+    if (d.viewerPlayerId && d.activePlayerId === d.viewerPlayerId) return "self";
+    if (d.opponentPlayerId && d.activePlayerId === d.opponentPlayerId) {
+      return "opponent";
+    }
+    return null;
+  }
+
+  // ---------- player names ----------
+  //
+  // Each player has an identity badge that says which side it belongs to and
+  // carries the name in its aria-label ("curtyo menu").
+  const BADGE = {
+    mine: '[data-player-identity-trigger="player"]',
+    opponent: '[data-player-identity-trigger="opponent"]',
+  };
+  const MENU_SUFFIX_RE = /\s*menu$/i;
+
+  function badgeName(selector) {
+    const label = document.querySelector(selector)?.getAttribute("aria-label");
+    const name = (label || "").replace(MENU_SUFFIX_RE, "").trim();
+    return name || null;
+  }
+
+  /* The letter rails the badges replaced: names spelled out one character per
+   * span, rotated, and told apart by which of them sits in a container
+   * positioned from the left.
+   *
+   * Kept as the fallback, but it is the weakest reading in this file and the
+   * only one whose failure is a wrong answer rather than no answer - the rail
+   * selector matches the badges' own inner grid too, so the pool it picks the
+   * FIRST match from is no longer only rails. The single-character filter is
+   * all that currently keeps a badge out of it. */
+  function railNames() {
     const names = { mine: null, opponent: null };
     try {
       const rails = document.querySelectorAll(
@@ -79,6 +114,20 @@
       /* names are optional */
     }
     return names;
+  }
+
+  function playerNames() {
+    const names = {
+      mine: badgeName(BADGE.mine),
+      opponent: badgeName(BADGE.opponent),
+    };
+    if (names.mine && names.opponent) return names;
+    // One badge read is not the other's problem: fill only what is missing.
+    const rails = railNames();
+    return {
+      mine: names.mine || rails.mine,
+      opponent: names.opponent || rails.opponent,
+    };
   }
 
   /* Both scores come off the board root, next to the authoritative sequence
@@ -176,6 +225,7 @@
     turnNumber,
     cardAlt,
     playerNames,
+    activeSide,
     myScore,
     opponentScore,
     logEntries,
