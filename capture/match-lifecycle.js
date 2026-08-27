@@ -127,6 +127,10 @@
       deckName: "",
       deckSource: null, // 'picker' | 'board' | 'url' | 'last' | 'manual' | …
       matchFormat: null, // 'bo1' | 'bo3' | null when the lobby never said
+      // 'live' = the lobby was on screen when this match began; 'memory' = it
+      // was not, and this is the last format seen. dashboard/series.js will
+      // not raise a series around a single game on a remembered one.
+      matchFormatSource: null,
       wentFirst: null, // true = you opened, false = they did, null = never read
       log: [], // [{t, actor: self|opponent|system, text}]
       schemaVersion: SCHEMA_VERSION,
@@ -231,10 +235,13 @@
     attributeDeck(currentMatch);
 
     // Format: left null when nothing can say - the dashboard would rather be
-    // told nothing than be told a format that was never on screen.
+    // told nothing than be told a format that was never on screen. Where it
+    // came from is filed with it, because a remembered format is a guess about
+    // a screen that has gone and the dashboard weighs the two differently.
     const fmt = root.RATMatchFormat.current();
-    currentMatch.matchFormat = fmt;
-    if (fmt) console.info("[RA-Tracker] match format:", fmt);
+    currentMatch.matchFormat = fmt ? fmt.format : null;
+    currentMatch.matchFormatSource = fmt ? fmt.source : null;
+    if (fmt) console.info("[RA-Tracker] match format:", fmt.format, "(" + fmt.source + ")");
 
     adoptOrSave(currentMatch);
     console.info("[RA-Tracker] match started", currentMatch.roomCode);

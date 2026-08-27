@@ -320,14 +320,42 @@ test("the format a match is filed under is the live read, else the remembered on
   at(seen, () => onPage(pressed("Best of 3"), () => matchFormat.watch()));
 
   // The lobby has unmounted by the time the board mounts, which is the case
-  // that matters: the memory is what answers.
-  at(seen + 1000, () => onPage(el({}), () => assert.equal(matchFormat.current(), "bo3")));
+  // that matters: the memory is what answers, and says so.
+  at(seen + 1000, () =>
+    onPage(el({}), () =>
+      assert.deepEqual(matchFormat.current(), { format: "bo3", source: "memory" })
+    )
+  );
 
   // A live read always beats it.
-  at(seen + 2000, () => onPage(pressed("Best of 1"), () => assert.equal(matchFormat.current(), "bo1")));
+  at(seen + 2000, () =>
+    onPage(pressed("Best of 1"), () =>
+      assert.deepEqual(matchFormat.current(), { format: "bo1", source: "live" })
+    )
+  );
 
-  // And a memory older than the deck picker's window is not a format anybody
+  // And a memory older than the format's own window is not a format anybody
   // chose for this game.
-  const stale = seen + globalThis.RATDeckName.DECK_MEMORY_MS + 1;
+  const stale = seen + matchFormat.FORMAT_MEMORY_MS + 1;
   at(stale, () => onPage(el({}), () => assert.equal(matchFormat.current(), null)));
+});
+
+test("the format memory ages out long before the deck picker's does", () => {
+  /* The bug this window exists for: a Bo1 joined by room code, with no lobby
+   * ever on screen, filed as a Bo3 because an unrelated Bo3 lobby had been
+   * looked at within the deck's two hours. Nothing on the board states a
+   * format, so there is no second chance to notice - only the window. */
+  assert.ok(
+    matchFormat.FORMAT_MEMORY_MS < globalThis.RATDeckName.DECK_MEMORY_MS,
+    "the format must not inherit the deck's window again"
+  );
+
+  const seen = 9_000_000;
+  at(seen, () => onPage(pressed("Best of 3"), () => matchFormat.watch()));
+  const afterFormatWindow = seen + matchFormat.FORMAT_MEMORY_MS + 1;
+  at(afterFormatWindow, () => onPage(el({}), () => assert.equal(matchFormat.current(), null)));
+  assert.ok(
+    afterFormatWindow - seen < globalThis.RATDeckName.DECK_MEMORY_MS,
+    "and the case must fall inside the deck's window, or it proves nothing"
+  );
 });

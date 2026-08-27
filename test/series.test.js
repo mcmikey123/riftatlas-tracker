@@ -238,6 +238,48 @@ test("a lone Bo1 is never a series", () => {
   assert.equal(byId(out, "solo").seriesId, null);
 });
 
+test("a lone Bo3 nobody watched being chosen is not a series", () => {
+  /* The real bug: a Bo1 joined by room code, with no lobby ever on screen,
+   * inherits the last format anybody looked at. On its own that format is the
+   * only thing arguing for a series, so it has to have been read rather than
+   * recalled - one game wearing a borrowed "bo3" is a match, not a Bo3 that
+   * ended early. */
+  const out = run([
+    match({ id: "solo", result: "win", matchFormat: "bo3", matchFormatSource: "memory" }),
+  ]);
+  assert.equal(byId(out, "solo").seriesId, null);
+  assert.equal(byId(out, "solo").seriesFormat, null);
+});
+
+test("a lone Bo3 read off the lobby is a series", () => {
+  // The other side of the same rule: the lobby WAS on screen, so this really
+  // is a best-of-three that ended after game one.
+  const out = run([
+    match({ id: "solo", result: "loss", matchFormat: "bo3", matchFormatSource: "live" }),
+  ]);
+  assert.equal(byId(out, "solo").seriesGame, 1);
+});
+
+test("a lone Bo3 from before the source was recorded is left alone", () => {
+  /* Records written before capture/match-format.js filed a source carry none.
+   * They were filed under the old window and some of them are wrong, but
+   * re-judging them now would dissolve series the player has been looking at
+   * for months - so an absent source is trusted where "memory" is not. */
+  const out = run([match({ id: "solo", result: "win", matchFormat: "bo3" })]);
+  assert.equal(byId(out, "solo").seriesGame, 1);
+});
+
+test("two games agreeing on a remembered bo3 are still a series", () => {
+  // Agreeing twice is evidence in a way one game cannot be, and the run is
+  // real whatever the lobby said - so the memory is enough here.
+  const games = backToBack(["win", "loss"], {
+    matchFormat: "bo3",
+    matchFormatSource: "memory",
+  });
+  const out = run(games);
+  assert.equal(S.group(out)[0].games.length, 2);
+});
+
 test("a series takes its format from the games, not from the fallback", () => {
   const games = backToBack(["win", "loss"], { matchFormat: "bo3" });
   // The fallback is what old records without a captured format get; a record

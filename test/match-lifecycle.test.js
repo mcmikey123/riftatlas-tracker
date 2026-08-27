@@ -149,7 +149,8 @@ function harness(seed) {
     toasts,
     recorder,
     life: sandbox.RATLifecycle,
-    setFormat: (f) => (format = f),
+    /** @param {?string} f @param {string} [source] - 'live' | 'memory'. */
+    setFormat: (f, source) => (format = f ? { format: f, source: source || "live" } : null),
     setDeckSources: (s) => (deckVerdictSources = s),
     setLastDeck: (name) => (lastDeckOnDisk = name),
     /** The record as it stands in the stored `matches` array. */
@@ -507,10 +508,29 @@ test("the deck is named at the start and the format is filed with it", () => {
   assert.equal(m.deckName, "Bandle Bomb");
   assert.equal(m.deckSource, "picker");
   assert.equal(m.matchFormat, "bo3");
+  assert.equal(m.matchFormatSource, "live");
   assert.ok(
     h.recorder.includes("deck-pending-cleared"),
     "pre-game deck sightings are dropped once a game has claimed them"
   );
+});
+
+test("a remembered format is filed as remembered, not as read", () => {
+  /* The difference the record has to carry: dashboard/series.js will not raise
+   * a series around a single game on a format nobody was watching be chosen. */
+  const h = harness();
+  h.setFormat("bo3", "memory");
+  const m = h.play();
+  assert.equal(m.matchFormat, "bo3");
+  assert.equal(m.matchFormatSource, "memory");
+});
+
+test("a match nothing can name a format for carries neither", () => {
+  const h = harness();
+  h.setFormat(null);
+  const m = h.play();
+  assert.equal(m.matchFormat, null);
+  assert.equal(m.matchFormatSource, null);
 });
 
 test("a match nothing can name falls back to the deck used last", () => {
