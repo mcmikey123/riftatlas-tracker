@@ -127,6 +127,10 @@
       deckName: "",
       deckSource: null, // 'picker' | 'board' | 'url' | 'last' | 'manual' | …
       matchFormat: null, // 'bo1' | 'bo3' | null when the lobby never said
+      // 'live' = the lobby was on screen when this match began; 'memory' = it
+      // was not, and this is the last format seen. dashboard/series.js will
+      // not raise a series around a single game on a remembered one.
+      matchFormatSource: null,
       wentFirst: null, // true = you opened, false = they did, null = never read
       log: [], // [{t, actor: self|opponent|system, text}]
       schemaVersion: SCHEMA_VERSION,
@@ -208,7 +212,7 @@
     const { verdict, clearLatch } = root.RATMatchStart.decideStart(lastEnded, {
       roomCode: code,
       turnNow: root.RATBoard.turnNumber(board) || 0,
-      myScore: root.RATBoard.myScore(),
+      myScore: root.RATBoard.myScore(board),
     });
     if (clearLatch) lastEnded = null;
     if (verdict === "suppress") return;
@@ -231,10 +235,13 @@
     attributeDeck(currentMatch);
 
     // Format: left null when nothing can say - the dashboard would rather be
-    // told nothing than be told a format that was never on screen.
+    // told nothing than be told a format that was never on screen. Where it
+    // came from is filed with it, because a remembered format is a guess about
+    // a screen that has gone and the dashboard weighs the two differently.
     const fmt = root.RATMatchFormat.current();
-    currentMatch.matchFormat = fmt;
-    if (fmt) console.info("[RA-Tracker] match format:", fmt);
+    currentMatch.matchFormat = fmt ? fmt.format : null;
+    currentMatch.matchFormatSource = fmt ? fmt.source : null;
+    if (fmt) console.info("[RA-Tracker] match format:", fmt.format, "(" + fmt.source + ")");
 
     adoptOrSave(currentMatch);
     console.info("[RA-Tracker] match started", currentMatch.roomCode);
@@ -275,13 +282,29 @@
       m.myName = m.myName || names.mine;
       m.opponentName = m.opponentName || names.opponent;
     }
-    const myScore = read.myScore();
-    const oppScore = read.opponentScore();
+    const myScore = read.myScore(board);
+    const oppScore = read.opponentScore(board);
     if (myScore !== null && myScore > m.myScore) m.myScore = myScore;
     if (oppScore !== null && oppScore > m.opponentScore) m.opponentScore = oppScore;
     const turn = read.turnNumber(board);
     if (Number.isFinite(turn) && turn > m.turns) m.turns = turn;
+    /* The log gets first refusal on who went first: it reads the turn end
+     * itself, where the board only names whoever is on turn now. If this
+     * site's turn number ever counts rounds rather than player-turns, turn 1
+     * is still showing after the opener has ended theirs and the board would
+     * name the SECOND player as the opener - so where both can answer, the
+     * one that is not inferring wins. */
     captureLog();
+    /* Who went first, off the board while turn 1 is still live. The log can
+     * only answer while the opening is still inside the capped log, so a game
+     * we watch from turn 1 should never have to go looking for it there. */
+    if (m.wentFirst == null && turn === 1) {
+      const side = read.activeSide(board);
+      if (side) {
+        m.wentFirst = side === "self";
+        console.info("[RA-Tracker] first turn:", m.wentFirst ? "you" : "opponent");
+      }
+    }
     root.RATDeckCards.collect(board, m.id);
     root.RATRec && root.RATRec.mark(Number.isFinite(turn) ? turn : m.turns);
 

@@ -95,6 +95,7 @@ function harness(seed) {
       turnNumber: () => board.turn,
       cardAlt: (owner, zone) => board.cards[owner + "/" + zone] || null,
       playerNames: () => board.names,
+      activeSide: () => board.activeSide || null,
       myScore: () => board.myScore,
       opponentScore: () => board.opponentScore,
       logEntries: () => board.log.slice(),
@@ -148,7 +149,8 @@ function harness(seed) {
     toasts,
     recorder,
     life: sandbox.RATLifecycle,
-    setFormat: (f) => (format = f),
+    /** @param {?string} f @param {string} [source] - 'live' | 'memory'. */
+    setFormat: (f, source) => (format = f ? { format: f, source: source || "live" } : null),
     setDeckSources: (s) => (deckVerdictSources = s),
     setLastDeck: (name) => (lastDeckOnDisk = name),
     /** The record as it stands in the stored `matches` array. */
@@ -506,10 +508,29 @@ test("the deck is named at the start and the format is filed with it", () => {
   assert.equal(m.deckName, "Bandle Bomb");
   assert.equal(m.deckSource, "picker");
   assert.equal(m.matchFormat, "bo3");
+  assert.equal(m.matchFormatSource, "live");
   assert.ok(
     h.recorder.includes("deck-pending-cleared"),
     "pre-game deck sightings are dropped once a game has claimed them"
   );
+});
+
+test("a remembered format is filed as remembered, not as read", () => {
+  /* The difference the record has to carry: dashboard/series.js will not raise
+   * a series around a single game on a format nobody was watching be chosen. */
+  const h = harness();
+  h.setFormat("bo3", "memory");
+  const m = h.play();
+  assert.equal(m.matchFormat, "bo3");
+  assert.equal(m.matchFormatSource, "memory");
+});
+
+test("a match nothing can name a format for carries neither", () => {
+  const h = harness();
+  h.setFormat(null);
+  const m = h.play();
+  assert.equal(m.matchFormat, null);
+  assert.equal(m.matchFormatSource, null);
 });
 
 test("a match nothing can name falls back to the deck used last", () => {
@@ -535,6 +556,63 @@ test("the turn count follows the board and is handed to the recorder", () => {
   h.life.refresh(h.board.element);
   assert.equal(m.turns, 7);
   assert.ok(h.recorder.includes("rec-mark:7"));
+});
+
+test("who went first is taken off the board while turn 1 is live", () => {
+  /* The log fallback can only answer while the opening is still inside the
+   * capped log, so a game watched from its first turn must never depend on it.
+   * The reading is taken once and then left alone - the board goes on naming a
+   * different active player every turn after this one. */
+  const h = harness();
+  h.board.activeSide = "self";
+  const m = h.play();
+  assert.equal(m.wentFirst, true);
+
+  h.board.turn = 2;
+  h.board.activeSide = "opponent";
+  h.life.refresh(h.board.element);
+  assert.equal(m.wentFirst, true, "turn 2 is not who went first");
+});
+
+test("a board that opens on the opponent records them as going first", () => {
+  /* The other half of the same read. `false` is an answer and has to survive
+   * as one: every guard downstream tests wentFirst for null, so a side that
+   * answered must never look like a side that did not. */
+  const h = harness();
+  h.board.activeSide = "opponent";
+  const m = h.play();
+  assert.equal(m.wentFirst, false);
+  assert.ok(h.logs.some((l) => l.includes("first turn: opponent")));
+});
+
+test("the log outranks the board on who went first", () => {
+  /* Both can answer on turn 1, and they can disagree: the log reads the turn
+   * END, the board only names whoever is on turn right now. Should the site's
+   * turn number ever count rounds instead of player-turns, turn 1 is still
+   * showing once the opener has passed and the board would name the player
+   * who went SECOND. The reading that is not inferring goes first. */
+  const h = harness();
+  h.board.activeSide = "self";
+  h.board.log = [{ t: "16:11", actor: "opponent", text: "Oathion ended their turn." }];
+  const m = h.play();
+  assert.equal(m.wentFirst, false);
+});
+
+test("a match joined after turn 1 leaves who went first to the log", () => {
+  // Nothing on the board says who opened once the opening turn has passed, and
+  // a guess from whoever happens to be on turn now would be wrong half the time.
+  const h = harness();
+  h.board.turn = 4;
+  h.board.activeSide = "self";
+  const m = h.play();
+  assert.equal(m.wentFirst, null);
+});
+
+test("a board that names nobody on turn 1 leaves who went first unread", () => {
+  const h = harness();
+  h.board.activeSide = null;
+  const m = h.play();
+  assert.equal(m.wentFirst, null);
 });
 
 test("scores only ever climb", () => {

@@ -51,6 +51,19 @@
     return null;
   }
 
+  /* How long a format stays usable after the lobby that stated it left the
+   * screen. Deliberately NOT the deck picker's window, which this borrowed
+   * until a Bo1 joined by room code was filed as a Bo3 two hours after an
+   * unrelated Bo3 lobby was last on screen.
+   *
+   * The deck can afford a long memory because it is checked again at the end:
+   * capture/deck-name.js re-reads the legend off the board and drops a name
+   * the board contradicts. Nothing on the board states the format - a live
+   * read there returns null - so a format has exactly one chance to be right
+   * and no way to be corrected. The window is what limits the damage, and it
+   * only has to span the walk from the lobby to the board. */
+  const FORMAT_MEMORY_MS = 10 * 60 * 1000;
+
   let lobby = null;
 
   /* Its own storage key for the same reasons `activeDeck` has one: the lobby
@@ -76,28 +89,32 @@
   }
 
   /**
-   * The format to file a starting match under, or null when nothing can say.
+   * The format to file a starting match under, and where it came from.
+   *
+   * @returns {{format: "bo1"|"bo3", source: "live"|"memory"}|null}
+   *   null when nothing can say.
    *
    * The lobby is normally already gone by the time the board mounts, so the
-   * live read is the bonus case and the remembered one does the real work. The
-   * memory ages on the deck picker's window: the format is chosen on the same
-   * screen, in the same breath, and cannot change faster than a click either.
-   * Read from capture/deck-name.js here, at the one place it is used, so the
-   * two windows cannot drift apart.
+   * live read is the bonus case and the remembered one does the real work -
+   * which is exactly why the caller is told which it got. A live read watched
+   * the player choose; a remembered one is an inference about a screen that is
+   * no longer there, and a match joined by room code can inherit one from a
+   * lobby it has nothing to do with. dashboard/series.js will not build a
+   * series around a single game on the strength of the second.
    */
   function current() {
     const live = readMatchFormat();
-    if (live) return live;
+    if (live) return { format: live, source: "live" };
     const held = memory().get();
-    const usable =
-      !!held && Date.now() - (held.at || 0) < root.RATDeckName.DECK_MEMORY_MS;
-    return usable ? held.format : null;
+    const usable = !!held && Date.now() - (held.at || 0) < FORMAT_MEMORY_MS;
+    return usable ? { format: held.format, source: "memory" } : null;
   }
 
   root.RATMatchFormat = {
     watch: () => memory().watch(),
     load: () => memory().load(),
     current,
+    FORMAT_MEMORY_MS,
     // Reached by tests; the extension itself only ever goes through `current`.
     readMatchFormat,
   };

@@ -8,9 +8,10 @@
  *
  * None of these match on class names except where the site gives us nothing
  * else. This site's classes are generated utilities with literal colour values
- * baked in and are rewritten every restyle, so where one is unavoidable (the
- * opponent's score track, the actor bar on a log row) it is matched on the
- * colour it encodes and backed by a fallback.
+ * baked in and are rewritten every restyle, so the two readings that still
+ * need one are both hedged: the actor bar on a log row is matched on the
+ * colour it encodes and backed by a fallback, and the letter rails ARE the
+ * fallback, behind a reading of the same names that needs no classes at all.
  */
 (function (root) {
   "use strict";
@@ -52,15 +53,55 @@
     return null;
   }
 
-  function playerNames() {
-    // Player names are rendered as vertical letter rails next to the score tracks.
-    // rotate-90 letters read top-to-bottom in order; -rotate-90 read reversed.
+  /* Which side is on turn, from the ids the board root carries. Null when it
+   * names nobody, or names somebody who is neither of the two players. */
+  function activeSide(board) {
+    const d = board?.dataset;
+    if (!d || !d.activePlayerId) return null;
+    if (d.viewerPlayerId && d.activePlayerId === d.viewerPlayerId) return "self";
+    if (d.opponentPlayerId && d.activePlayerId === d.opponentPlayerId) {
+      return "opponent";
+    }
+    return null;
+  }
+
+  // ---------- player names ----------
+  //
+  // Each player has an identity badge that says which side it belongs to and
+  // carries the name in its aria-label ("curtyo menu").
+  const BADGE = {
+    mine: '[data-player-identity-trigger="player"]',
+    opponent: '[data-player-identity-trigger="opponent"]',
+  };
+  const MENU_SUFFIX_RE = /\s*menu$/i;
+
+  function badgeName(selector) {
+    const label = document.querySelector(selector)?.getAttribute("aria-label");
+    const name = (label || "").replace(MENU_SUFFIX_RE, "").trim();
+    return name || null;
+  }
+
+  /* The letter rails the badges replaced: names spelled out one character per
+   * span, rotated, and told apart by which of them sits in a container
+   * positioned from the left.
+   *
+   * Kept as the fallback, but it is the weakest reading in this file and the
+   * only one whose failure is a wrong answer rather than no answer - it takes
+   * the FIRST match in the document, and the badges' own inner grid answers
+   * the same selector. Since the rails only run when a badge is missing, that
+   * pool always contains the badge that DID answer, so the badges are skipped
+   * outright rather than left to the single-character span filter. */
+  function railNames() {
     const names = { mine: null, opponent: null };
     try {
       const rails = document.querySelectorAll(
         ".grid.content-center.justify-items-center"
       );
       for (const rail of rails) {
+        // A badge's own grid is not a rail: it would spell that player's name
+        // onto whichever side is missing a badge, and the lifecycle keeps the
+        // first name it is handed for the rest of the match.
+        if (rail.closest("[data-player-identity-trigger]")) continue;
         const spans = [...rail.querySelectorAll("span")].filter(
           (s) => s.textContent.length === 1
         );
@@ -81,32 +122,51 @@
     return names;
   }
 
-  function myScore() {
-    const group = document.querySelector(SEL.myScoreGroup);
+  function playerNames() {
+    const names = {
+      mine: badgeName(BADGE.mine),
+      opponent: badgeName(BADGE.opponent),
+    };
+    if (names.mine && names.opponent) return names;
+    // One badge read is not the other's problem: fill only what is missing.
+    const rails = railNames();
+    return {
+      mine: names.mine || rails.mine,
+      opponent: names.opponent || rails.opponent,
+    };
+  }
+
+  /* Both scores come off the board root, next to the authoritative sequence
+   * the server stamps there - so they are the same reading for both players,
+   * and neither depends on how the track happens to be drawn this month.
+   *
+   * The tracks themselves are the fallback, and they hold no number: each node
+   * draws an SVG constellation and puts its value in the aria-label alone
+   * ("Set your score to 4"). The current node is `data-active`, which both
+   * tracks carry; `aria-pressed` is only on the track you can click, so it is
+   * tried second rather than first. A track that says neither reads as null.
+   */
+  const NODE_VALUE_RE = /(\d+)\s*$/;
+
+  function trackScore(selector) {
+    const group = document.querySelector(selector);
     if (!group) return null;
-    const active = group.querySelector('[aria-pressed="true"] span');
-    const n = active ? parseInt(active.textContent, 10) : NaN;
+    const current =
+      group.querySelector('[data-active="true"]') ||
+      group.querySelector('[aria-pressed="true"]');
+    const hit = NODE_VALUE_RE.exec(current?.getAttribute("aria-label") ?? "");
+    const n = hit ? parseInt(hit[1], 10) : NaN;
     return Number.isFinite(n) ? n : null;
   }
 
-  function opponentScore() {
-    const group = document.querySelector(SEL.oppScoreGroup);
-    if (!group) return null;
-    // Opponent nodes have no aria-pressed; the current one carries a distinct
-    // amber highlight. Fall back to the node with the longest class string.
-    const nodes = [...group.children];
-    if (!nodes.length) return null;
-    let current =
-      nodes.find((n) => n.className.includes("108,75,39")) || // amber gradient
-      nodes.find((n) => n.className.includes("255,224,181")); // amber ring
-    if (!current) {
-      current = nodes.reduce((a, b) =>
-        a.className.length >= b.className.length ? a : b
-      );
-    }
-    const n = parseInt(current.querySelector("span")?.textContent ?? "", 10);
-    return Number.isFinite(n) ? n : null;
+  function rootScore(board, key, selector) {
+    const n = parseInt(board?.dataset[key] ?? "", 10);
+    return Number.isFinite(n) ? n : trackScore(selector);
   }
+
+  const myScore = (board) => rootScore(board, "viewerScore", SEL.myScoreGroup);
+  const opponentScore = (board) =>
+    rootScore(board, "opponentScore", SEL.oppScoreGroup);
 
   // ---------- match log ----------
   //
@@ -171,6 +231,7 @@
     turnNumber,
     cardAlt,
     playerNames,
+    activeSide,
     myScore,
     opponentScore,
     logEntries,

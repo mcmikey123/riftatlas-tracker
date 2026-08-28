@@ -104,6 +104,15 @@
       attributeFilter: [
         "data-room-phase",
         "data-turn-number",
+        // Both scores live on the board root now, so a point scored is an
+        // attribute change here and nowhere else. Without these the only thing
+        // that would notice a win is the three-second poll.
+        "data-viewer-score",
+        "data-opponent-score",
+        // The track fallback's markers, for the day the root stops carrying
+        // the scores: data-active is the one both tracks write, aria-pressed
+        // only ever appears on the track you can click.
+        "data-active",
         "aria-pressed",
         "class",
       ],

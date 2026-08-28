@@ -57,6 +57,25 @@
   const isFormat = (v) => FORMATS.indexOf(v) !== -1;
   const normFormat = (v) => (isFormat(v) ? v : "bo3");
 
+  /* Is one match, on its own, a Bo3 series that ended after game one?
+   *
+   * Only when the lobby was ON SCREEN as the match began. A remembered format
+   * belongs to whichever lobby was last looked at, and a game joined by room
+   * code never clears it - so before capture/match-format.js filed the source,
+   * a single Bo1 could arrive here wearing an unrelated lobby's "bo3" and have
+   * a whole series invented around it.
+   *
+   * Two matches that both claim bo3 still group on the memory alone (see
+   * `sameSeries`): agreeing twice is evidence, and the run is real either way.
+   * It is the lone game, where the format is the ONLY thing arguing for a
+   * series, that has to have been read rather than recalled.
+   *
+   * Records written before the source existed carry none, and are trusted:
+   * they were filed under the old two-hour window, but re-judging them now
+   * would silently dissolve series the player has been looking at for months. */
+  const soloBo3 = (m) =>
+    !!m && m.matchFormat === "bo3" && m.matchFormatSource !== "memory";
+
   function clampWindow(v) {
     const n = Math.round(Number(v));
     if (!Number.isFinite(n)) return DEFAULT_WINDOW_MINUTES;
@@ -216,7 +235,7 @@
        *
        * Only ever with a captured format. A lone match whose format we never
        * read is exactly the guess this is trying to stop making. */
-      const worthKeeping = (games) => games.length > 1 || games[0].matchFormat === "bo3";
+      const worthKeeping = (games) => games.length > 1 || soloBo3(games[0]);
 
       let run = [];
       const runs = [];
@@ -517,7 +536,7 @@
     const games = out.filter((m) => m && m.seriesId === seriesId).sort(byStartedAt);
     // Dissolved on the same rule it was formed by: one game is still a series
     // when the lobby said Bo3, and is not otherwise.
-    if (!games.length || (games.length === 1 && games[0].matchFormat !== "bo3")) {
+    if (!games.length || (games.length === 1 && !soloBo3(games[0]))) {
       games.forEach(clearSeries);
       return out;
     }
