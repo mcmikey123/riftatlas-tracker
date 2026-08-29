@@ -475,5 +475,18 @@
     stats() {
       try { return snapshotStats(session); } catch (_) { return snapshotStats(null); }
     },
+    /* Milliseconds into the current recording, or null when none is running.
+     * RATLifecycle.addFlag stamps mid-game notes from this clock, because it
+     * is the clock the replay timeline plays back in: the session's start is
+     * the anchor rrweb's opening snapshot follows within milliseconds. */
+    elapsedMs() {
+      try {
+        const s = session;
+        if (!s || s.stopped) return null;
+        return Math.max(0, Date.now() - s.startedAt);
+      } catch (_) {
+        return null;
+      }
+    },
   };
 })(typeof window !== "undefined" ? window : globalThis);

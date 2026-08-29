@@ -263,6 +263,12 @@
       const visualBtn = e.target?.closest?.("[data-visual]");
       const visualId = visualBtn && visualBtn.dataset.visual;
       if (visualId) {
+        /* A Watch button in the expanded match row names the moment a
+         * mid-game note was written; the modal opens paused there, the same
+         * way a timestamped share link does. The plain replay buttons carry
+         * no data-visualat and open at the start as ever. */
+        const atRaw = Number(visualBtn.dataset.visualat);
+        const startAtMs = visualBtn.dataset.visualat != null && Number.isFinite(atRaw) ? atRaw : null;
         const m = matches().find((x) => x.id === visualId) || { id: visualId };
         readReplay(visualId).then(
           (payload) => {
@@ -271,6 +277,7 @@
               return;
             }
             root.RATrackerVisualReplay.openModal(m, payload, {
+              startAtMs,
               shareMoment: (request) => root.RATrackerShareMoment.shareMoment(request, m),
               /* Flags are bookmarks ON THE MATCH RECORD - they survive
                * export/import with it, and deleting the recording leaves them

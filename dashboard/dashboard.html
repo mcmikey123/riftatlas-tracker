@@ -22,7 +22,7 @@
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>
     <h1>Rift Atlas Stats Tracker</h1>
-    <span class="brand-version">0.15.1</span>
+    <span class="brand-version">0.16.0</span>
   </div>
   <span class="local-pill"><span class="dot dot-win" aria-hidden="true"></span>Stored on this machine only</span>
 
@@ -86,6 +86,7 @@
     <button class="nav-item" data-goto="matches">Matches <span class="nav-count" data-count="matches"></span></button>
     <button class="nav-item" data-goto="series">Series <span class="nav-count" data-count="series"></span></button>
     <button class="nav-item" data-goto="notes">Notes <span class="nav-count" data-count="notes"></span></button>
+    <button class="nav-item" data-goto="goals">Goals <span class="nav-count" data-count="goals"></span></button>
     <button class="nav-item" data-nav-live="replays" data-goto="replays">Replays <span class="nav-count" data-count="replays"></span></button>
     <button class="nav-item" data-nav-live="shares" data-goto="shares">Shared links <span class="nav-count" data-count="shares"></span></button>
     <span class="nav-rule" aria-hidden="true"></span>
@@ -237,6 +238,14 @@
          and two date controls over one list can disagree about it. -->
     <section class="view" data-view="notes" hidden>
       <div data-notes-view></div>
+    </section>
+
+    <!-- ======================= Goals ======================= -->
+    <!-- No filter row: goals are not match data, so there is nothing for the
+         shared filters to narrow. The controls stay live in archive mode for
+         the same reason - a goal belongs to this browser, not to the file. -->
+    <section class="view" data-view="goals" hidden>
+      <div data-goals-view></div>
     </section>
 
     <!-- ====================== Replays ====================== -->

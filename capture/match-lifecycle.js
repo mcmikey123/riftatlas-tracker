@@ -37,6 +37,10 @@
   // capture/match-start.js: a game ended this often is one whose end we cannot
   // read, and asking the player a third time is asking them to close a popup.
   const MAX_TOASTS = 2;
+  // Flags per match and label length, the same bounds the replay viewer
+  // applies when it edits the list (dashboard/replay-html.js): 50 and 80.
+  const MAX_FLAGS = 50;
+  const MAX_FLAG_CHARS = 80;
 
   let currentMatch = null; // in-progress match record
   let lastEnded = null; // { roomCode, at, record } - guards against false ends
@@ -225,6 +229,8 @@
       lastEnded = null;
       root.RATPageUI.removeToast();
       saveMatch(latched);
+      // The end took the goals panel down with it; a resumed game gets it back.
+      root.RATGoalNotes && root.RATGoalNotes.matchStarted(latched);
       console.info("[RA-Tracker] false end detected - resumed match", code);
       return;
     }
@@ -244,6 +250,10 @@
     if (fmt) console.info("[RA-Tracker] match format:", fmt.format, "(" + fmt.source + ")");
 
     adoptOrSave(currentMatch);
+    // The goals panel: a reminder of what you are working on, and the way a
+    // timestamped note is typed mid-game. Guarded like RATRec - the tests
+    // drive this file without it, and the panel is not the match record.
+    root.RATGoalNotes && root.RATGoalNotes.matchStarted(currentMatch);
     console.info("[RA-Tracker] match started", currentMatch.roomCode);
   }
 
@@ -307,6 +317,9 @@
     }
     root.RATDeckCards.collect(board, m.id);
     root.RATRec && root.RATRec.mark(Number.isFinite(turn) ? turn : m.turns);
+    // Cheap until the opponent's champion changes - which is the moment the
+    // goals panel has been waiting for, if a goal names them.
+    root.RATGoalNotes && root.RATGoalNotes.matchTick(m);
 
     // Score-based end detection (first to WIN_SCORE).
     if (m.myScore >= WIN_SCORE) end("win", "score");
@@ -319,9 +332,48 @@
   function scanText(node) {
     if (!currentMatch || !node || !node.textContent) return;
     if (root.RATPageUI.isOwnToast(node)) return;
+    // The goals panel is the player's own words - a goal reading "win the
+    // last battlefield" must never be read back as a victory banner.
+    if (root.RATGoalNotes && root.RATGoalNotes.isOwnPanel(node)) return;
     // The record carries exactly the four facts the decision needs.
     const verdict = root.RATMatchEnd.decideResult(node.textContent, currentMatch);
     if (verdict) end(verdict.result, verdict.reason);
+  }
+
+  /**
+   * File a timestamped note on the live match, typed in the goals panel
+   * mid-game. It is stored as a replay flag - the same {ms, text} bookmark the
+   * replay viewer draws on its timeline and a share carries in its meta - so
+   * after the game the note is one click from the board state it was written
+   * about.
+   *
+   * `ms` is milliseconds into the visual recording when one is running, which
+   * is the clock the replay timeline is in; when capture is off or already
+   * stopped it falls back to time since the match record began, the same
+   * moment to within the settings read that starts rrweb.
+   *
+   * Returns the ms filed, or null when there is no live match or no text -
+   * the panel uses the difference to say whether anything was saved.
+   */
+  function addFlag(text) {
+    const m = currentMatch;
+    const t = String(text == null ? "" : text).trim().slice(0, MAX_FLAG_CHARS);
+    if (!m || !t) return null;
+    let ms =
+      root.RATRec && typeof root.RATRec.elapsedMs === "function"
+        ? root.RATRec.elapsedMs()
+        : null;
+    if (ms === null || ms === undefined) {
+      const started = Date.parse(m.startedAt);
+      ms = Number.isFinite(started) ? Math.max(0, Date.now() - started) : 0;
+    }
+    ms = Math.round(ms);
+    m.replayFlags = (Array.isArray(m.replayFlags) ? m.replayFlags : [])
+      .concat([{ ms, text: t }])
+      .sort((a, b) => a.ms - b.ms)
+      .slice(0, MAX_FLAGS);
+    saveMatch(m);
+    return ms;
   }
 
   // ---------- ending ----------
@@ -357,6 +409,7 @@
     root.RATDeckCards.persist(true);
     persistLogFor(m, true);
     currentMatch = null;
+    root.RATGoalNotes && root.RATGoalNotes.matchEnded();
     m.endedAt = new Date().toISOString();
     const started = Date.parse(m.startedAt);
     if (Number.isFinite(started)) {
@@ -429,6 +482,7 @@
     if (!m) return;
     currentMatch = null;
     root.RATRec && root.RATRec.stop("deleted");
+    root.RATGoalNotes && root.RATGoalNotes.matchEnded();
     m.resultSource = "manual";
     lastEnded = { roomCode: m.roomCode, at: Date.now(), record: m };
     root.RATDeckCards.forget();
@@ -479,6 +533,7 @@
     if (!m) return;
     root.RATRec && root.RATRec.stop("tab-closed");
     currentMatch = null;
+    root.RATGoalNotes && root.RATGoalNotes.matchEnded();
     m.endedAt = new Date().toISOString();
     const started = Date.parse(m.startedAt);
     if (Number.isFinite(started)) m.durationMs = Math.max(0, Date.parse(m.endedAt) - started);
@@ -510,6 +565,13 @@
       if (wasStored) dropLive();
       return;
     }
+    // Flags the dashboard wrote on the live match - the replay modal can add
+    // one mid-game - are adopted before this side's next save replaces the
+    // record wholesale. Only when this side has none of its own: once a note
+    // is typed in-game the in-memory list is the fuller one.
+    if (Array.isArray(saved.replayFlags) && currentMatch.replayFlags == null) {
+      currentMatch.replayFlags = saved.replayFlags;
+    }
     if (saved.deckSource !== "manual") return; // only we write the rest
     if (saved.deckName === currentMatch.deckName) return;
     currentMatch.deckName = saved.deckName || "";
@@ -527,6 +589,8 @@
     saveIfDirty,
     flushOnUnload,
     onMatchesChanged,
+    // Reached by the goals panel's note input.
+    addFlag,
     // Reached by the toast's buttons and by tests.
     overrideResult,
     discard,

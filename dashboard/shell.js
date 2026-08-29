@@ -25,7 +25,7 @@ const { esc, fmtBytes } = window.RATrackerFormat;
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
-export const VIEWS = ["overview", "matrix", "matches", "series", "notes", "replays", "shares", "settings"];
+export const VIEWS = ["overview", "matrix", "matches", "series", "notes", "goals", "replays", "shares", "settings"];
 
 /* Hidden in archive mode rather than disabled - see the header comment. */
 const LIVE_ONLY = new Set(["replays", "shares"]);

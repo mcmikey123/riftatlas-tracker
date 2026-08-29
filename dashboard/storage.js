@@ -134,6 +134,30 @@
     getSettings((s) => setSettings(Object.assign({}, s, patch), cb));
   }
 
+  // ---- goals ------------------------------------------------------------
+
+  /* Things you are working on, generic or against one champion, shown on the
+   * game page when a match starts and in the toolbar popup. Like settings,
+   * goals are a property of this browser rather than of the match data - an
+   * archive file carries no goals and viewing one says nothing about what you
+   * are practising - so they stay writable in archive mode and survive both
+   * clear paths, the same way matchup notes and settings do. */
+  function readGoals() {
+    return new Promise((resolve) =>
+      chrome.storage.local.get({ goals: [] }, (data) => {
+        void chrome.runtime.lastError;
+        resolve(((data && data.goals) || []).filter((g) => g && g.id));
+      })
+    );
+  }
+
+  function writeGoals(goals, then) {
+    chrome.storage.local.set({ goals }, () => {
+      void chrome.runtime.lastError;
+      if (then) then();
+    });
+  }
+
   // ---- shares -----------------------------------------------------------
 
   /* NEVER CACHED, and it must stay that way.
@@ -175,6 +199,8 @@
     getSettings,
     setSettings,
     patchSettings,
+    readGoals,
+    writeGoals,
     readShares,
     writeShares,
   };

@@ -47,3 +47,112 @@
   font-size: 10.5px;
   color: #93a7c9;
 }
+
+/* The goals panel and its pill sit bottom-left, away from the toast's corner.
+   Shown/hidden via style.display from capture/goal-notes.js rather than the
+   hidden attribute, because the site's own CSS can outrank the UA rule. */
+#ra-tracker-goals {
+  position: fixed;
+  left: 16px;
+  bottom: 56px;
+  z-index: 2147483647;
+  width: 300px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(134, 168, 246, 0.45);
+  background: linear-gradient(168deg, rgba(20, 32, 55, 0.97), rgba(12, 21, 38, 0.97));
+  color: #edf3ff;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 12px 30px rgba(3, 8, 20, 0.6);
+}
+#ra-tracker-goals .rat-ghead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+#ra-tracker-goals .rat-title {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9fb5e3;
+}
+#ra-tracker-goals .rat-fold {
+  border: 0;
+  background: none;
+  color: #93a7c9;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+#ra-tracker-goals .rat-goal {
+  padding: 4px 0;
+  border-top: 1px solid rgba(134, 168, 246, 0.15);
+}
+#ra-tracker-goals .rat-goal:first-child { border-top: 0; }
+#ra-tracker-goals .rat-goal-none { color: #93a7c9; }
+#ra-tracker-goals .rat-vstag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: rgba(122, 96, 40, 0.55);
+  color: #ffcf8a;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+#ra-tracker-goals .rat-noted {
+  padding: 3px 0;
+  font-size: 11.5px;
+  color: #78ddb7;
+}
+#ra-tracker-goals .rat-noterow {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+#ra-tracker-goals .rat-noterow input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(166, 185, 209, 0.35);
+  background: rgba(10, 18, 32, 0.9);
+  color: #edf3ff;
+  font-size: 12px;
+}
+#ra-tracker-goals .rat-noteadd {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(166, 185, 209, 0.35);
+  background: rgba(42, 61, 87, 0.9);
+  color: #edf3ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+#ra-tracker-goals .rat-noteadd:hover { background: rgba(60, 84, 116, 0.95); }
+#ra-tracker-goals .rat-hint {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: #93a7c9;
+}
+#ra-tracker-goals-pill {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(134, 168, 246, 0.45);
+  background: rgba(20, 32, 55, 0.95);
+  color: #9fb5e3;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(3, 8, 20, 0.5);
+}
+#ra-tracker-goals-pill:hover { color: #edf3ff; background: rgba(42, 61, 87, 0.95); }
