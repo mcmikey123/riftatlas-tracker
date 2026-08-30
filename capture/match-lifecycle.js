@@ -229,8 +229,6 @@
       lastEnded = null;
       root.RATPageUI.removeToast();
       saveMatch(latched);
-      // The end took the goals panel down with it; a resumed game gets it back.
-      root.RATGoalNotes && root.RATGoalNotes.matchStarted(latched);
       console.info("[RA-Tracker] false end detected - resumed match", code);
       return;
     }
@@ -250,10 +248,6 @@
     if (fmt) console.info("[RA-Tracker] match format:", fmt.format, "(" + fmt.source + ")");
 
     adoptOrSave(currentMatch);
-    // The goals panel: a reminder of what you are working on, and the way a
-    // timestamped note is typed mid-game. Guarded like RATRec - the tests
-    // drive this file without it, and the panel is not the match record.
-    root.RATGoalNotes && root.RATGoalNotes.matchStarted(currentMatch);
     console.info("[RA-Tracker] match started", currentMatch.roomCode);
   }
 
@@ -317,9 +311,6 @@
     }
     root.RATDeckCards.collect(board, m.id);
     root.RATRec && root.RATRec.mark(Number.isFinite(turn) ? turn : m.turns);
-    // Cheap until the opponent's champion changes - which is the moment the
-    // goals panel has been waiting for, if a goal names them.
-    root.RATGoalNotes && root.RATGoalNotes.matchTick(m);
 
     // Score-based end detection (first to WIN_SCORE).
     if (m.myScore >= WIN_SCORE) end("win", "score");
@@ -409,7 +400,6 @@
     root.RATDeckCards.persist(true);
     persistLogFor(m, true);
     currentMatch = null;
-    root.RATGoalNotes && root.RATGoalNotes.matchEnded();
     m.endedAt = new Date().toISOString();
     const started = Date.parse(m.startedAt);
     if (Number.isFinite(started)) {
@@ -482,7 +472,6 @@
     if (!m) return;
     currentMatch = null;
     root.RATRec && root.RATRec.stop("deleted");
-    root.RATGoalNotes && root.RATGoalNotes.matchEnded();
     m.resultSource = "manual";
     lastEnded = { roomCode: m.roomCode, at: Date.now(), record: m };
     root.RATDeckCards.forget();
@@ -533,7 +522,6 @@
     if (!m) return;
     root.RATRec && root.RATRec.stop("tab-closed");
     currentMatch = null;
-    root.RATGoalNotes && root.RATGoalNotes.matchEnded();
     m.endedAt = new Date().toISOString();
     const started = Date.parse(m.startedAt);
     if (Number.isFinite(started)) m.durationMs = Math.max(0, Date.parse(m.endedAt) - started);

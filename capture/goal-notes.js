@@ -1,15 +1,23 @@
 /* Rift Atlas Stats Tracker - goals on the game page, and timestamped mid-game notes.
  *
  * Two things live here, and they share one panel because they share a moment:
- * the start of a game is when a reminder is worth reading, and mid-game is
+ * right before a game is when a reminder is worth reading, and mid-game is
  * when "review this later" is worth writing down.
  *
  * GOALS are written in the dashboard's Goals view and stored under the `goals`
- * key: things to work on, in every game or against one champion. When a match
- * starts, the ones that apply are drawn on the page. The opponent's champion
- * can be read off the board late, so when it first appears the matchup goals
- * do too - and the panel re-opens to say so, because a goal about exactly this
- * opponent is the reminder most worth interrupting for.
+ * key: things to work on, in every game or against one champion. The panel is
+ * driven by content.js's tick through `observe`, the same clock that drives
+ * the capture itself, and follows what the board says:
+ *
+ *   a PREGAME board - battlefield pick, roll, mulligan - pops the applicable
+ *   goals up, because that is the moment a reminder can still change how you
+ *   play; the opponent's champion is often already on screen there, so the
+ *   matchup goals usually arrive with it, and re-open the panel when they do;
+ *
+ *   a LIVE match keeps the panel and adds the note input, folding down to a
+ *   small ⚑ pill after half a minute so it never blocks play;
+ *
+ *   anything else takes it all down.
  *
  * NOTES are typed here mid-game and filed by RATLifecycle.addFlag as
  * timestamped flags on the match record - the same {ms, text} bookmarks the
@@ -30,14 +38,18 @@
 (function (root) {
   "use strict";
 
-  // How long the reminder stays open before folding down to the pill. The
-  // end-of-match toast stands for 30 seconds; the start-of-match reminder
-  // matches it.
+  // How long the reminder stays open DURING A MATCH before folding to the
+  // pill; the end-of-match toast stands for the same 30 seconds. On a pregame
+  // board there is no timer - those screens are exactly the ones with time to
+  // read, and the board moving on takes the panel with it anyway.
   const REMINDER_MS = 30000;
   // The label length the replay viewer renders on a flag chip
   // (dashboard/replay-html.js slices to 80); the input stops at the same
   // point so nothing typed here is silently cut later.
   const MAX_NOTE_CHARS = 80;
+  // Pregame boards are re-read for the opponent at most this often. The tick
+  // fires on every mutation frame, and cardAlt walks the document.
+  const OPP_READ_MS = 1000;
 
   /* The champion half of a card's alt text ("Corin, Tidecaller" -> "Corin").
    * The same split dashboard/format.js's champ() makes - format.js is not a
@@ -63,9 +75,23 @@
     };
   }
 
+  /**
+   * What the panel should be, given what this tick saw: a live match wins, a
+   * board in any phase short of "in_game" is a pregame screen, and everything
+   * else - no board, or a finished game's board lingering with no record -
+   * means no panel. Pure, because content.js calls it via `observe` on every
+   * tick and getting it wrong is silent.
+   */
+  function stateFor(phase, live) {
+    if (live) return "live";
+    if (phase && phase !== "in_game") return "pregame";
+    return "off";
+  }
+
   // ---------- the panel ----------
 
-  let ui = null; // { record, opponent, goals, noted, hideTimer, panel, list, input, pill }
+  let ui = null; // { mode, opponent, goals, noted, hideTimer, panel, list, input, pill }
+  let oppReadAt = 0;
 
   const esc = (s) => root.RATPageUI.escapeHtml(s);
 
@@ -76,10 +102,7 @@
   };
 
   function goalRowsHtml() {
-    const { matchup, generic } = goalsFor(
-      ui.goals,
-      ui.record.opponentChampion || ui.record.opponentLegend
-    );
+    const { matchup, generic } = goalsFor(ui.goals, ui.opponent);
     const row = (g, vs) =>
       `<div class="rat-goal${vs ? " rat-goal-vs" : ""}">${
         vs ? `<span class="rat-vstag">vs ${esc(champName(g.opponent))}</span>` : ""
@@ -103,12 +126,15 @@
     if (ui) ui.list.innerHTML = goalRowsHtml();
   }
 
+  /* Opening the panel arms the fold-down timer only during a live match -
+   * see REMINDER_MS. Passing 0 keeps it open until something closes it. */
   function expand(autoHideMs) {
     if (!ui) return;
     clearTimeout(ui.hideTimer);
     ui.hideTimer = null;
     paint();
     ui.panel.style.display = "block";
+    ui.pill.style.display = "";
     if (autoHideMs) ui.hideTimer = setTimeout(collapse, autoHideMs);
   }
 
@@ -130,7 +156,7 @@
     paint();
   }
 
-  function build() {
+  function build(mode) {
     const doc = root.document;
 
     const panel = doc.createElement("div");
@@ -142,7 +168,10 @@
 
     const head = doc.createElement("div");
     head.className = "rat-ghead";
-    head.innerHTML = '<span class="rat-title">Rift Atlas Tracker · this game</span>';
+    head.innerHTML =
+      '<span class="rat-title">' +
+      (mode === "live" ? "Rift Atlas Tracker · this game" : "Rift Atlas Tracker · up next") +
+      "</span>";
     const hide = doc.createElement("button");
     hide.className = "rat-fold";
     hide.title = "Collapse — the ⚑ pill brings it back";
@@ -174,6 +203,13 @@
     hint.className = "rat-hint";
     hint.innerHTML = "Notes are timestamped — after the game they jump the replay to the moment.";
 
+    // Notes need a live match to be filed on; a pregame panel is a reminder
+    // and nothing else, so the input does not appear until the game does.
+    if (mode !== "live") {
+      row.style.display = "none";
+      hint.style.display = "none";
+    }
+
     panel.appendChild(head);
     panel.appendChild(list);
     panel.appendChild(row);
@@ -184,6 +220,9 @@
     pill.className = "ra-tracker-block"; // keeps our own UI out of the visual replay
     pill.title = "Goals & mid-game notes (Rift Atlas Tracker)";
     pill.innerHTML = "⚑";
+    // On a pregame board with no goals there is nothing behind the pill
+    // either; it appears with the panel (expand shows it) or with a match.
+    if (mode !== "live") pill.style.display = "none";
     pill.addEventListener("click", () =>
       ui && ui.panel.style.display === "none" ? expand(0) : collapse()
     );
@@ -194,15 +233,12 @@
     return { panel, list, input, pill };
   }
 
-  // ---------- what the lifecycle drives ----------
-
-  /** A match has begun: put the pill up, and open the reminder if any goal applies. */
-  function matchStarted(record) {
-    matchEnded(); // a new game always starts from a clean panel
-    const built = build();
+  /** Stand the panel up in `mode` and open it if any goal applies. */
+  function show(mode) {
+    const built = build(mode);
     ui = {
-      record,
-      opponent: champName(record.opponentChampion || record.opponentLegend) || null,
+      mode,
+      opponent: null,
       goals: [],
       noted: [],
       hideTimer: null,
@@ -213,40 +249,86 @@
     };
     try {
       chrome.storage.local.get({ goals: [] }, (data) => {
-        if (!ui || ui.record !== record) return; // the game ended while storage answered
+        if (!ui || ui.panel !== built.panel) return; // the screen moved on while storage answered
         ui.goals = (data && data.goals) || [];
-        const { matchup, generic } = goalsFor(
-          ui.goals,
-          record.opponentChampion || record.opponentLegend
-        );
-        if (matchup.length || generic.length) expand(REMINDER_MS);
-        else paint(); // nothing to remind about; the pill still opens a fresh list
+        const { matchup, generic } = goalsFor(ui.goals, ui.opponent);
+        const n = matchup.length + generic.length;
+        if (n) {
+          expand(ui.mode === "live" ? REMINDER_MS : 0);
+          console.info(
+            "[RA-Tracker] goals: showing " +
+              n +
+              (matchup.length ? " (" + matchup.length + " for this matchup)" : "")
+          );
+        } else {
+          paint(); // nothing to remind about; a live match still gets the note pill
+          console.info("[RA-Tracker] goals: none apply (add some under Goals in the dashboard)");
+        }
       });
     } catch (_) {
-      /* orphaned mid-read: the pill stays, the goals are simply absent */
+      /* orphaned mid-read: the pill stays where it applies, the goals are absent */
     }
   }
 
-  /** Called on every board refresh; cheap until the opponent's champion changes. */
-  function matchTick(record) {
-    if (!ui || ui.record !== record) return;
-    const opp = champName(record.opponentChampion || record.opponentLegend) || null;
-    if (opp === ui.opponent) return;
-    ui.opponent = opp;
-    // The opponent's champion has just been read off the board. If a goal
-    // names them, the panel re-opens: a matchup goal is the one reminder
-    // worth interrupting for, and this is the first moment it can be given.
-    if (goalsFor(ui.goals, opp).matchup.length) expand(REMINDER_MS);
-    else paint();
-  }
-
-  /** The match is over, however it ended: everything drawn here goes. */
-  function matchEnded() {
+  function teardown() {
     if (!ui) return;
     clearTimeout(ui.hideTimer);
     ui.panel.remove();
     ui.pill.remove();
     ui = null;
+  }
+
+  /** The opponent's champion as read this tick; reopens the panel when a
+   *  matchup goal starts to apply - the reminder those goals exist for. */
+  function setOpponent(alt) {
+    if (!ui) return;
+    const opp = champName(alt) || null;
+    if (opp === ui.opponent) return;
+    ui.opponent = opp;
+    const matchup = goalsFor(ui.goals, opp).matchup;
+    if (matchup.length) {
+      expand(ui.mode === "live" ? REMINDER_MS : 0);
+      console.info("[RA-Tracker] goals: " + matchup.length + " for the matchup vs " + opp);
+    } else {
+      paint();
+    }
+  }
+
+  /**
+   * Driven by content.js on every tick, after the lifecycle has decided what
+   * this frame was. A mode change is a teardown and a fresh build rather than
+   * an edit: the pregame panel and the live one differ (the note input, the
+   * fold-down timer), and a rebuild re-reads the goals and re-decides whether
+   * to open - which is also what makes pregame -> live re-offer the reminder.
+   */
+  function observe(phase, live) {
+    const next = stateFor(phase, live);
+    if (next === "off") return teardown();
+    if (ui && ui.mode !== next) teardown();
+    if (!ui) show(next);
+    if (next === "live") {
+      setOpponent(live.opponentChampion || live.opponentLegend);
+    } else if (Date.now() - oppReadAt >= OPP_READ_MS) {
+      // No record exists yet on a pregame board, so the opponent comes off
+      // the page the same way capture/scout.js reads it.
+      oppReadAt = Date.now();
+      setOpponent(
+        root.RATBoard.cardAlt("opponent", "champion") ||
+          root.RATBoard.cardAlt("opponent", "legend")
+      );
+    }
+  }
+
+  /* Goals edited in the dashboard mid-session reach a panel already on
+   * screen. Data only - visibility stays observe's. */
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local" || !changes.goals || !ui) return;
+      ui.goals = changes.goals.newValue || [];
+      paint();
+    });
+  } catch (_) {
+    /* not an extension context (tests); observe still works when driven */
   }
 
   /* Is this node part of the panel? Goal and note text is the player's own
@@ -260,9 +342,8 @@
 
   root.RATGoalNotes = {
     goalsFor,
-    matchStarted,
-    matchTick,
-    matchEnded,
+    stateFor,
+    observe,
     isOwnPanel,
   };
 })(typeof window !== "undefined" ? window : globalThis);

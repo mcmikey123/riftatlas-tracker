@@ -73,3 +73,23 @@ test("no goals at all is two empty lists, not a crash", () => {
   assert.deepEqual(GN.goalsFor(null, "Corin"), { matchup: [], generic: [] });
   assert.deepEqual(GN.goalsFor(undefined, null), { matchup: [], generic: [] });
 });
+
+// ---- when the panel is on screen at all ---------------------------------
+
+test("a pregame board shows the panel, a live match keeps it, anything else removes it", () => {
+  /* content.js drives the panel through observe() on every tick, and
+   * stateFor is the whole decision. The pregame case is the one this exists
+   * for: the opponent is on screen during the mulligan, minutes before a
+   * match record exists, and that is when a reminder can still change how
+   * you play. */
+  const live = { id: "m1" };
+  assert.equal(GN.stateFor("mulligan", null), "pregame");
+  assert.equal(GN.stateFor("battlefield_pick", null), "pregame");
+  assert.equal(GN.stateFor("in_game", live), "live");
+  // A live record outranks whatever the phase says mid-transition.
+  assert.equal(GN.stateFor("mulligan", live), "live");
+  // A finished game's board lingers in "in_game" with no record - that is a
+  // game that is over, not one about to start.
+  assert.equal(GN.stateFor("in_game", null), "off");
+  assert.equal(GN.stateFor(null, null), "off");
+});
