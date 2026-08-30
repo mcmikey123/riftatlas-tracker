@@ -17,8 +17,22 @@
   const FULL_SNAPSHOT = 2; // rrweb EventType.FullSnapshot
   const CUSTOM = 5; // rrweb EventType.Custom
   const INCREMENTAL = 3; // rrweb EventType.IncrementalSnapshot
-  // rrweb IncrementalSource: MouseMove, MouseInteraction, TouchMove.
-  const MOUSE_SOURCES = new Set([1, 2, 6]);
+  /* What actually moves rrweb's cursor, mirrored from the replayer's own switch
+   * rather than from what sounds like pointer data. Two halves, because the two
+   * enums do not agree on how much of themselves count:
+   *
+   *   IncrementalSource - every move source positions the cursor. Drag is its
+   *   own source, not a MouseMove, and is the one a card game produces most:
+   *   a browser suppresses mousemove for the whole of a native drag gesture.
+   *
+   *   MouseInteraction - only three of its eleven types position anything. The
+   *   rest are dispatched at the element and leave the cursor where it was, and
+   *   `focus`/`blur` are among them: rrweb binds those with capture:true, so a
+   *   programmatic .focus() the page made on its own would otherwise read as a
+   *   player moving their mouse. */
+  const MOVE_SOURCES = new Set([1, 6, 12]); // MouseMove, TouchMove, Drag
+  const MOUSE_INTERACTION = 2;
+  const POINTING_INTERACTIONS = new Set([2, 7, 9]); // Click, TouchStart, TouchEnd
   const MAX_CHIPS = 30; // more than this and the chip row stops being scannable
 
   /**
@@ -410,17 +424,27 @@
     return changed ? next : events;
   }
 
-  /* True when the stream carries pointer data at all.
+  /* True when the stream holds something that will put rrweb's cursor somewhere.
    *
-   * Recordings made before pointer capture was turned on carry none, and rrweb
-   * mounts its cursor regardless - parked at the top-left of the board for the
-   * whole replay, where it reads as a player who never moved rather than as a
-   * recording that never watched. One pass, and it stops at the first hit: the
-   * answer is nearly always in the opening seconds of a match. */
+   * Recordings made before pointer capture was turned on hold nothing of the
+   * kind, and rrweb mounts its cursor regardless - parked at the top-left of the
+   * board for the whole replay, where it reads as a player who never moved
+   * rather than as a recording that never watched. replay-core.js hides the
+   * element on a `false` here, so the question has to be the replayer's own and
+   * not an approximation of it: answer `true` for a stream that only ever fires
+   * `blur` and the parked cursor is back.
+   *
+   * The scan runs once, at mount. It exits early on a new recording, where the
+   * first pointer event is usually seconds in; on an old one it runs to the end
+   * of the stream, which is the same order of work `stripInertLinks` already
+   * does to the same array in the same call. */
   function hasPointerData(events) {
     for (const event of events || []) {
       if (!event || event.type !== INCREMENTAL) continue;
-      if (event.data && MOUSE_SOURCES.has(event.data.source)) return true;
+      const data = event.data;
+      if (!data) continue;
+      if (MOVE_SOURCES.has(data.source)) return true;
+      if (data.source === MOUSE_INTERACTION && POINTING_INTERACTIONS.has(data.type)) return true;
     }
     return false;
   }

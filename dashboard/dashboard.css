@@ -1142,5 +1142,10 @@ input[type="number"]:focus { outline: none; border-color: var(--accent); }
    share/worker/public/viewer.css, which dresses the same element for the
    other surface. Recordings with no pointer data never show the
    element at all - replay/replay-core.js hides it rather than leave it parked
-   at the top-left corner. */
-.vr-scale .replayer-mouse { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 50'%3E%3Cpath d='M48.71 42.91L34.08 28.29 44.33 18a1 1 0 00-.33-1.61L2.35 1.06a1 1 0 00-1.29 1.29L16.39 44a1 1 0 001.65.36l10.25-10.28 14.62 14.63a1 1 0 001.41 0l4.38-4.38a1 1 0 00.01-1.42z' fill='%23ffffff' stroke='%230b1424' stroke-width='1.6' stroke-linejoin='round'%3E%3C/path%3E%3C/svg%3E"); }
+   at the top-left corner.
+
+   `:not(.touch-device)` is load-bearing. rrweb marks a touch recording's cursor
+   with that class and drops the arrow for a 70px ring, and the two selectors
+   have the same specificity - so without the exemption ours wins on source
+   order alone and paints the arrow, stretched, inside the ring. */
+.vr-scale .replayer-mouse:not(.touch-device) { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 50'%3E%3Cpath d='M48.71 42.91L34.08 28.29 44.33 18a1 1 0 00-.33-1.61L2.35 1.06a1 1 0 00-1.29 1.29L16.39 44a1 1 0 001.65.36l10.25-10.28 14.62 14.63a1 1 0 001.41 0l4.38-4.38a1 1 0 00.01-1.42z' fill='%23ffffff' stroke='%230b1424' stroke-width='1.6' stroke-linejoin='round'%3E%3C/path%3E%3C/svg%3E"); }
