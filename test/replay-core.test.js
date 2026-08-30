@@ -32,9 +32,12 @@ const el = () => ({
   setAttribute() {},
 });
 
-/** A mounted replay, plus rrweb's cursor element to inspect. */
-function mount(events) {
-  const mouse = el();
+/* A mounted replay, plus rrweb's cursor element to inspect.
+ *
+ * `cursor: false` mounts a Replayer that exposes no cursor element at all,
+ * which is the shape an rrweb bump that renamed it would leave behind. */
+function mount(events, options) {
+  const mouse = options && options.cursor === false ? null : el();
   const sandbox = {
     console: { warn() {}, log() {}, error() {} },
     JSON, Math, Number, Array, Set, Object, String,
@@ -53,7 +56,7 @@ function mount(events) {
 
   sandbox.rrwebReplay = {
     Replayer: function Replayer() {
-      this.mouse = mouse;
+      if (mouse) this.mouse = mouse;
       this.wrapper = el();
       this.iframe = el();
       this.getMetaData = () => ({ totalTime: 60000 });
@@ -77,10 +80,21 @@ function mount(events) {
   return { controller, mouse };
 }
 
+// rrweb EventType and IncrementalSource, named the way the sibling suites name
+// them and pinned against the bundles in test/vendor-contract.test.js.
+const FULL_SNAPSHOT = 2;
+const INCREMENTAL = 3;
+const MUTATION = 0;
+const MOUSE_MOVE = 1;
+
 // A stream rrweb will accept, with a full snapshot to open it.
-const snapshot = { type: 2, timestamp: 0, data: { node: {} } };
-const mouseMove = { type: 3, timestamp: 500, data: { source: 1, positions: [{ x: 1, y: 2, id: 9 }] } };
-const mutation = { type: 3, timestamp: 400, data: { source: 0 } };
+const snapshot = { type: FULL_SNAPSHOT, timestamp: 0, data: { node: {} } };
+const mutation = { type: INCREMENTAL, timestamp: 400, data: { source: MUTATION } };
+const mouseMove = {
+  type: INCREMENTAL,
+  timestamp: 500,
+  data: { source: MOUSE_MOVE, positions: [{ x: 1, y: 2, id: 9 }] },
+};
 
 test("a recording with pointer data keeps rrweb's cursor", () => {
   const { mouse } = mount([snapshot, mutation, mouseMove]);
@@ -98,40 +112,8 @@ test("a recording without pointer data has the cursor taken away", () => {
 
 test("a replayer that exposes no cursor element is not reached into", () => {
   // Guards the `replayer.mouse &&` half: an rrweb bump that renames it must
-  // cost the hiding, not the mount.
-  const events = [snapshot, mutation];
-  const mouse = el();
-  const sandbox = {
-    console: { warn() {}, log() {}, error() {} },
-    JSON, Math, Number, Array, Set, Object, String,
-    setTimeout, clearTimeout,
-    requestAnimationFrame: () => 1,
-    cancelAnimationFrame() {},
-    addEventListener() {},
-    removeEventListener() {},
-    matchMedia: () => ({ matches: true }),
-  };
-  sandbox.globalThis = sandbox;
-  const context = vm.createContext(sandbox);
-  vm.runInContext(readSrc("replay/replay-timeline.js"), context, { filename: "replay-timeline.js" });
-  sandbox.rrwebReplay = {
-    Replayer: function Replayer() {
-      this.wrapper = el();
-      this.iframe = el();
-      this.getMetaData = () => ({ totalTime: 60000 });
-      this.getCurrentTime = () => 0;
-      this.on = () => {};
-      this.play = () => {};
-      this.pause = () => {};
-      this.setConfig = () => {};
-      this.destroy = () => {};
-    },
-  };
-  vm.runInContext(readSrc("replay/replay-core.js"), context, { filename: "replay-core.js" });
-
-  const controller = sandbox.RAReplayCore.create({
-    stage: el(), scaleEl: el(), events, meta: { viewport: { w: 1280, h: 800 } },
-  });
+  // cost the hiding, not the mount. The events are the hiding case, so the
+  // core reaches for the element it has not got.
+  const { controller } = mount([snapshot, mutation], { cursor: false });
   assert.ok(controller, "a Replayer with no cursor element must still mount");
-  assert.notEqual(mouse.style.display, "none");
 });
