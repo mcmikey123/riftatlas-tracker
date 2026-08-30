@@ -152,6 +152,9 @@ test("every rrweb member the browser code calls is present on a bundle", () => {
 const replayBundle = fs.readFileSync(path.join(root, "vendor/rrweb-replay.min.js"), "utf8");
 const recordBundle = fs.readFileSync(path.join(root, "vendor/rrweb-record.min.js"), "utf8");
 const replayCss = fs.readFileSync(path.join(root, "vendor/rrweb.min.css"), "utf8");
+// rrweb's own mousemove throttle when the option is not a number. Asserted
+// against the bundle below, and MOUSEMOVE_MS is stated as twice it.
+const RRWEB_DEFAULT_MOUSEMOVE_MS = 50;
 
 test("the IncrementalSource values replay-timeline.js hard-codes are rrweb's own", () => {
   // MOVE_SOURCES in replay/replay-timeline.js. Drag is the one that matters
@@ -162,6 +165,16 @@ test("the IncrementalSource values replay-timeline.js hard-codes are rrweb's own
       `rrweb no longer numbers IncrementalSource.${name} as ${value}; replay-timeline.js reads it as that`
     );
   }
+  /* The values alone are half the contract. This is the other half: these three
+   * sources, and no others, are the ones the replayer positions its cursor
+   * from - so rrweb moving Drag out of that branch would leave replay-timeline.js
+   * counting a source that no longer puts a cursor anywhere. The identifier is
+   * back-referenced rather than named: it is the minifier's, not rrweb's. */
+  assert.ok(
+    /case ([\w$]+)\.Drag:case \1\.TouchMove:case \1\.MouseMove:/.test(replayBundle),
+    "the replayer no longer positions its cursor from exactly Drag/TouchMove/MouseMove, so " +
+      "MOVE_SOURCES in replay-timeline.js is now the wrong set"
+  );
 });
 
 test("the MouseInteraction types that move the cursor are the ones we count", () => {
@@ -175,7 +188,7 @@ test("the MouseInteraction types that move the cursor are the ones we count", ()
     );
   }
   assert.ok(
-    /case L\.Click:case L\.TouchStart:case L\.TouchEnd:/.test(replayBundle),
+    /case ([\w$]+)\.Click:case \1\.TouchStart:case \1\.TouchEnd:/.test(replayBundle),
     "the replayer no longer positions its cursor for exactly Click/TouchStart/TouchEnd, so " +
       "replay-timeline.js is now counting the wrong interactions as pointer data"
   );
@@ -207,15 +220,20 @@ test("the recorder reads sampling.mousemove as a number, not a flag", () => {
    * kept off for in the first place. The default is pinned too: the constant's
    * comment claims to be half of it. */
   assert.ok(
-    /typeof [\w$]+\.mousemove=="number"\?[\w$]+\.mousemove:50/.test(recordBundle),
-    "rrweb no longer reads sampling.mousemove as a number defaulting to 50ms"
+    new RegExp(`typeof ([\\w$]+)\\.mousemove=="number"\\?\\1\\.mousemove:${RRWEB_DEFAULT_MOUSEMOVE_MS}`).test(recordBundle),
+    `rrweb no longer reads sampling.mousemove as a number defaulting to ${RRWEB_DEFAULT_MOUSEMOVE_MS}ms`
   );
   const recorder = stripComments(fs.readFileSync(path.join(root, "capture/dom-recorder.js"), "utf8"));
   const declared = recorder.match(/const MOUSEMOVE_MS = (\d+);/);
   assert.ok(declared, "capture/dom-recorder.js must state its sampling interval as a number");
-  assert.ok(
-    Number(declared[1]) >= 50,
-    "MOUSEMOVE_MS is an interval, not a rate: a value under rrweb's own 50ms default samples " +
-      "the pointer MORE often than rrweb would, which is the opposite of what the constant claims"
+  /* Pinned to the value, not to a range. Two pieces of prose are written
+   * against it - the constant's own "halving what the rrweb default spends" and
+   * the README's "sampled ten times a second" - and a bound of ">= 50" licenses
+   * exactly the value that makes both false while the suite stays green. */
+  assert.equal(
+    Number(declared[1]),
+    2 * RRWEB_DEFAULT_MOUSEMOVE_MS,
+    "MOUSEMOVE_MS is documented in capture/dom-recorder.js and in the README as half rrweb's " +
+      "own sampling rate; changing it means changing both"
   );
 });

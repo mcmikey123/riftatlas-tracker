@@ -295,13 +295,17 @@ test("both surfaces draw the replay cursor the same way", () => {
    * rather than in a recipient's browser on a link the sender cannot see. */
   const dashboardCss = fs.readFileSync(path.join(repo, "dashboard", "dashboard.css"), "utf8");
   const viewerCss = read("public/viewer.css");
-  const rule = (css, where) => {
-    const found = css.match(/\.(?:vr-scale|scale) (\.replayer-mouse[^{]*)\{([^}]*)\}/);
-    assert.ok(found, `${where} must style the rrweb cursor - has the override been dropped?`);
+  /* The container is named per file and anchored to the start of a line. The
+   * two surfaces scale under different class names, and a rule carrying the
+   * other one is dead CSS: the dashboard would quietly fall back to rrweb's
+   * black arrow with the declaration still agreeing here, byte for byte. */
+  const rule = (css, container, where) => {
+    const found = css.match(new RegExp(`^\\${container} (\\.replayer-mouse[^{]*)\\{([^}]*)\\}`, "m"));
+    assert.ok(found, `${where} must style ${container} .replayer-mouse - has the override been dropped?`);
     return { suffix: found[1].trim(), body: found[2].trim() };
   };
-  const dash = rule(dashboardCss, "dashboard.css");
-  const viewer = rule(viewerCss, "viewer.css");
+  const dash = rule(dashboardCss, ".vr-scale", "dashboard.css");
+  const viewer = rule(viewerCss, ".scale", "viewer.css");
 
   assert.equal(
     dash.suffix,

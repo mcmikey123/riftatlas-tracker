@@ -138,11 +138,15 @@
       return null;
     }
 
-    // rrweb's own cursor element, in the same family as the wrapper and iframe
-    // below - no chrome class names enter the core. Hidden rather than never
-    // mounted, because the element is built in the constructor and nothing here
-    // gets to choose. Only hidden on the recordings that are certain to leave it
-    // parked: an unreadable stream keeps the cursor and shows what it has.
+    /* rrweb's own cursor element, in the same family as the wrapper and iframe
+     * below - no chrome class names enter the core. Hidden rather than never
+     * mounted, because the element is built in the constructor and nothing here
+     * gets to choose.
+     *
+     * Hiding is the default for anything that is not positively pointer data:
+     * a stream so malformed that the predicate cannot read it is also one rrweb
+     * will not move a cursor through, and a stream malformed enough to matter
+     * never reaches this line at all - the Replayer above throws on it first. */
     if (replayer.mouse && !hasPointerData(events)) replayer.mouse.style.display = "none";
 
     // rrweb sizes its iframe from the recorded meta event and re-sizes it on
@@ -389,9 +393,11 @@
   }
 
   // Same dual export as store/css-assets.js: a global for the browser, CommonJS
-  // so tooling can load the file. There is nothing here to unit test — it is
+  // so tooling can load the file. Next to nothing here is unit tested — it is
   // rrweb and the DOM all the way down; the transport's decisions live in
-  // replay-timeline.js, where they are pure and covered.
+  // replay-timeline.js, where they are pure and covered. The exception is the
+  // cursor line above, which is a decision rather than plumbing and is the one
+  // thing test/replay-core.test.js stubs rrweb far enough to reach.
   // viewportOf and DEFAULT_VIEWPORT stay internal: pinning is create()'s own
   // business, and nothing outside this file has ever needed to ask.
   const api = { available, create, DRAG_END_EVENTS };

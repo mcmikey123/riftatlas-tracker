@@ -326,9 +326,14 @@ test("pointer events do not move the snapshot cadence", () => {
   const h = harness();
   h.rec.start("m1");
   const before = h.snapshotsAt.length;
-  for (let i = 0; i < 200; i += 1) {
-    h.emit(mouseMove(i * 100));
-    h.advance(100);
+  /* 300ms between events, and 90s of them. Both numbers are load-bearing: under
+   * SETTLE_MS each event would cancel the settle the one before it scheduled, so
+   * a cadence that HAD taken its schedule from the emit stream would still never
+   * fire; and under KEYFRAME_EVERY_MS the policy would decline every snapshot
+   * whatever asked for one. Either way the test would pass on the bug. */
+  for (let i = 0; i < 300; i += 1) {
+    h.emit(mouseMove(i * 300));
+    h.advance(300);
   }
 
   assert.deepEqual(h.warnings, [], "the recorder must not have errored");

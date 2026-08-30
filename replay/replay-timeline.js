@@ -29,7 +29,13 @@
    *   rest are dispatched at the element and leave the cursor where it was, and
    *   `focus`/`blur` are among them: rrweb binds those with capture:true, so a
    *   programmatic .focus() the page made on its own would otherwise read as a
-   *   player moving their mouse. */
+   *   player moving their mouse.
+   *
+   * Where it stops: the replayer also declines to position anything for an
+   * event whose node id it cannot resolve, and that is not mirrored here. It
+   * would take a match whose every pointer event was unresolvable to matter,
+   * and the cost of being wrong is the parked cursor this predicate is trying
+   * to avoid - i.e. exactly what every replay did before it existed. */
   const MOVE_SOURCES = new Set([1, 6, 12]); // MouseMove, TouchMove, Drag
   const MOUSE_INTERACTION = 2;
   const POINTING_INTERACTIONS = new Set([2, 7, 9]); // Click, TouchStart, TouchEnd
