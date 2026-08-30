@@ -48,15 +48,18 @@
   color: #93a7c9;
 }
 
-/* The goals panel and its pill sit bottom-left, away from the toast's corner.
-   Shown/hidden via style.display from capture/goal-notes.js rather than the
-   hidden attribute, because the site's own CSS can outrank the UA rule. */
+/* The goals panel and its pill share one anchor, set inline (left/top) by
+   capture/goal-notes.js: mid-left by default, draggable, and remembered -
+   the game parks its own score rail and player badge in the corners, so no
+   fixed corner survives every resolution. Shown/hidden via style.display
+   rather than the hidden attribute, because the site's own CSS can outrank
+   the UA rule. */
 #ra-tracker-goals {
   position: fixed;
-  left: 16px;
-  bottom: 56px;
   z-index: 2147483647;
   width: 300px;
+  max-height: 70vh;
+  overflow-y: auto;
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid rgba(134, 168, 246, 0.45);
@@ -70,6 +73,9 @@
   align-items: baseline;
   justify-content: space-between;
   margin-bottom: 6px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 #ra-tracker-goals .rat-title {
   font-weight: 700;
@@ -148,18 +154,17 @@
 }
 #ra-tracker-goals-pill {
   position: fixed;
-  left: 16px;
-  bottom: 16px;
   z-index: 2147483647;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  border: 1px solid rgba(134, 168, 246, 0.45);
-  background: rgba(20, 32, 55, 0.95);
-  color: #9fb5e3;
-  font-size: 14px;
+  border: 1px solid rgba(134, 168, 246, 0.8);
+  background: rgba(20, 32, 55, 0.97);
+  color: #cfe0ff;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(3, 8, 20, 0.5);
+  touch-action: none;
+  box-shadow: 0 0 0 2px rgba(3, 8, 20, 0.55), 0 6px 18px rgba(3, 8, 20, 0.6);
 }
-#ra-tracker-goals-pill:hover { color: #edf3ff; background: rgba(42, 61, 87, 0.95); }
+#ra-tracker-goals-pill:hover { color: #ffffff; background: rgba(42, 61, 87, 0.97); }

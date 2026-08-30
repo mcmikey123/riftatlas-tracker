@@ -89,6 +89,26 @@ test("the popup's matchup note surfaces for its champion, whichever way the key 
   assert.equal(GN.noteFor({ Corin: "   " }, "Corin"), "", "whitespace is not a note");
 });
 
+// ---- where the panel sits -----------------------------------------------
+
+test("the anchor defaults to the mid-left edge and honours a dragged spot", () => {
+  /* The game parks its own score rail and player badge in the corners, so
+   * the default is the mid-left edge - and wherever the player drags the
+   * panel wins from then on. */
+  assert.deepEqual(GN.anchorFor(null, 1920, 1000), { x: 14, y: 420 });
+  assert.deepEqual(GN.anchorFor({ x: 600, y: 200 }, 1920, 1000), { x: 600, y: 200 });
+});
+
+test("a remembered spot from a larger window is clamped back on screen", () => {
+  const a = GN.anchorFor({ x: 2500, y: 1400 }, 1280, 720);
+  assert.ok(a.x <= 1280 - 34 && a.y <= 720 - 34, "inside the viewport");
+  const b = GN.anchorFor({ x: -50, y: -50 }, 1280, 720);
+  assert.deepEqual(b, { x: 4, y: 4 });
+  // Garbage stored is the default, not NaN styles.
+  const c = GN.anchorFor({ x: "junk", y: null }, 1920, 1000);
+  assert.deepEqual(c, { x: 14, y: 420 });
+});
+
 // ---- when the panel is on screen at all ---------------------------------
 
 test("a pregame board shows the panel, a live match keeps it, anything else removes it", () => {

@@ -50,6 +50,29 @@
   // Pregame boards are re-read for the opponent at most this often. The tick
   // fires on every mutation frame, and cardAlt walks the document.
   const OPP_READ_MS = 1000;
+  // The pill's box, which is also the drag clamp's margin.
+  const PILL_PX = 34;
+
+  /**
+   * Where the panel and its pill sit: a stored spot if the player has dragged
+   * them, else the mid-left edge - the game parks its own score rail and
+   * player badge in the bottom corners, so a fixed corner anchor is a pill
+   * buried under site UI on someone's resolution. Clamped into the viewport
+   * either way, so a spot remembered from a larger window cannot strand the
+   * pill off screen.
+   */
+  function anchorFor(stored, w, h) {
+    // Only a real number counts as a stored coordinate: Number(null) is 0,
+    // which would read an empty record as "the top of the screen".
+    const num = (v, fallback) =>
+      typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    const x = num(stored && stored.x, 14);
+    const y = num(stored && stored.y, Math.round(h * 0.42));
+    return {
+      x: Math.min(Math.max(4, x), Math.max(4, w - PILL_PX - 4)),
+      y: Math.min(Math.max(4, y), Math.max(4, h - PILL_PX - 4)),
+    };
+  }
 
   /* The champion half of a card's alt text ("Corin, Tidecaller" -> "Corin").
    * The same split dashboard/format.js's champ() makes - format.js is not a
@@ -108,8 +131,11 @@
 
   // ---------- the panel ----------
 
-  let ui = null; // { mode, opponent, goals, notes, noted, hideTimer, panel, list, input, pill }
+  let ui = null; // { mode, opponent, goals, notes, noted, hideTimer, anchor, panel, list, input, pill }
   let oppReadAt = 0;
+  // How far the last pointer gesture travelled, so the pill's click handler
+  // can tell a drag's tail-end click from a real toggle.
+  let dragMoved = 0;
   // The one time this page load may open the panel with nothing to show: a
   // pregame board and no goals set. Discoverability, not nagging - once per
   // tab, and the empty state says where goals are written.
@@ -180,6 +206,68 @@
     ui.panel.style.display = "none";
   }
 
+  /** Put the panel and pill at the anchor, clamped to the current viewport. */
+  function applyAnchor() {
+    if (!ui) return;
+    const a = anchorFor(ui.anchor, root.innerWidth || 1280, root.innerHeight || 800);
+    ui.anchor = a;
+    for (const el of [ui.panel, ui.pill]) {
+      el.style.left = a.x + "px";
+      el.style.top = a.y + "px";
+    }
+  }
+
+  function saveAnchor() {
+    if (!ui) return;
+    try {
+      chrome.storage.local.set({ goalsPanelPos: { x: ui.anchor.x, y: ui.anchor.y } });
+    } catch (_) {
+      /* orphaned: the spot just isn't remembered */
+    }
+  }
+
+  /* Drag to move - the game parks its own UI in the corners, and no fixed
+   * spot survives every resolution, so the player's answer wins and is
+   * remembered. The pill drags directly; the panel drags by its header. A
+   * gesture that travelled is not also a click: the pill's toggle checks
+   * `dragMoved` for exactly that. */
+  function makeDraggable(el) {
+    let sx = 0;
+    let sy = 0;
+    let ox = 0;
+    let oy = 0;
+    let dragging = false;
+    el.addEventListener("pointerdown", (e) => {
+      if (!ui || !e || (e.button !== undefined && e.button !== 0)) return;
+      // The header's own button, and the note row's controls, are not handles.
+      if (e.target && e.target.closest && e.target.closest(".rat-fold, .rat-noteadd, input")) return;
+      dragging = true;
+      dragMoved = 0;
+      sx = e.clientX;
+      sy = e.clientY;
+      ox = ui.anchor.x;
+      oy = ui.anchor.y;
+      try {
+        if (el.setPointerCapture && e.pointerId !== undefined) el.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (!dragging || !ui || !e) return;
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      dragMoved = Math.max(dragMoved, Math.abs(dx) + Math.abs(dy));
+      ui.anchor = { x: ox + dx, y: oy + dy };
+      applyAnchor();
+    });
+    const done = () => {
+      if (!dragging) return;
+      dragging = false;
+      if (dragMoved > 4) saveAnchor();
+    };
+    el.addEventListener("pointerup", done);
+    el.addEventListener("pointercancel", done);
+  }
+
   function submitNote() {
     if (!ui) return;
     const text = String(ui.input.value || "").trim().slice(0, MAX_NOTE_CHARS);
@@ -203,6 +291,7 @@
 
     const head = doc.createElement("div");
     head.className = "rat-ghead";
+    head.title = "Drag to move — the spot is remembered";
     head.innerHTML =
       '<span class="rat-title">' +
       (mode === "live" ? "Rift Atlas Tracker · this game" : "Rift Atlas Tracker · up next") +
@@ -213,6 +302,7 @@
     hide.innerHTML = "&ndash;";
     hide.addEventListener("click", collapse);
     head.appendChild(hide);
+    makeDraggable(head);
 
     const list = doc.createElement("div");
     list.className = "rat-goals";
@@ -253,14 +343,17 @@
     const pill = doc.createElement("button");
     pill.id = "ra-tracker-goals-pill";
     pill.className = "ra-tracker-block"; // keeps our own UI out of the visual replay
-    pill.title = "Goals & mid-game notes (Rift Atlas Tracker)";
+    pill.title = "Goals & mid-game notes (Rift Atlas Tracker) — drag to move";
     pill.innerHTML = "⚑";
     // On a pregame board with no goals there is nothing behind the pill
     // either; it appears with the panel (expand shows it) or with a match.
     if (mode !== "live") pill.style.display = "none";
-    pill.addEventListener("click", () =>
-      ui && ui.panel.style.display === "none" ? expand(0) : collapse()
-    );
+    pill.addEventListener("click", () => {
+      if (dragMoved > 4) return; // that click was the end of a drag
+      if (ui && ui.panel.style.display === "none") expand(0);
+      else collapse();
+    });
+    makeDraggable(pill);
 
     const host = doc.body || doc.documentElement;
     host.appendChild(panel);
@@ -278,16 +371,22 @@
       notes: {},
       noted: [],
       hideTimer: null,
+      anchor: null, // the default until storage says where the player put it
       panel: built.panel,
       list: built.list,
       input: built.input,
       pill: built.pill,
     };
+    applyAnchor();
     try {
-      chrome.storage.local.get({ goals: [], matchupNotes: {} }, (data) => {
+      chrome.storage.local.get({ goals: [], matchupNotes: {}, goalsPanelPos: null }, (data) => {
         if (!ui || ui.panel !== built.panel) return; // the screen moved on while storage answered
         ui.goals = (data && data.goals) || [];
         ui.notes = (data && data.matchupNotes) || {};
+        if (data && data.goalsPanelPos) {
+          ui.anchor = data.goalsPanelPos;
+          applyAnchor();
+        }
         const n = applicableCount();
         if (n) {
           expand(ui.mode === "live" ? REMINDER_MS : 0);
@@ -344,6 +443,15 @@
     if (next === "off") return teardown();
     if (ui && ui.mode !== next) teardown();
     if (!ui) show(next);
+    /* The site's fullscreen mode makes only the fullscreen ELEMENT's subtree
+     * visible - a panel left on <body> simply is not on screen. Re-host into
+     * whatever is fullscreen now, and back onto the body when it exits;
+     * position: fixed keeps the same viewport spot either way. */
+    const host = root.document.fullscreenElement || root.document.body || root.document.documentElement;
+    if (host && ui.panel.parentElement !== host) {
+      host.appendChild(ui.panel);
+      host.appendChild(ui.pill);
+    }
     if (next === "live") {
       setOpponent(live.opponentChampion || live.opponentLegend);
     } else if (Date.now() - oppReadAt >= OPP_READ_MS) {
@@ -385,6 +493,7 @@
     goalsFor,
     noteFor,
     stateFor,
+    anchorFor,
     observe,
     isOwnPanel,
   };
