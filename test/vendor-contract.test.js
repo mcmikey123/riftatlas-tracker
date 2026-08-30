@@ -161,7 +161,7 @@ test("the IncrementalSource values replay-timeline.js hard-codes are rrweb's own
   // most and is the easiest to think is a MouseMove: it is a source of its own.
   for (const [name, value] of [["MouseMove", 1], ["MouseInteraction", 2], ["TouchMove", 6], ["Drag", 12]]) {
     assert.ok(
-      replayBundle.includes(`e[e.${name}=${value}]`),
+      new RegExp(`([\\w$]+)\\[\\1\\.${name}=${value}\\]`).test(replayBundle),
       `rrweb no longer numbers IncrementalSource.${name} as ${value}; replay-timeline.js reads it as that`
     );
   }
@@ -183,7 +183,7 @@ test("the MouseInteraction types that move the cursor are the ones we count", ()
   // three types - and no others - are what position the cursor.
   for (const [name, value] of [["Click", 2], ["TouchStart", 7], ["TouchEnd", 9]]) {
     assert.ok(
-      replayBundle.includes(`e[e.${name}=${value}]`),
+      new RegExp(`([\\w$]+)\\[\\1\\.${name}=${value}\\]`).test(replayBundle),
       `rrweb no longer numbers MouseInteraction.${name} as ${value}`
     );
   }
