@@ -15,6 +15,7 @@ const {
   INERT_LINK_RELS,
   isInertLink,
   stripInertLinks,
+  hasPointerData,
   quantise,
   resumesAfterSeek,
   seekOutcome,
@@ -651,4 +652,69 @@ test("readable speeds are clamped to the range the controls offer", () => {
   assert.equal(normaliseSpeed(100), SPEEDS[SPEEDS.length - 1]);
   assert.equal(normaliseSpeed(2), 2);
   assert.equal(normaliseSpeed("4"), 4, "control values arrive as strings");
+});
+
+/* --- hasPointerData ---------------------------------------------------- */
+
+/* rrweb mounts its cursor whether or not the recording ever watched one, so a
+ * capture from before pointer recording was turned on shows an arrow parked in
+ * the corner for the whole match - a player who never moved, rather than a
+ * recording that never looked. replay-core.js hides the element when this says
+ * no, which makes a wrong answer here either a cursor missing from every new
+ * replay or a fake one back on every old one. Neither throws. */
+
+const incremental = (source, type) => ({ type: 3, timestamp: 1000, data: { source, type } });
+// rrweb IncrementalSource / MouseInteraction values, read off the vendored
+// bundles and pinned in test/vendor-contract.test.js.
+const MOUSE_MOVE = 1, MOUSE_INTERACTION = 2, SCROLL = 3, INPUT = 5, TOUCH_MOVE = 6, DRAG = 12;
+const CLICK = 2, MOUSE_DOWN = 1, BLUR = 6, TOUCH_START = 7, TOUCH_END = 9;
+
+test("a stream with mouse movement carries pointer data", () => {
+  const events = [{ type: 2, timestamp: 0, data: {} }, incremental(0), incremental(MOUSE_MOVE)];
+  assert.equal(hasPointerData(events), true);
+});
+
+test("clicks alone count: a player who moved nothing still clicked", () => {
+  assert.equal(hasPointerData([incremental(0), incremental(MOUSE_INTERACTION, CLICK)]), true);
+});
+
+test("touch movement counts, since a tablet's cursor is the touch point", () => {
+  assert.equal(hasPointerData([incremental(TOUCH_MOVE)]), true);
+  assert.equal(hasPointerData([incremental(MOUSE_INTERACTION, TOUCH_START)]), true);
+  assert.equal(hasPointerData([incremental(MOUSE_INTERACTION, TOUCH_END)]), true);
+});
+
+test("a drag counts, and is its own source rather than a run of movement", () => {
+  /* The interaction the feature is sold on - a card picked up, held over a
+   * battlefield and put back down - is a native drag, and a browser fires no
+   * mousemove for its duration. rrweb records it as source 12, so a set built
+   * from what sounds like movement would miss the whole gesture. */
+  assert.equal(hasPointerData([incremental(DRAG)]), true);
+});
+
+test("an interaction that never positions the cursor is not pointer data", () => {
+  /* rrweb's replayer moves its cursor for three MouseInteraction types only -
+   * Click, TouchStart, TouchEnd - and dispatches the rest at the element. It
+   * binds focus and blur with capture:true, so a page that calls .focus() on
+   * its own would otherwise put a parked cursor on a replay that never saw a
+   * mouse, which is the exact thing this predicate exists to prevent. */
+  assert.equal(hasPointerData([incremental(MOUSE_INTERACTION, BLUR)]), false);
+  assert.equal(hasPointerData([incremental(MOUSE_INTERACTION, MOUSE_DOWN)]), false);
+});
+
+test("mutation and scroll traffic is not pointer data", () => {
+  // Source 3 is Scroll, which a keyboard produces as readily as a mouse, and
+  // source 5 is Input. Neither says anything about where a cursor was.
+  const events = [
+    { type: 4, timestamp: 0, data: {} },
+    incremental(0), incremental(SCROLL), incremental(INPUT),
+    { type: 5, timestamp: 1, data: { tag: "ra:turn" } },
+  ];
+  assert.equal(hasPointerData(events), false);
+});
+
+test("an absent or empty stream carries no pointer data rather than throwing", () => {
+  assert.equal(hasPointerData([]), false);
+  assert.equal(hasPointerData(null), false);
+  assert.equal(hasPointerData([null, undefined, {}]), false);
 });
