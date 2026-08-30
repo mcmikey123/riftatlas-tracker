@@ -29,6 +29,8 @@ const vm = require("node:vm");
 
 const SETTLE_MS = 250; // must match dom-recorder.js
 const FULL_SNAPSHOT = 2;
+const INCREMENTAL_SNAPSHOT = 3;
+const MOUSE_MOVE = 1; // rrweb IncrementalSource.MouseMove
 
 const readSrc = (rel) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
 
@@ -92,7 +94,9 @@ function harness() {
   vm.runInContext(readSrc("capture/capture-policy.js"), context, { filename: "capture-policy.js" });
 
   let emit = () => {};
+  let recordCfg = null;
   const rrwebRecord = (cfg) => {
+    recordCfg = cfg;
     emit = cfg.emit;
     // rrweb takes its opening snapshot inside record(), before returning.
     emit({ type: FULL_SNAPSHOT, timestamp: now, data: {} });
@@ -144,8 +148,18 @@ function harness() {
       advance(SETTLE_MS + 1);
     },
     turnNumbers: () => tags.filter((t) => t.tag === "ra:turn").map((t) => t.turnNumber),
+    /** The options the recorder handed rrweb, once `start` has run. */
+    config: () => recordCfg,
+    /** Push one event through rrweb's emit, the way rrweb itself would. */
+    emit: (event) => emit(event),
   };
 }
+
+const mouseMove = (now) => ({
+  type: INCREMENTAL_SNAPSHOT,
+  timestamp: now,
+  data: { source: MOUSE_MOVE, positions: [{ x: 10, y: 20, id: 7, timeOffset: -50 }] },
+});
 
 test("the sandbox drives a real recording end to end", () => {
   // Guard on the harness itself: every later assertion is meaningless if the
@@ -287,4 +301,37 @@ test("the cadence gap is honoured between consecutive snapshots", () => {
     const gap = h.snapshotsAt[i] - h.snapshotsAt[i - 1];
     assert.ok(gap >= 60_000, `snapshots ${i - 1}->${i} only ${gap}ms apart`);
   }
+});
+
+test("pointer capture is asked of rrweb, and movement is sampled rather than raw", () => {
+  /* The whole point of recording a card game's pointer is the card a player
+   * picked up, hovered and put back down, none of which the DOM shows. Two ways
+   * to lose it silently: `mousemove: false` records nothing, and `true` is not a
+   * rate - rrweb reads only a number as a throttle, so a non-number here is the
+   * unthrottled stream at whatever rate the mouse reports. */
+  const h = harness();
+  h.rec.start("m1");
+
+  const sampling = h.config().sampling;
+  assert.equal(typeof sampling.mousemove, "number", "movement must be sampled at a stated interval");
+  assert.ok(sampling.mousemove > 0, "a non-positive interval is not a rate");
+  assert.equal(sampling.mouseInteraction, true, "clicks are the cheap half and are never sampled");
+});
+
+test("pointer events do not move the snapshot cadence", () => {
+  /* Snapshots are spent on settled boards, and a board settles from `mark()` -
+   * never from the emit stream. Pointer capture puts ~10 events a second into
+   * that stream, so if the cadence ever took its schedule from emits instead,
+   * this is where a match would start flashing its way through keyframes. */
+  const h = harness();
+  h.rec.start("m1");
+  const before = h.snapshotsAt.length;
+  for (let i = 0; i < 200; i += 1) {
+    h.emit(mouseMove(i * 100));
+    h.advance(100);
+  }
+
+  assert.deepEqual(h.warnings, [], "the recorder must not have errored");
+  assert.equal(h.snapshotsAt.length, before, "no snapshot may be spent without a settled board");
+  assert.deepEqual(h.turnNumbers(), [], "pointer traffic is not a turn");
 });

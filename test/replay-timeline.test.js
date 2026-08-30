@@ -15,6 +15,7 @@ const {
   INERT_LINK_RELS,
   isInertLink,
   stripInertLinks,
+  hasPointerData,
   quantise,
   resumesAfterSeek,
   seekOutcome,
@@ -651,4 +652,45 @@ test("readable speeds are clamped to the range the controls offer", () => {
   assert.equal(normaliseSpeed(100), SPEEDS[SPEEDS.length - 1]);
   assert.equal(normaliseSpeed(2), 2);
   assert.equal(normaliseSpeed("4"), 4, "control values arrive as strings");
+});
+
+/* --- hasPointerData ---------------------------------------------------- */
+
+/* rrweb mounts its cursor whether or not the recording ever watched one, so a
+ * capture from before pointer recording was turned on shows an arrow parked in
+ * the corner for the whole match - a player who never moved, rather than a
+ * recording that never looked. replay-core.js hides the element when this says
+ * no, which makes a wrong answer here either a cursor missing from every new
+ * replay or a fake one back on every old one. Neither throws. */
+
+const incremental = (source) => ({ type: 3, timestamp: 1000, data: { source } });
+
+test("a stream with mouse movement carries pointer data", () => {
+  const events = [{ type: 2, timestamp: 0, data: {} }, incremental(0), incremental(1)];
+  assert.equal(hasPointerData(events), true);
+});
+
+test("clicks alone count: a player who moved nothing still clicked", () => {
+  assert.equal(hasPointerData([incremental(0), incremental(2)]), true);
+});
+
+test("touch movement counts, since a tablet's cursor is the touch point", () => {
+  assert.equal(hasPointerData([incremental(6)]), true);
+});
+
+test("mutation and scroll traffic is not pointer data", () => {
+  // Source 3 is Scroll, which a keyboard produces as readily as a mouse, and
+  // source 5 is Input. Neither says anything about where a cursor was.
+  const events = [
+    { type: 4, timestamp: 0, data: {} },
+    incremental(0), incremental(3), incremental(5),
+    { type: 5, timestamp: 1, data: { tag: "ra:turn" } },
+  ];
+  assert.equal(hasPointerData(events), false);
+});
+
+test("an absent or empty stream carries no pointer data rather than throwing", () => {
+  assert.equal(hasPointerData([]), false);
+  assert.equal(hasPointerData(null), false);
+  assert.equal(hasPointerData([null, undefined, {}]), false);
 });

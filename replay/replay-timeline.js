@@ -3,8 +3,9 @@
  * The arithmetic behind a replay's transport: which moments are settled board
  * states, how many of them a chip row can show, how far a truncated capture
  * actually got, what scale the board is drawn at, and whether a given seek
- * leaves the replay running — plus `stripInertLinks`, the one scrub the event
- * stream gets on its way into the engine.
+ * leaves the replay running — plus the two things read straight off the event
+ * stream: `stripInertLinks`, the one scrub it gets on its way into the engine,
+ * and `hasPointerData`, which says whether it was recorded watching the mouse.
  *
  * Pure by construction: no DOM, no escaping, no chrome APIs, no rrweb. Callers
  * escape whatever they interpolate into markup, so the same functions serve the
@@ -15,6 +16,9 @@
 
   const FULL_SNAPSHOT = 2; // rrweb EventType.FullSnapshot
   const CUSTOM = 5; // rrweb EventType.Custom
+  const INCREMENTAL = 3; // rrweb EventType.IncrementalSnapshot
+  // rrweb IncrementalSource: MouseMove, MouseInteraction, TouchMove.
+  const MOUSE_SOURCES = new Set([1, 2, 6]);
   const MAX_CHIPS = 30; // more than this and the chip row stops being scannable
 
   /**
@@ -406,6 +410,21 @@
     return changed ? next : events;
   }
 
+  /* True when the stream carries pointer data at all.
+   *
+   * Recordings made before pointer capture was turned on carry none, and rrweb
+   * mounts its cursor regardless - parked at the top-left of the board for the
+   * whole replay, where it reads as a player who never moved rather than as a
+   * recording that never watched. One pass, and it stops at the first hit: the
+   * answer is nearly always in the opening seconds of a match. */
+  function hasPointerData(events) {
+    for (const event of events || []) {
+      if (!event || event.type !== INCREMENTAL) continue;
+      if (event.data && MOUSE_SOURCES.has(event.data.source)) return true;
+    }
+    return false;
+  }
+
   // Same dual export as store/css-assets.js: a global for the browser, CommonJS
   // for `node --test`.
   const api = {
@@ -420,6 +439,7 @@
     INERT_LINK_RELS,
     isInertLink,
     stripInertLinks,
+    hasPointerData,
     quantise,
     resumesAfterSeek,
     seekOutcome,

@@ -1133,3 +1133,14 @@ input[type="number"]:focus { outline: none; border-color: var(--accent); }
    not a data cell, and it should not widen with the table. */
 #visualTable td.vd-actions { text-align: right; width: 36px; white-space: nowrap; }
 #visualTable th:last-child { width: 36px; }
+
+/* rrweb draws its cursor as a black arrow, which over a board this dark is a
+   cursor you have to hunt for. Same shape and same 20px box, filled white and
+   outlined in the stage colour so it reads over card art as well as over the
+   board. The override lives here because vendor/rrweb.min.css is hash-pinned
+   (vendor/README.md), and it is repeated in
+   share/worker/public/viewer.css, which dresses the same element for the
+   other surface. Recordings with no pointer data never show the
+   element at all - replay/replay-core.js hides it rather than leave it parked
+   at the top-left corner. */
+.vr-scale .replayer-mouse { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 50'%3E%3Cpath d='M48.71 42.91L34.08 28.29 44.33 18a1 1 0 00-.33-1.61L2.35 1.06a1 1 0 00-1.29 1.29L16.39 44a1 1 0 001.65.36l10.25-10.28 14.62 14.63a1 1 0 001.41 0l4.38-4.38a1 1 0 00.01-1.42z' fill='%23ffffff' stroke='%230b1424' stroke-width='1.6' stroke-linejoin='round'%3E%3C/path%3E%3C/svg%3E"); }

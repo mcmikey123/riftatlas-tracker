@@ -204,8 +204,12 @@ test("nothing in the dashboard loads a remote origin", () => {
     const text = stripComments(read(f));
     const remote = text.match(/["'(]https?:\/\/[^"')\s]+/g) || [];
     // The share endpoint is a configured URL held in share/config.js, not a
-    // resource this page loads.
-    const loaded = remote.filter((u) => !/riftatlas\.com|workers\.dev|riftatlas-workers/.test(u));
+    // resource this page loads. The SVG namespace is not a URL either: it is
+    // the identifier an inline data: URI has to declare to render as SVG at
+    // all, and nothing ever fetches it.
+    const loaded = remote.filter((u) =>
+      !/riftatlas\.com|workers\.dev|riftatlas-workers/.test(u) &&
+      !/^["'(]https?:\/\/www\.w3\.org\/2000\/svg$/.test(u));
     assert.deepEqual(loaded, [], `${f} references a remote origin: ${loaded.join(", ")}`);
   }
 });

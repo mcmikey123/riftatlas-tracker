@@ -103,7 +103,7 @@
   function create(options) {
     const {
       quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay, stripInertLinks,
-      normaliseSpeed,
+      normaliseSpeed, hasPointerData,
     } = root.RAReplayTimeline;
 
     const stage = options.stage;
@@ -137,6 +137,13 @@
       console.warn("[RA-Tracker] visual replay failed to start:", err);
       return null;
     }
+
+    // rrweb's own cursor element, in the same family as the wrapper and iframe
+    // below - no chrome class names enter the core. Hidden rather than never
+    // mounted, because the element is built in the constructor and nothing here
+    // gets to choose. Only hidden on the recordings that are certain to leave it
+    // parked: an unreadable stream keeps the cursor and shows what it has.
+    if (replayer.mouse && !hasPointerData(events)) replayer.mouse.style.display = "none";
 
     // rrweb sizes its iframe from the recorded meta event and re-sizes it on
     // any viewport-resize event in the stream; both are overridden here so the
