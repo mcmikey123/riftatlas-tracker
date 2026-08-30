@@ -132,6 +132,48 @@ test("with no goals at all the view says so instead of rendering nothing", () =>
   );
 });
 
+// ---- the handlers, driven ----------------------------------------------
+
+test("clicking Add goal writes it to storage, and delete removes it", async () => {
+  /* The unit tests above prove the arithmetic; this drives the actual click
+   * path - mountGoals's delegated listener, addFrom's field reads, and the
+   * read-modify-write through storage.js - because "the view renders but the
+   * button saves nothing" is invisible to a render test. */
+  let stored = [];
+  global.chrome = {
+    runtime: {},
+    storage: {
+      local: {
+        get: (defaults, cb) => cb({ goals: stored }),
+        set: (obj, cb) => {
+          stored = JSON.parse(JSON.stringify(obj.goals));
+          if (cb) cb();
+        },
+      },
+    },
+  };
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  const container = host();
+  V.mountGoals(container);
+  V.renderGoals(container, [], []);
+
+  container.querySelector("[data-goal-text]").value = "Mulligan for early units";
+  container.querySelector("[data-goal-vs]").value = "Mel";
+  container.querySelector("[data-goaladd]").click();
+  await flush();
+
+  assert.equal(stored.length, 1, "the goal reached storage");
+  assert.equal(stored[0].text, "Mulligan for early units");
+  assert.equal(stored[0].opponent, "Mel");
+  assert.equal(stored[0].done, false);
+
+  V.renderGoals(container, [], stored);
+  container.querySelector(`[data-goaldel="${stored[0].id}"]`).click();
+  await flush();
+  assert.deepEqual(stored, [], "delete removes it from storage");
+});
+
 test("goal text is escaped on the way into the markup", () => {
   const container = host();
   V.renderGoals(container, [], [g({ id: "x", text: '<img src=x onerror="1">' })]);

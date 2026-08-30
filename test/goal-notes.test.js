@@ -74,6 +74,21 @@ test("no goals at all is two empty lists, not a crash", () => {
   assert.deepEqual(GN.goalsFor(undefined, null), { matchup: [], generic: [] });
 });
 
+// ---- the matchup note ---------------------------------------------------
+
+test("the popup's matchup note surfaces for its champion, whichever way the key is spelled", () => {
+  /* matchupNotes is the popup's per-champion key ("shows here whenever you
+   * face X"); the panel reads the same store so a note written in the popup
+   * is on the game page at the moment it was written to be read. */
+  const notes = { Corin: "  she levels fast — race her  ", "Viktor, Herald of the Arcane": "slow game" };
+  assert.equal(GN.noteFor(notes, "Corin, Tidecaller"), "she levels fast — race her");
+  assert.equal(GN.noteFor(notes, "Viktor"), "slow game", "a full-alt key still matches its champion");
+  assert.equal(GN.noteFor(notes, "Mel, Defiant Soul"), "", "no note for this champion");
+  assert.equal(GN.noteFor(notes, null), "", "nobody across the table yet");
+  assert.equal(GN.noteFor(null, "Corin"), "");
+  assert.equal(GN.noteFor({ Corin: "   " }, "Corin"), "", "whitespace is not a note");
+});
+
 // ---- when the panel is on screen at all ---------------------------------
 
 test("a pregame board shows the panel, a live match keeps it, anything else removes it", () => {

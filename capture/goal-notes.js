@@ -76,6 +76,24 @@
   }
 
   /**
+   * The matchup note for this opponent, or "". These are the popup's
+   * per-champion notes (its `matchupNotes` key - "shows here whenever you
+   * face X") - and a note that exists to be read right before a game belongs
+   * on the game page at that moment as much as in the popup. The popup keys
+   * them by champion name; keys stored as full alt text are read leniently
+   * rather than dropped.
+   */
+  function noteFor(notes, opponentAlt) {
+    const opp = champName(opponentAlt);
+    if (!opp || !notes) return "";
+    for (const key of Object.keys(notes)) {
+      const text = notes[key];
+      if (champName(key) === opp && typeof text === "string" && text.trim()) return text.trim();
+    }
+    return "";
+  }
+
+  /**
    * What the panel should be, given what this tick saw: a live match wins, a
    * board in any phase short of "in_game" is a pregame screen, and everything
    * else - no board, or a finished game's board lingering with no record -
@@ -90,8 +108,12 @@
 
   // ---------- the panel ----------
 
-  let ui = null; // { mode, opponent, goals, noted, hideTimer, panel, list, input, pill }
+  let ui = null; // { mode, opponent, goals, notes, noted, hideTimer, panel, list, input, pill }
   let oppReadAt = 0;
+  // The one time this page load may open the panel with nothing to show: a
+  // pregame board and no goals set. Discoverability, not nagging - once per
+  // tab, and the empty state says where goals are written.
+  let introShown = false;
 
   const esc = (s) => root.RATPageUI.escapeHtml(s);
 
@@ -101,25 +123,38 @@
     return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
   };
 
+  /** Matchup goals, then the matchup note, then the generic goals, then the
+   *  receipts for notes already taken this game. */
   function goalRowsHtml() {
     const { matchup, generic } = goalsFor(ui.goals, ui.opponent);
+    const note = noteFor(ui.notes, ui.opponent);
     const row = (g, vs) =>
       `<div class="rat-goal${vs ? " rat-goal-vs" : ""}">${
         vs ? `<span class="rat-vstag">vs ${esc(champName(g.opponent))}</span>` : ""
       }${esc(g.text)}</div>`;
-    const rows = matchup
-      .map((g) => row(g, true))
-      .concat(generic.map((g) => row(g, false)));
+    const rows = matchup.map((g) => row(g, true));
+    if (note) {
+      rows.push(
+        `<div class="rat-mnote"><span class="rat-vstag">vs ${esc(ui.opponent)}</span>${esc(note)}</div>`
+      );
+    }
+    rows.push(...generic.map((g) => row(g, false)));
     const noted = ui.noted
       .map((n) => `<div class="rat-noted">⚑ ${esc(clock(n.ms))} · ${esc(n.text)}</div>`)
       .join("");
     if (!rows.length) {
       return (
-        '<div class="rat-goal rat-goal-none">No goals set — add some under Goals in the dashboard.</div>' +
+        '<div class="rat-goal rat-goal-none">No goals set — add some under Goals in the dashboard, or a matchup note in the popup.</div>' +
         noted
       );
     }
     return rows.join("") + noted;
+  }
+
+  /** How many things the panel has to say against this opponent right now. */
+  function applicableCount() {
+    const { matchup, generic } = goalsFor(ui.goals, ui.opponent);
+    return matchup.length + generic.length + (noteFor(ui.notes, ui.opponent) ? 1 : 0);
   }
 
   function paint() {
@@ -240,6 +275,7 @@
       mode,
       opponent: null,
       goals: [],
+      notes: {},
       noted: [],
       hideTimer: null,
       panel: built.panel,
@@ -248,18 +284,20 @@
       pill: built.pill,
     };
     try {
-      chrome.storage.local.get({ goals: [] }, (data) => {
+      chrome.storage.local.get({ goals: [], matchupNotes: {} }, (data) => {
         if (!ui || ui.panel !== built.panel) return; // the screen moved on while storage answered
         ui.goals = (data && data.goals) || [];
-        const { matchup, generic } = goalsFor(ui.goals, ui.opponent);
-        const n = matchup.length + generic.length;
+        ui.notes = (data && data.matchupNotes) || {};
+        const n = applicableCount();
         if (n) {
           expand(ui.mode === "live" ? REMINDER_MS : 0);
-          console.info(
-            "[RA-Tracker] goals: showing " +
-              n +
-              (matchup.length ? " (" + matchup.length + " for this matchup)" : "")
-          );
+          console.info("[RA-Tracker] goals: showing " + n + " for this game");
+        } else if (ui.mode !== "live" && !introShown) {
+          // Nothing configured yet: a pregame board gets the empty state once
+          // per page load, so the feature can be found without reading docs.
+          introShown = true;
+          expand(0);
+          console.info("[RA-Tracker] goals: none set - showing where to add them, once");
         } else {
           paint(); // nothing to remind about; a live match still gets the note pill
           console.info("[RA-Tracker] goals: none apply (add some under Goals in the dashboard)");
@@ -285,10 +323,10 @@
     const opp = champName(alt) || null;
     if (opp === ui.opponent) return;
     ui.opponent = opp;
-    const matchup = goalsFor(ui.goals, opp).matchup;
-    if (matchup.length) {
+    const n = goalsFor(ui.goals, opp).matchup.length + (noteFor(ui.notes, opp) ? 1 : 0);
+    if (n) {
       expand(ui.mode === "live" ? REMINDER_MS : 0);
-      console.info("[RA-Tracker] goals: " + matchup.length + " for the matchup vs " + opp);
+      console.info("[RA-Tracker] goals: " + n + " for the matchup vs " + opp);
     } else {
       paint();
     }
@@ -319,12 +357,15 @@
     }
   }
 
-  /* Goals edited in the dashboard mid-session reach a panel already on
-   * screen. Data only - visibility stays observe's. */
+  /* Goals edited in the dashboard - or a matchup note typed in the popup -
+   * mid-session reach a panel already on screen. Data only; visibility stays
+   * observe's. */
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== "local" || !changes.goals || !ui) return;
-      ui.goals = changes.goals.newValue || [];
+      if (area !== "local" || !ui) return;
+      if (!changes.goals && !changes.matchupNotes) return;
+      if (changes.goals) ui.goals = changes.goals.newValue || [];
+      if (changes.matchupNotes) ui.notes = changes.matchupNotes.newValue || {};
       paint();
     });
   } catch (_) {
@@ -342,6 +383,7 @@
 
   root.RATGoalNotes = {
     goalsFor,
+    noteFor,
     stateFor,
     observe,
     isOwnPanel,

@@ -103,6 +103,13 @@
   font-size: 10.5px;
   font-weight: 700;
 }
+#ra-tracker-goals .rat-mnote {
+  padding: 4px 0;
+  border-top: 1px solid rgba(134, 168, 246, 0.15);
+  color: #cfe0ff;
+  font-style: italic;
+}
+#ra-tracker-goals .rat-mnote:first-child { border-top: 0; }
 #ra-tracker-goals .rat-noted {
   padding: 3px 0;
   font-size: 11.5px;
