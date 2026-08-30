@@ -17,6 +17,7 @@ import { renderMatches, mountMatches } from "./view-matches.js";
 import { renderSeries, mountSeries } from "./view-series.js";
 import { renderMatrix, mountMatrix } from "./view-matrix.js";
 import { renderNotes, mountNotes, hasNote } from "./view-notes.js";
+import { renderGoals, mountGoals, activeGoals } from "./view-goals.js";
 import * as dialog from "./dialog.js";
 import { toast } from "./toast.js";
 
@@ -70,6 +71,12 @@ const $ = (s) => document.querySelector(s);
  * paint the previous values and then flicker. */
 let settings = STORE.defaultSettings;
 
+/* The stored goals, mirrored for the same reason settings are: renders happen
+ * every three seconds while a match is live, and readGoals is asynchronous.
+ * The storage listener in boot() keeps the mirror current, whichever surface
+ * wrote - this page, a second dashboard tab. */
+let goals = [];
+
 // ---- what the nav shows ------------------------------------------------
 
 /* `all` is the raw match array and `withSeries` the same matches decorated by
@@ -92,6 +99,9 @@ function counts(all, withSeries) {
      * a nav count that moved when you narrowed a window inside a view would be
      * describing that control rather than your history. */
     notes: all.filter(hasNote).length,
+    /* Active goals only: a goal ticked off is kept for the record, but the
+     * number beside Goals answers "how much am I working on right now". */
+    goals: activeGoals(goals).length,
     // Null until the service worker has answered, so the nav shows nothing
     // rather than claiming zero recordings exist.
     replays: records.length ? records.length : null,
@@ -142,6 +152,9 @@ function render() {
   /* `all` rather than `withSeries`: a note is written on a match and belongs to
    * it whether or not the match turned out to be part of a series. */
   renderNotes($("[data-notes-view]"), all);
+  /* `all` supplies the matchup suggestions; the goals themselves are the
+   * stored list, mirrored above, not match data. */
+  renderGoals($("[data-goals-view]"), all, goals);
   paintSettings(withSeries);
 }
 
@@ -242,6 +255,7 @@ function boot() {
   mountSeries();
   mountMatrix($("[data-matrix]"));
   mountNotes($("[data-notes-view]"));
+  mountGoals($("[data-goals-view]"));
   mountSettings();
   subscribe(render);
 
@@ -262,9 +276,20 @@ function boot() {
     emit();
   });
 
+  STORE.readGoals().then((stored) => {
+    goals = stored;
+    emit();
+  });
+
   // Settings change from Settings, and from the header's own controls. Re-read
   // rather than tracked, because several of them are written by legacy.js.
   chrome.storage.onChanged.addListener((changes) => {
+    if (changes.goals) {
+      STORE.readGoals().then((stored) => {
+        goals = stored;
+        emit();
+      });
+    }
     if (!changes.settings) return;
     STORE.getSettings((s) => {
       settings = s;

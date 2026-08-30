@@ -150,6 +150,20 @@ function boardInPlay(scoreText) {
   return { page, gameState };
 }
 
+test("a pregame board draws the goals reminder without starting a match", () => {
+  /* The goals panel's pregame path runs against the real modules here: a
+   * board in "mulligan" must reach RATGoalNotes.observe - which builds the
+   * panel, reads the goals key and reads the opponent off the page - without
+   * a match record existing and without a single warning. */
+  const { page, gameState } = boardInPlay("0");
+  gameState.dataset.roomPhase = "mulligan";
+  const h = boot(page);
+  h.sweep();
+
+  assert.equal(h.sandbox.RATLifecycle.current(), null, "a mulligan is not a match");
+  assert.deepEqual(h.warnings, []);
+});
+
 test("a board in play starts a match, and the sweep keeps it", () => {
   // The whole stack, wired as the manifest wires it: the tick reads the board
   // through RATBoard, starts a record through RATLifecycle, and the sweep saves

@@ -241,6 +241,31 @@
       </div>`;
   }
 
+  /**
+   * The goals block: what you are working on, right where the scouting line
+   * already answers "who am I about to play". Matchup goals for the scouted
+   * champion come first - they are the reason a goal names a champion at all -
+   * then the generic ones. Which goals those are is `RATGoalNotes.goalsFor`,
+   * the same selection the game page's panel draws, so the two surfaces
+   * cannot disagree. Read-only here: goals are written in the dashboard's
+   * Goals view, and this popup writes nothing about your matches but the
+   * matchup note above.
+   */
+  function renderGoalsBlock(goals, target) {
+    const { matchup, generic } = window.RATGoalNotes.goalsFor(goals, target ? target.name : null);
+    if (!matchup.length && !generic.length) return "";
+    const row = (g, vs) => `<div class="goal-line${vs ? " goal-line-vs" : ""}">
+        <span class="goal-mark">⚑</span><span class="goal-body">${esc(g.text)}</span>
+      </div>`;
+    const head =
+      target && matchup.length ? "Goals · vs " + esc(target.name) : "Goals";
+    return `
+      <div class="goals">
+        <div class="label">${head}</div>
+        ${matchup.map((g) => row(g, true)).join("")}${generic.map((g) => row(g, false)).join("")}
+      </div>`;
+  }
+
   /* The three most recent matches other than the one already shown above, so a
    * live match is not reported twice with two different faces. */
   function renderRecent(ordered, live) {
@@ -262,14 +287,16 @@
       </div>`;
   }
 
-  function render(matches, now, pending, notes) {
+  function render(matches, now, pending, notes, goals) {
     const ordered = byNewest(matches);
     const live = liveMatch(ordered, now);
     const target = scoutTarget(live, pending, now);
     const scout = target ? renderScout(ordered, target, (notes || {})[target.name]) : "";
+    const goalsBlock = renderGoalsBlock(goals, target);
     if (!ordered.length) {
       $("state").innerHTML =
         scout +
+        goalsBlock +
         '<p class="empty">Play a match on play.riftatlas.com with the extension installed.</p>';
       return;
     }
@@ -280,6 +307,7 @@
     $("state").innerHTML =
       (head ? renderNow(head, now, head === live) + '<div class="divider"></div>' : "") +
       scout +
+      goalsBlock +
       renderTiles(ordered, now) +
       renderRecent(ordered, live);
   }
@@ -322,7 +350,7 @@
   });
 
   chrome.storage.local.get(
-    { matches: [], settings: DEFAULT_SETTINGS, pendingOpponent: null, matchupNotes: {} },
+    { matches: [], settings: DEFAULT_SETTINGS, pendingOpponent: null, matchupNotes: {}, goals: [] },
     (data) => {
       void chrome.runtime.lastError;
       renderStatus(Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}));
@@ -330,7 +358,8 @@
         (data && data.matches) || [],
         Date.now(),
         (data && data.pendingOpponent) || null,
-        (data && data.matchupNotes) || {}
+        (data && data.matchupNotes) || {},
+        (data && data.goals) || []
       );
     }
   );

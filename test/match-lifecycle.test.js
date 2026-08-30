@@ -629,3 +629,65 @@ test("scores only ever climb", () => {
   assert.equal(m.myScore, 5);
   assert.equal(m.opponentScore, 0);
 });
+
+// ---- mid-game timestamped notes (flags) -----------------------------------
+
+test("a note typed mid-game lands on the stored record as a timestamped flag", () => {
+  /* The goals panel files notes through addFlag, and the flag has to be on
+   * disk immediately - a note is exactly the kind of thing a tab can die
+   * holding. The text is trimmed the way the replay viewer's own flag prompt
+   * trims, and the ms falls back to time-since-match-start here because the
+   * stubbed recorder has no elapsedMs. */
+  const h = harness();
+  const m = h.play();
+  const ms = h.life.addFlag("  not sure that was the best play, review later  ");
+
+  assert.ok(Number.isFinite(ms) && ms >= 0, "addFlag reports the ms it filed");
+  const saved = h.stored(m.id);
+  assert.deepEqual(saved.replayFlags, [
+    { ms, text: "not sure that was the best play, review later" },
+  ]);
+});
+
+test("no live match, or nothing but whitespace, files no flag", () => {
+  const h = harness();
+  assert.equal(h.life.addFlag("before any game"), null);
+
+  const m = h.play();
+  assert.equal(h.life.addFlag("   "), null);
+  assert.equal(h.life.addFlag(null), null);
+  assert.ok(!h.stored(m.id).replayFlags, "nothing was filed");
+});
+
+test("flags stay sorted and capped at the viewer's own bounds", () => {
+  // dashboard/replay-html.js keeps at most 50 flags and 80 characters of
+  // label when the viewer edits the list; a note filed from the game page
+  // must not exceed what the viewer would keep.
+  const h = harness();
+  const m = h.play();
+  for (let i = 0; i < 55; i++) h.life.addFlag("note " + i);
+  const long = h.life.addFlag("x".repeat(200));
+  assert.ok(Number.isFinite(long));
+
+  const flags = h.stored(m.id).replayFlags;
+  assert.equal(flags.length, 50, "capped at 50");
+  for (const f of flags) assert.ok(f.text.length <= 80, "labels capped at 80 chars");
+  for (let i = 1; i < flags.length; i++) assert.ok(flags[i - 1].ms <= flags[i].ms, "sorted by ms");
+});
+
+test("a flag the dashboard wrote mid-game survives the next periodic save", () => {
+  /* The replay modal can add a flag while the game is still running. The
+   * content side saves the record wholesale every few seconds, so the flag
+   * has to be adopted into the live record when the matches array changes
+   * under it - the same rule deck names typed by hand follow. */
+  const h = harness();
+  const m = h.play();
+
+  const flagged = h.matches().map((x) =>
+    x.id === m.id ? Object.assign({}, x, { replayFlags: [{ ms: 1000, text: "the misplay" }] }) : x
+  );
+  h.life.onMatchesChanged(flagged, h.matches());
+  h.life.saveIfDirty();
+
+  assert.deepEqual(h.stored(m.id).replayFlags, [{ ms: 1000, text: "the misplay" }]);
+});
