@@ -205,13 +205,8 @@ test("a resumed match adopts its stored set; a deleted one drops it", () => {
  * parameter because the site has moved the strip: it used to be a direct child
  * of the heading and a toolbar now sits in between, which is the break this
  * reader is written not to repeat. */
-const heading = (decks, depth = 1) => {
-  let strip = el({
-    sel: ['[role="tablist"]'],
-    kids: [el({ tag: "button", sel: ["#deck-list-tab"] })],
-  });
-  for (let i = 0; i < depth; i++) strip = el({ kids: [strip] });
-  const named = decks.map(([name, legend]) =>
+const named = (decks) =>
+  decks.map(([name, legend]) =>
     el({
       kids: [
         el({ tag: "p", text: name, sel: ["p"] }),
@@ -219,18 +214,73 @@ const heading = (decks, depth = 1) => {
       ],
     })
   );
-  return el({ kids: named.concat([strip]) });
+
+const heading = (decks, depth = 1) => {
+  let strip = el({
+    sel: ['[role="tablist"]'],
+    kids: [el({ tag: "button", sel: ["#deck-list-tab"] })],
+  });
+  for (let i = 0; i < depth; i++) strip = el({ kids: [strip] });
+  return el({ kids: named(decks).concat([strip]) });
 };
 
-const picker = (name, champion, depth) => el({ kids: [heading([[name, champion]], depth)] });
+const picker = (name, champion, depth = 1) => el({ kids: [heading([[name, champion]], depth)] });
+
+/** The heading and its strip, beside a panel naming other decks - a deck
+ *  library, a "recently played" rail - one level further out. */
+const lobby = (headingDecks, besideIt, depth = 1) =>
+  el({ kids: [el({ kids: named(besideIt).concat([heading(headingDecks, depth)]) })] });
 
 test("the deck picker names the deck and its champion", () => {
-  onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon"), () => {
+  onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon", 1), () => {
     assert.deepEqual(deckScan.readDeckPicker(), {
       name: "Bandle Bomb",
       champion: "Diana, Scorn of the Moon",
     });
   });
+  // An "&" in the legend is a legend, not a reason to name nothing: the caller
+  // of last resort is "the deck you played last", so a legend we refuse to
+  // read costs a wrong label rather than a missing one.
+  onPage(picker("Freljord Ramp", "Nunu & Willump, Boy and His Yeti", 1), () =>
+    assert.equal(deckScan.readDeckPicker()?.champion, "Nunu & Willump, Boy and His Yeti")
+  );
+});
+
+test("the deck beside the tab strip beats the ones merely listed near it", () => {
+  /* The shape the read exists for: the heading names the deck you picked, and
+   * a library lists several more within reach of the walk. Nearest wins, so
+   * the walk must stop at the heading before it ever sees the library. */
+  const page = lobby(
+    [["viktor houston", "Viktor, Herald of the Arcane"]],
+    [
+      ["viktor utrect", "Viktor, Herald of the Arcane"],
+      ["viktor dallas", "Viktor, Herald of the Arcane"],
+      ["yasuo pile", "Yasuo, the Unforgiven"],
+    ]
+  );
+  onPage(page, () => {
+    assert.equal(deckScan.readDeckPicker()?.name, "viktor houston");
+    // The sweep still sees all four - telling them apart is the picker's job.
+    assert.equal(deckScan.deckCandidates().length, 4);
+  });
+});
+
+test("a heading naming nothing legible names nothing, rather than a neighbour", () => {
+  /* The heading is there and says something we cannot read - a legend the
+   * shape test rejects, a name too long. Climbing past it reaches a wider
+   * slice of the page, where one unrelated deck would be returned as yours:
+   * a wrong label, which costs more here than no label at all. */
+  const garbled = lobby(
+    [["Bandle Bomb", "Nunu"]],
+    [["Diana Control", "Diana, Scorn of the Moon"]]
+  );
+  onPage(garbled, () => assert.equal(deckScan.readDeckPicker(), null));
+
+  const overlong = lobby(
+    [["x".repeat(deckScan.MAX_DECK_NAME + 1), "Diana, Scorn of the Moon"]],
+    [["Diana Control", "Diana, Scorn of the Moon"]]
+  );
+  onPage(overlong, () => assert.equal(deckScan.readDeckPicker(), null));
 });
 
 test("the heading is found however deeply the tab strip is nested under it", () => {
@@ -281,6 +331,20 @@ test("the sweep pairs a deck name with the legend under it", () => {
       { name: "aggro", legend: "Rek'Sai, Breacher" },
     ]);
   });
+});
+
+test("a legend may be titled with an article, prose may not", () => {
+  /* Half the roster is titled this way, and a legend the sweep will not read
+   * is not a deck left unnamed - it is a deck labelled with whatever was
+   * played last. The capital after the article is what still keeps prose out. */
+  onPage(pairs("latest", "Yasuo, the Unforgiven"), () =>
+    assert.deepEqual(deckScan.deckCandidates(), [
+      { name: "latest", legend: "Yasuo, the Unforgiven" },
+    ])
+  );
+  onPage(pairs("x", "Bob, and then he left"), () =>
+    assert.deepEqual(deckScan.deckCandidates(), [])
+  );
 });
 
 test("the sweep ignores prose that is not a legend", () => {

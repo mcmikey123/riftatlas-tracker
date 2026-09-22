@@ -23,11 +23,12 @@
   const DECK_TAB = "#deck-list-tab";
   const MAX_DECK_NAME = 60; // longer than this and it isn't a deck name
   const MAX_PENDING = 12; // pre-game sightings kept while we wait for a board
-  /* How far above the tab strip the heading that names the deck may sit. Two
-   * levels on today's lobby - the strip's own toolbar, then the heading - and
-   * the third is slack for a wrapper appearing between them. Bounded, because
-   * every level up widens the scope towards the whole page, where "the deck
-   * nearest the tab strip" stops meaning anything. */
+  /* How far above the tab strip the heading that names the deck may sit.
+   * Level 0 is the strip's own parent - today's toolbar, the heading itself on
+   * the markup before it - so two levels covers today's lobby and the third is
+   * slack for another wrapper appearing between them. Bounded, because every
+   * level up widens the scope towards the whole page, where "the deck nearest
+   * the tab strip" stops meaning anything. */
   const PICKER_LEVELS = 3;
 
   const cleanText = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
@@ -37,24 +38,38 @@
   // i.e. the name you gave the deck, followed by its legend. That one shape is
   // how every deck on the site is read - the one open in the picker and the
   // ones merely listed alike - so the pairing rule lives in one place.
-  // "Diana, Scorn of the Moon" / "Rek'Sai, Breacher" - both halves start with
-  // a capital and contain no digits or sentence punctuation, which keeps log
-  // lines like "Rolled 16, monke rolled 4." from being mistaken for a legend.
-  const LEGEND_RE = /^\p{Lu}[\p{L}'’.\- ]{1,28},\s+\p{Lu}[\p{L}'’\- ]{1,38}$/u;
+  // "Diana, Scorn of the Moon" / "Rek'Sai, Breacher" / "Nunu & Willump, Boy
+  // and His Yeti" / "Yasuo, the Unforgiven" - both halves start with a capital
+  // (or the article "the") and contain no digits or sentence punctuation,
+  // which keeps log lines like "Rolled 16, monke rolled 4." from being
+  // mistaken for a legend, and prose like "Bob, and then he left" with them.
+  // The "&" and the article are not decoration: a legend this rejects is a
+  // deck the module cannot name at all, and the caller's last resort is the
+  // deck you played last - a wrong label, not a missing one.
+  const LEGEND_RE = /^\p{Lu}[\p{L}'’.&\- ]{1,28},\s+(?:the\s+)?\p{Lu}[\p{L}'’&\- ]{1,38}$/u;
 
-  /** Every deck named inside `scope`, in document order, each listed once. */
+  /**
+   * The decks named inside `scope`, in document order, each listed once.
+   *
+   * `pairs` counts every adjacent <p><p> seen, legible or not, and `decks` is
+   * the subset that reads as a deck. The difference matters to the walk below:
+   * an element holding a pair we cannot read is still the element that names
+   * the deck, and must not be walked past as though it said nothing.
+   */
   function pairsIn(scope) {
-    const out = [];
+    const decks = [];
     const seen = new Set();
+    let pairs = 0;
     let ps;
     try {
       ps = scope.querySelectorAll("p");
     } catch (_) {
-      return out;
+      return { pairs, decks };
     }
     for (const p of ps) {
       const next = p.nextElementSibling;
       if (!next || next.tagName !== "P") continue;
+      pairs++;
       const name = cleanText(p);
       const legend = cleanText(next);
       if (!name || name.length > MAX_DECK_NAME) continue;
@@ -62,9 +77,9 @@
       const key = name + "|" + legend;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ name, legend });
+      decks.push({ name, legend });
     }
-    return out;
+    return { pairs, decks };
   }
 
   /* The heading that names the chosen deck sits above the deck/tab strip, with
@@ -82,19 +97,25 @@
   /**
    * The deck currently open in the picker, or null if it isn't on screen.
    *
-   * The nearest ancestor of the tab strip that names exactly one deck is that
-   * strip's own deck. Exactly one: an ancestor naming several is the deck
-   * library rather than the heading, and since going further up can only add
-   * more, that is where the walk stops rather than guesses. This is the whole
-   * value of the read - the sweep below sees every deck on the page, and only
-   * the tab strip says which of them is the one you picked.
+   * The walk stops at the first ancestor that names anything at all, and that
+   * ancestor is the heading: one deck there is the strip's own, and anything
+   * else - several decks (the library), or a pair too garbled to read - names
+   * nothing. It stops on the garbled pair rather than climbing past it because
+   * the level above is a wider slice of the page, where a single unrelated
+   * deck (a "recently played" card, a one-entry list) would be picked up and
+   * returned as yours. That is the mislabelling this module exists to avoid,
+   * and it is worse than the silence.
+   *
+   * This is the whole value of the read - the sweep below sees every deck on
+   * the page, and only the tab strip says which of them is the one you picked.
    */
   function readDeckPicker() {
     let at = document.querySelector(DECK_TAB)?.closest('[role="tablist"]')?.parentElement;
     for (let up = 0; at && up < PICKER_LEVELS; up++, at = at.parentElement) {
-      const decks = pairsIn(at);
-      if (decks.length > 1) return null;
-      if (decks.length === 1) return { name: decks[0].name, champion: decks[0].legend };
+      const { pairs, decks } = pairsIn(at);
+      if (!pairs) continue; // nothing named here at all: the heading is higher
+      if (decks.length !== 1) return null;
+      return { name: decks[0].name, champion: decks[0].legend };
     }
     return null;
   }
@@ -103,7 +124,7 @@
   // wherever it names them. Matching a candidate's legend against the one we
   // independently read off the board is what makes this safe when several
   // decks are listed on screen.
-  const deckCandidates = () => pairsIn(document);
+  const deckCandidates = () => pairsIn(document).decks;
 
   function detectDeckName() {
     try {

@@ -83,7 +83,8 @@
        * "Viktor Control" both listed while we play a Viktor. Taking the first
        * would be a coin flip whose losing side skews two win rates at once,
        * and silently: nothing downstream can tell a matched deck from a
-       * guessed one. Falling through says so instead. */
+       * guessed one. */
+      if (ours.length > 1) return null;
     }
     const names = named(cands);
     if (names.length === 1) return names[0];
