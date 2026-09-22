@@ -23,54 +23,32 @@
   const DECK_TAB = "#deck-list-tab";
   const MAX_DECK_NAME = 60; // longer than this and it isn't a deck name
   const MAX_PENDING = 12; // pre-game sightings kept while we wait for a board
+  /* How far above the tab strip the heading that names the deck may sit. Two
+   * levels on today's lobby - the strip's own toolbar, then the heading - and
+   * the third is slack for a wrapper appearing between them. Bounded, because
+   * every level up widens the scope towards the whole page, where "the deck
+   * nearest the tab strip" stops meaning anything. */
+  const PICKER_LEVELS = 3;
 
   const cleanText = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
 
-  /* The picker's header sits directly above the deck/tab strip:
-   *   <div>                          <- header
-   *     <div>…<p>Bandle Bomb</p></div>       <- the name you gave the deck
-   *     <div>…<p>Diana, Scorn of the Moon</p></div>  <- its champion
-   *     <div role="tablist"><button id="deck-list-tab">…      <- anchor
-   * The tab id is the only stable hook on it, so we find the header by walking
-   * up from there rather than by matching class names that change every deploy.
-   */
-
-  /**
-   * The deck currently open in the picker, or null if it isn't on screen.
-   * `:scope > div p` follows the header's own layout: the name and champion
-   * divs come before the tab strip, so the first two <p>s in document order
-   * are the ones we want. If the champion div ever loses its <p> we pick up a
-   * tab label instead - which fails safe, because it then won't match the
-   * legend on the board and the read is discarded rather than trusted.
-   */
-  function readDeckPicker() {
-    const header = document
-      .querySelector(DECK_TAB)
-      ?.closest('[role="tablist"]')?.parentElement;
-    if (!header) return null;
-    const ps = header.querySelectorAll(":scope > div p");
-    const name = cleanText(ps[0]);
-    if (!name || name.length > MAX_DECK_NAME) return null;
-    return { name, champion: cleanText(ps[1]) || null };
-  }
-
-  // Fallback for games we never saw the picker for. Rift Atlas renders the
-  // chosen deck as a pair of sibling <p> elements:
+  // Rift Atlas writes a deck as a pair of sibling <p> elements:
   //   <p>latest</p><p>Diana, Scorn of the Moon</p>
-  // i.e. deck name followed by its legend. Matching the second <p> against the
-  // legend we independently read off the board is what makes this safe when
-  // several decks are listed on screen.
+  // i.e. the name you gave the deck, followed by its legend. That one shape is
+  // how every deck on the site is read - the one open in the picker and the
+  // ones merely listed alike - so the pairing rule lives in one place.
   // "Diana, Scorn of the Moon" / "Rek'Sai, Breacher" - both halves start with
   // a capital and contain no digits or sentence punctuation, which keeps log
   // lines like "Rolled 16, monke rolled 4." from being mistaken for a legend.
   const LEGEND_RE = /^\p{Lu}[\p{L}'’.\- ]{1,28},\s+\p{Lu}[\p{L}'’\- ]{1,38}$/u;
 
-  function deckCandidates() {
+  /** Every deck named inside `scope`, in document order, each listed once. */
+  function pairsIn(scope) {
     const out = [];
     const seen = new Set();
     let ps;
     try {
-      ps = document.querySelectorAll("p");
+      ps = scope.querySelectorAll("p");
     } catch (_) {
       return out;
     }
@@ -88,6 +66,44 @@
     }
     return out;
   }
+
+  /* The heading that names the chosen deck sits above the deck/tab strip, with
+   * the strip nested a level or two under it:
+   *   <div>                                      <- heading
+   *     <div>…<p>Bandle Bomb</p>                         <- the deck's name
+   *            <p>Diana, Scorn of the Moon</p>…</div>    <- its champion
+   *     <div>…<div role="tablist"><button id="deck-list-tab">…  <- anchor
+   * The tab id is the only stable hook on it - class names change every deploy
+   * - so the heading is found by walking up from there. How MANY levels up is
+   * not fixed, because the site has moved the strip before: it was a direct
+   * child of the heading, and a toolbar now sits in between.
+   */
+
+  /**
+   * The deck currently open in the picker, or null if it isn't on screen.
+   *
+   * The nearest ancestor of the tab strip that names exactly one deck is that
+   * strip's own deck. Exactly one: an ancestor naming several is the deck
+   * library rather than the heading, and since going further up can only add
+   * more, that is where the walk stops rather than guesses. This is the whole
+   * value of the read - the sweep below sees every deck on the page, and only
+   * the tab strip says which of them is the one you picked.
+   */
+  function readDeckPicker() {
+    let at = document.querySelector(DECK_TAB)?.closest('[role="tablist"]')?.parentElement;
+    for (let up = 0; at && up < PICKER_LEVELS; up++, at = at.parentElement) {
+      const decks = pairsIn(at);
+      if (decks.length > 1) return null;
+      if (decks.length === 1) return { name: decks[0].name, champion: decks[0].legend };
+    }
+    return null;
+  }
+
+  // Fallback for games we never saw the picker for: every deck the page names,
+  // wherever it names them. Matching a candidate's legend against the one we
+  // independently read off the board is what makes this safe when several
+  // decks are listed on screen.
+  const deckCandidates = () => pairsIn(document);
 
   function detectDeckName() {
     try {

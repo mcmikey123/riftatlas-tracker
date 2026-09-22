@@ -199,19 +199,30 @@ test("a resumed match adopts its stored set; a deleted one drops it", () => {
 
 // ---------- the deck picker and the deck sweep ----------
 
-const picker = (name, champion) => {
-  const header = el({
-    kids: [
-      el({ kids: [el({ tag: "p", text: name, sel: [":scope > div p"] })] }),
-      el({ kids: [el({ tag: "p", text: champion, sel: [":scope > div p"] })] }),
-      el({
-        sel: ['[role="tablist"]'],
-        kids: [el({ tag: "button", sel: ["#deck-list-tab"] })],
-      }),
-    ],
+/* The lobby heading, as the site renders it: every deck it names is a pair of
+ * adjacent <p>s - the name you gave the deck, then its legend - and the deck
+ * tab strip is buried `depth` levels below the heading. The depth is a
+ * parameter because the site has moved the strip: it used to be a direct child
+ * of the heading and a toolbar now sits in between, which is the break this
+ * reader is written not to repeat. */
+const heading = (decks, depth = 1) => {
+  let strip = el({
+    sel: ['[role="tablist"]'],
+    kids: [el({ tag: "button", sel: ["#deck-list-tab"] })],
   });
-  return el({ kids: [header] });
+  for (let i = 0; i < depth; i++) strip = el({ kids: [strip] });
+  const named = decks.map(([name, legend]) =>
+    el({
+      kids: [
+        el({ tag: "p", text: name, sel: ["p"] }),
+        el({ tag: "p", text: legend, sel: ["p"] }),
+      ],
+    })
+  );
+  return el({ kids: named.concat([strip]) });
 };
+
+const picker = (name, champion, depth) => el({ kids: [heading([[name, champion]], depth)] });
 
 test("the deck picker names the deck and its champion", () => {
   onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon"), () => {
@@ -222,12 +233,42 @@ test("the deck picker names the deck and its champion", () => {
   });
 });
 
+test("the heading is found however deeply the tab strip is nested under it", () => {
+  // Nothing between heading and strip (the old markup), and two levels of it
+  // (a toolbar inside a wrapper) both read the same deck.
+  for (const depth of [0, 1, 2]) {
+    onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon", depth), () =>
+      assert.equal(deckScan.readDeckPicker()?.name, "Bandle Bomb", "depth " + depth)
+    );
+  }
+  // Past the bound the walk stops: every level up is a wider slice of the page,
+  // and a deck named far enough above the strip is not that strip's deck.
+  onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon", 3), () =>
+    assert.equal(deckScan.readDeckPicker(), null)
+  );
+});
+
+test("a tab strip with several decks around it names none of them", () => {
+  /* Two decks under one ancestor is the deck library, not the heading - and
+   * they are exactly the decks nothing else can tell apart, since a player
+   * keeps several on one champion ("Viktor Aggro", "Viktor Control"). Taking
+   * the first would be a coin flip that skews two decks' win rates at once. */
+  const page = el({
+    kids: [heading([["Diana Aggro", "Diana, Scorn of the Moon"], ["Diana Control", "Diana, Scorn of the Moon"]])],
+  });
+  onPage(page, () => assert.equal(deckScan.readDeckPicker(), null));
+});
+
 test("the picker is null when it is not on screen, or is saying nothing usable", () => {
   onPage(el({}), () => assert.equal(deckScan.readDeckPicker(), null));
-  onPage(picker("", "Diana"), () => assert.equal(deckScan.readDeckPicker(), null));
-  onPage(picker("x".repeat(deckScan.MAX_DECK_NAME + 1), "Diana"), () =>
+  onPage(picker("", "Diana, Scorn of the Moon"), () => assert.equal(deckScan.readDeckPicker(), null));
+  onPage(picker("x".repeat(deckScan.MAX_DECK_NAME + 1), "Diana, Scorn of the Moon"), () =>
     assert.equal(deckScan.readDeckPicker(), null, "longer than this and it isn't a deck name")
   );
+  // The second <p> has to look like a legend. If the heading ever loses it we
+  // read a tab label or a stray line instead, and that fails safe: the pair is
+  // discarded here rather than trusted and checked against the board later.
+  onPage(picker("Bandle Bomb", "List"), () => assert.equal(deckScan.readDeckPicker(), null));
 });
 
 const pairs = (...texts) =>
