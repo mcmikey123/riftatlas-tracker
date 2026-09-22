@@ -86,6 +86,24 @@ test("4. a candidate whose legend matches ours is the deck, however many are lis
   assert.equal(resolveDeckName("diana, aspect of the moon", cands), null);
 });
 
+test("4b. two decks on the legend we are playing name neither", () => {
+  /* The case the legend check cannot settle: a player keeps several decks on
+   * one champion, and both are listed. Answering with whichever came first is
+   * a coin flip, and its losing side skews two win rates at once - the deck
+   * credited and the deck played - with nothing downstream able to tell that
+   * answer from a matched one. */
+  const cands = [
+    { name: "Diana Aggro", legend: BOARD_LEGEND },
+    { name: "Diana Control", legend: BOARD_LEGEND },
+  ];
+  assert.equal(resolveDeckName(BOARD_LEGEND, cands), null);
+  // One of them plus an unrelated deck is still answerable.
+  assert.equal(
+    resolveDeckName(BOARD_LEGEND, [cands[0], { name: "Yasuo Tempo", legend: OTHER_LEGEND }]),
+    "Diana Aggro"
+  );
+});
+
 test("5. one deck on screen is the answer even without a legend to check", () => {
   // The common case: the deck-select screen showing the one deck we picked.
   assert.equal(resolveDeckName(null, [{ name: "Bandle Bomb", legend: BOARD_LEGEND }]), "Bandle Bomb");
