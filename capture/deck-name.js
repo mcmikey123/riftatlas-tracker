@@ -72,13 +72,21 @@
   function resolveDeckName(myLegend, candidates) {
     const cands = candidates || [];
     if (!cands.length) return null;
-    if (myLegend) {
-      const hit = cands.find((c) => c.legend === myLegend);
-      if (hit) return hit.name;
-    }
     // Names are what get stored, so names are what have to be unambiguous: the
-    // same deck listed twice under two legends is still one answer.
-    const names = [...new Set(cands.map((c) => c.name))];
+    // same deck listed twice under two legends is still one answer, and two
+    // decks built on one legend are none.
+    const named = (of) => [...new Set(of.map((c) => c.name))];
+    if (myLegend) {
+      const ours = named(cands.filter((c) => c.legend === myLegend));
+      if (ours.length === 1) return ours[0];
+      /* Several decks on the legend we are playing - "Viktor Aggro" and
+       * "Viktor Control" both listed while we play a Viktor. Taking the first
+       * would be a coin flip whose losing side skews two win rates at once,
+       * and silently: nothing downstream can tell a matched deck from a
+       * guessed one. */
+      if (ours.length > 1) return null;
+    }
+    const names = named(cands);
     if (names.length === 1) return names[0];
     return null;
   }

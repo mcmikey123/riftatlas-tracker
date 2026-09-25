@@ -199,35 +199,126 @@ test("a resumed match adopts its stored set; a deleted one drops it", () => {
 
 // ---------- the deck picker and the deck sweep ----------
 
-const picker = (name, champion) => {
-  const header = el({
-    kids: [
-      el({ kids: [el({ tag: "p", text: name, sel: [":scope > div p"] })] }),
-      el({ kids: [el({ tag: "p", text: champion, sel: [":scope > div p"] })] }),
-      el({
-        sel: ['[role="tablist"]'],
-        kids: [el({ tag: "button", sel: ["#deck-list-tab"] })],
-      }),
-    ],
+/* The lobby heading, as the site renders it: every deck it names is a pair of
+ * adjacent <p>s - the name you gave the deck, then its legend - and the deck
+ * tab strip is buried `depth` levels below the heading. The depth is a
+ * parameter because the site has moved the strip: it used to be a direct child
+ * of the heading and a toolbar now sits in between, which is the break this
+ * reader is written not to repeat. */
+const named = (decks) =>
+  decks.map(([name, legend]) =>
+    el({
+      kids: [
+        el({ tag: "p", text: name, sel: ["p"] }),
+        el({ tag: "p", text: legend, sel: ["p"] }),
+      ],
+    })
+  );
+
+const heading = (decks, depth = 1) => {
+  let strip = el({
+    sel: ['[role="tablist"]'],
+    kids: [el({ tag: "button", sel: ["#deck-list-tab"] })],
   });
-  return el({ kids: [header] });
+  for (let i = 0; i < depth; i++) strip = el({ kids: [strip] });
+  return el({ kids: named(decks).concat([strip]) });
 };
 
+const picker = (name, champion, depth = 1) => el({ kids: [heading([[name, champion]], depth)] });
+
+/** The heading and its strip, beside a panel naming other decks - a deck
+ *  library, a "recently played" rail - one level further out. */
+const lobby = (headingDecks, besideIt, depth = 1) =>
+  el({ kids: [el({ kids: named(besideIt).concat([heading(headingDecks, depth)]) })] });
+
 test("the deck picker names the deck and its champion", () => {
-  onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon"), () => {
+  onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon", 1), () => {
     assert.deepEqual(deckScan.readDeckPicker(), {
       name: "Bandle Bomb",
       champion: "Diana, Scorn of the Moon",
     });
   });
+  // An "&" in the legend is a legend, not a reason to name nothing: the caller
+  // of last resort is "the deck you played last", so a legend we refuse to
+  // read costs a wrong label rather than a missing one.
+  onPage(picker("Freljord Ramp", "Nunu & Willump, Boy and His Yeti", 1), () =>
+    assert.equal(deckScan.readDeckPicker()?.champion, "Nunu & Willump, Boy and His Yeti")
+  );
+});
+
+test("the deck beside the tab strip beats the ones merely listed near it", () => {
+  /* The shape the read exists for: the heading names the deck you picked, and
+   * a library lists several more within reach of the walk. Nearest wins, so
+   * the walk must stop at the heading before it ever sees the library. */
+  const page = lobby(
+    [["viktor houston", "Viktor, Herald of the Arcane"]],
+    [
+      ["viktor utrect", "Viktor, Herald of the Arcane"],
+      ["viktor dallas", "Viktor, Herald of the Arcane"],
+      ["yasuo pile", "Yasuo, the Unforgiven"],
+    ]
+  );
+  onPage(page, () => {
+    assert.equal(deckScan.readDeckPicker()?.name, "viktor houston");
+    // The sweep still sees all four - telling them apart is the picker's job.
+    assert.equal(deckScan.deckCandidates().length, 4);
+  });
+});
+
+test("a heading naming nothing legible names nothing, rather than a neighbour", () => {
+  /* The heading is there and says something we cannot read - a legend the
+   * shape test rejects, a name too long. Climbing past it reaches a wider
+   * slice of the page, where one unrelated deck would be returned as yours:
+   * a wrong label, which costs more here than no label at all. */
+  const garbled = lobby(
+    [["Bandle Bomb", "Nunu"]],
+    [["Diana Control", "Diana, Scorn of the Moon"]]
+  );
+  onPage(garbled, () => assert.equal(deckScan.readDeckPicker(), null));
+
+  const overlong = lobby(
+    [["x".repeat(deckScan.MAX_DECK_NAME + 1), "Diana, Scorn of the Moon"]],
+    [["Diana Control", "Diana, Scorn of the Moon"]]
+  );
+  onPage(overlong, () => assert.equal(deckScan.readDeckPicker(), null));
+});
+
+test("the heading is found however deeply the tab strip is nested under it", () => {
+  // Nothing between heading and strip (the old markup), and two levels of it
+  // (a toolbar inside a wrapper) both read the same deck.
+  for (const depth of [0, 1, 2]) {
+    onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon", depth), () =>
+      assert.equal(deckScan.readDeckPicker()?.name, "Bandle Bomb", "depth " + depth)
+    );
+  }
+  // Past the bound the walk stops: every level up is a wider slice of the page,
+  // and a deck named far enough above the strip is not that strip's deck.
+  onPage(picker("Bandle Bomb", "Diana, Scorn of the Moon", 3), () =>
+    assert.equal(deckScan.readDeckPicker(), null)
+  );
+});
+
+test("a tab strip with several decks around it names none of them", () => {
+  /* Two decks under one ancestor is the deck library, not the heading - and
+   * they are exactly the decks nothing else can tell apart, since a player
+   * keeps several on one champion ("Viktor Aggro", "Viktor Control"). Taking
+   * the first would be a coin flip that skews two decks' win rates at once. */
+  const page = el({
+    kids: [heading([["Diana Aggro", "Diana, Scorn of the Moon"], ["Diana Control", "Diana, Scorn of the Moon"]])],
+  });
+  onPage(page, () => assert.equal(deckScan.readDeckPicker(), null));
 });
 
 test("the picker is null when it is not on screen, or is saying nothing usable", () => {
   onPage(el({}), () => assert.equal(deckScan.readDeckPicker(), null));
-  onPage(picker("", "Diana"), () => assert.equal(deckScan.readDeckPicker(), null));
-  onPage(picker("x".repeat(deckScan.MAX_DECK_NAME + 1), "Diana"), () =>
+  onPage(picker("", "Diana, Scorn of the Moon"), () => assert.equal(deckScan.readDeckPicker(), null));
+  onPage(picker("x".repeat(deckScan.MAX_DECK_NAME + 1), "Diana, Scorn of the Moon"), () =>
     assert.equal(deckScan.readDeckPicker(), null, "longer than this and it isn't a deck name")
   );
+  // The second <p> has to look like a legend. If the heading ever loses it we
+  // read a tab label or a stray line instead, and that fails safe: the pair is
+  // discarded here rather than trusted and checked against the board later.
+  onPage(picker("Bandle Bomb", "List"), () => assert.equal(deckScan.readDeckPicker(), null));
 });
 
 const pairs = (...texts) =>
@@ -240,6 +331,20 @@ test("the sweep pairs a deck name with the legend under it", () => {
       { name: "aggro", legend: "Rek'Sai, Breacher" },
     ]);
   });
+});
+
+test("a legend may be titled with an article, prose may not", () => {
+  /* Half the roster is titled this way, and a legend the sweep will not read
+   * is not a deck left unnamed - it is a deck labelled with whatever was
+   * played last. The capital after the article is what still keeps prose out. */
+  onPage(pairs("latest", "Yasuo, the Unforgiven"), () =>
+    assert.deepEqual(deckScan.deckCandidates(), [
+      { name: "latest", legend: "Yasuo, the Unforgiven" },
+    ])
+  );
+  onPage(pairs("x", "Bob, and then he left"), () =>
+    assert.deepEqual(deckScan.deckCandidates(), [])
+  );
 });
 
 test("the sweep ignores prose that is not a legend", () => {
