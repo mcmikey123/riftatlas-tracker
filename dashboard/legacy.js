@@ -80,7 +80,8 @@
 
   function load() {
     if (archive) {
-      all = archive.matches.map((m) => {
+      // TEMPORARY - see name-cleanup.js. Read-only here: the archive is not written.
+      all = window.RATrackerNameCleanup.cleanNames(archive.matches).matches.map((m) => {
         const lean = Object.assign({}, m);
         delete lean.log;
         return lean;
@@ -92,7 +93,12 @@
     }
     chrome.storage.local.get({ matches: [] }, (data) => {
       const raw = data.matches || [];
-      const clean = raw.filter((m) => m && m.id);
+      // TEMPORARY - see name-cleanup.js for when and how to drop this.
+      const names = window.RATrackerNameCleanup.cleanNames(raw.filter((m) => m && m.id));
+      const clean = names.matches;
+      if (names.changed) {
+        console.info("[RA-Tracker] repaired player names on %d matches", names.changed);
+      }
       /* MIGRATION (inline logs -> log_<id> keys). Runs automatically; nobody is
        * ever asked to move their own data. It is deliberately NOT gated on a
        * "done" flag, and the scan below is what makes it self-healing: a record
@@ -120,7 +126,7 @@
         writes.matches = clean;
         STORE.writeKeys(writes);
         console.info("[RA-Tracker] migrated %d inline logs to separate keys", inline.length);
-      } else if (clean.length !== raw.length) {
+      } else if (clean.length !== raw.length || names.changed) {
         STORE.writeMatches(clean);
       }
       clean.forEach((m) => delete m.log);
