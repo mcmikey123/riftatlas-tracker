@@ -37,8 +37,9 @@ test("the CSP allows what rrweb needs and nothing broader", () => {
   // rrweb injects styles at runtime, and builds its own sandboxed replay iframe.
   assert.match(csp, /style-src [^;]*'unsafe-inline'/);
   assert.match(csp, /frame-src [^;]*blob:/);
-  // Card art comes from the game's CDN; nothing else is a permitted image source.
-  assert.match(csp, /img-src [^;]*https:\/\/assets\.riftatlas-workers\.com/);
+  // Card art comes from the game's CDN, sleeves and playmats from the game
+  // itself; nothing else is a permitted image source.
+  assert.match(csp, /img-src 'self' data: https:\/\/assets\.riftatlas-workers\.com https:\/\/play\.riftatlas\.com(;|$)/);
   // Scripting must stay same-origin only — inline script would defeat the whole point.
   assert.match(csp, /script-src 'self'/);
   assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);

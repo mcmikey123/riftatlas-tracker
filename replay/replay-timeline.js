@@ -313,9 +313,9 @@
    * The recorder captures `document.documentElement`, so the game's whole
    * <head> is serialised into every keyframe and re-mounted on every rebuild.
    * The nodes below then make the viewer go to the network for something no
-   * viewer will ever see: the favicons are refused by the viewer's img-src
-   * (which stays tight — a favicon nobody looks at is not worth reaching
-   * play.riftatlas.com for), and the preloads are fetched and then warned about
+   * viewer will ever see: the favicons would be fetched from play.riftatlas.com
+   * (which img-src now allows, for the sleeves and playmats on the board) only
+   * to never be shown, and the preloads are fetched and then warned about
    * because nothing consumes them, scripting being off inside rrweb's iframe.
    *
    * The list is exactly "reaches the network, renders nothing". `canonical`,
