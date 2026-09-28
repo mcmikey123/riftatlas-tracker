@@ -20,6 +20,16 @@
   const MAX_RETAINED_BYTES = 2 * FLUSH_BYTES;
   const MAX_FLUSH_FAILURES = 3; // consecutive; then the visual track gives up loudly
   const IDLE_TIMEOUT_MS = 1000; // never let an idle callback starve behind animation
+  /* Pointer sampling interval, in ms. Cursor movement was recorded as nothing
+   * at all until now, on the grounds that it is noise a card game does not need;
+   * what it actually carries is the one thing the DOM never shows - the card a
+   * player picked up, hovered over a battlefield and put back down. rrweb
+   * batches the samples between emits, so the cost is positions, not events, and
+   * 100ms is smooth at replay speed while halving what the rrweb default spends.
+   * Clicks and their kin (`mouseInteraction`) are a few hundred events a match
+   * and are not sampled at all. Neither touches the snapshot cadence: that runs
+   * off `mark()` settles, not off the emit stream. */
+  const MOUSEMOVE_MS = 100;
   const FULL_SNAPSHOT = 2; // rrweb EventType.FullSnapshot
   const MAX_SAMPLES = 500; // capture-duration ring for the diagnostics p50
   // A full snapshot is never serialized on this thread just to size it (that is
@@ -407,8 +417,7 @@
       inlineStylesheet: true,
       recordCanvas: false,
       collectFonts: false,
-      // Pointer noise is worthless for a card game and dominates the byte budget.
-      sampling: { mousemove: false, mouseInteraction: false, scroll: 1000, input: "last" },
+      sampling: { mousemove: MOUSEMOVE_MS, mouseInteraction: true, scroll: 1000, input: "last" },
     });
     // rrweb takes its opening snapshot inside `record()`, so `emit` - and with it
     // a kill-switch teardown - can fire before this call even returns. Handing

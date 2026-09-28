@@ -103,7 +103,7 @@
   function create(options) {
     const {
       quantise, timeline, SEEK, seekOutcome, startPosition, shouldAutoplay, stripInertLinks,
-      normaliseSpeed,
+      normaliseSpeed, hasPointerData,
     } = root.RAReplayTimeline;
 
     const stage = options.stage;
@@ -137,6 +137,17 @@
       console.warn("[RA-Tracker] visual replay failed to start:", err);
       return null;
     }
+
+    /* rrweb's own cursor element, in the same family as the wrapper and iframe
+     * below - no chrome class names enter the core. Hidden rather than never
+     * mounted, because the element is built in the constructor and nothing here
+     * gets to choose.
+     *
+     * Hiding is the default for anything that is not positively pointer data:
+     * a stream so malformed that the predicate cannot read it is also one rrweb
+     * will not move a cursor through, and a stream malformed enough to matter
+     * never reaches this line at all - the Replayer above throws on it first. */
+    if (replayer.mouse && !hasPointerData(events)) replayer.mouse.style.display = "none";
 
     // rrweb sizes its iframe from the recorded meta event and re-sizes it on
     // any viewport-resize event in the stream; both are overridden here so the
@@ -382,9 +393,11 @@
   }
 
   // Same dual export as store/css-assets.js: a global for the browser, CommonJS
-  // so tooling can load the file. There is nothing here to unit test — it is
+  // so tooling can load the file. Next to nothing here is unit tested — it is
   // rrweb and the DOM all the way down; the transport's decisions live in
-  // replay-timeline.js, where they are pure and covered.
+  // replay-timeline.js, where they are pure and covered. The exception is the
+  // cursor line above, which is a decision rather than plumbing and is the one
+  // thing test/replay-core.test.js stubs rrweb far enough to reach.
   // viewportOf and DEFAULT_VIEWPORT stay internal: pinning is create()'s own
   // business, and nothing outside this file has ever needed to ask.
   const api = { available, create, DRAG_END_EVENTS };
