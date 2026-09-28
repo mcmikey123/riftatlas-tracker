@@ -670,3 +670,17 @@ test("a storage change repaints the page", async () => {
   assert.equal(h.sandbox.RATrackerLegacy.matches().length, 4, "the reload must reach the array");
   assert.equal(h.document.querySelector("#tGames").textContent, "4");
 });
+
+test("player names saved with the badge label are repaired and written back", async () => {
+  // TEMPORARY, with dashboard/name-cleanup.js: delete after 2026-12-28.
+  const h = boot({
+    matches: [match({ myName: "curtyo profile and actions", opponentName: "..." })],
+    storage: { shares: [] },
+  });
+  await h.quiet("a load that repairs names");
+
+  const written = h.writes.find((w) => w.matches);
+  assert.ok(written, "the repaired names must reach storage");
+  assert.equal(written.matches[0].myName, "curtyo");
+  assert.equal(written.matches[0].opponentName, null);
+});

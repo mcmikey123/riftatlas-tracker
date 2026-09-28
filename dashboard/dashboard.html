@@ -501,6 +501,9 @@
 <script src="data-io.js"></script>
 <script src="backups.js"></script>
 <script src="settings-capture.js"></script>
+<!-- TEMPORARY: repairs player names saved before the badge-text fix. legacy.js
+     calls it as it loads; see the file for when to delete it. -->
+<script src="name-cleanup.js"></script>
 <!-- Being drained one view at a time. Every element it reaches for may already
      have been ported, so nothing in it dereferences a query result directly. -->
 <script src="legacy.js"></script>
