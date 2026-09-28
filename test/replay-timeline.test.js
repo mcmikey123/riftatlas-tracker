@@ -428,8 +428,7 @@ test("the replay itself, and a missing target, own nothing", () => {
 /* ── stripInertLinks ──────────────────────────────────────────────────────────
  *
  * The recorder captures documentElement, so the game's whole <head> rides along
- * in every keyframe: favicons the viewer's img-src refuses, preloads nothing
- * consumes. Stripping them is easy; stripping one node too many is the
+ * in every keyframe: favicons nobody sees, preloads nothing consumes. Stripping them is easy; stripping one node too many is the
  * expensive mistake, because a <link> that was going to become a <style> takes
  * the entire stylesheet with it and the replay plays unstyled with no error at
  * all. Every "kept" case below is guarding that.

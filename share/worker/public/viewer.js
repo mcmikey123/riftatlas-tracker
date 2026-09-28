@@ -22,8 +22,8 @@
 
   const doc = root.document;
 
-  // The game's card art. Everything else the replay needs is same-origin or a
-  // data: URI; this is the one host that can be down on its own.
+  // The game's card art: the one outside host the health check watches. Sleeves
+  // and playmats come from play.riftatlas.com and can go missing unannounced.
   const CARD_ART_ORIGIN = "https://assets.riftatlas-workers.com";
   const CARD_ART_INTERVAL_MS = 2000;
   const CARD_ART_CHECKS = 8;

@@ -31,7 +31,7 @@ const CSP = [
   "default-src 'none'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'", // rrweb injects styles at runtime
-  "img-src 'self' data: https://assets.riftatlas-workers.com",
+  "img-src 'self' data: https://assets.riftatlas-workers.com https://play.riftatlas.com",
   "connect-src 'self'",
   "frame-src 'self' blob:", // rrweb builds its own sandboxed replay iframe
   // Nothing here is meant to be embedded. default-src 'none' does not cover
