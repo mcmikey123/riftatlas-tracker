@@ -251,11 +251,16 @@ const rail = (className, letters, containerClass) =>
     kids: [letterGrid(className, letters)],
   });
 
-const badge = (side, label, initials) =>
+const badge = (side, label, initials, printed) =>
   el({
     sel: [`[data-player-identity-trigger="${side}"]`, "[data-player-identity-trigger]"],
     attrs: { "aria-label": label },
-    kids: initials ? [letterGrid("", initials)] : [],
+    kids: [
+      ...(initials ? [letterGrid("", initials)] : []),
+      ...(printed === undefined
+        ? []
+        : [el({ sel: ["[data-identity-player-name]"], kids: [el({ tag: "span", text: printed })] })]),
+    ],
   });
 
 test("names come off the identity badges, which say whose they are", () => {
@@ -264,6 +269,43 @@ test("names come off the identity badges, which say whose they are", () => {
   });
   onPage(page, () =>
     assert.deepEqual(board.playerNames(), { mine: "curtyo", opponent: "Oathion" })
+  );
+});
+
+test("the name printed in the badge wins over its aria-label", () => {
+  // Label wordings no suffix strip knows: only the printed name can answer.
+  const page = el({
+    kids: [
+      badge("player", "Profil von curtyo", null, "curtyo"),
+      badge("opponent", "Profil von ReX", null, "ReX"),
+    ],
+  });
+  onPage(page, () =>
+    assert.deepEqual(board.playerNames(), { mine: "curtyo", opponent: "ReX" })
+  );
+});
+
+test("the reworded aria-label reads as the name alone", () => {
+  const page = el({
+    kids: [badge("player", "curtyo profile and actions"), badge("opponent", "ReX profile and actions")],
+  });
+  onPage(page, () =>
+    assert.deepEqual(board.playerNames(), { mine: "curtyo", opponent: "ReX" })
+  );
+});
+
+test("the placeholder shown before the opponent is known is not a name", () => {
+  /* Before the first player is chosen the opponent badge reads "..." both
+   * printed and in its label. Returned as a name, the lifecycle would keep it
+   * and never read the real one. */
+  const page = el({
+    kids: [
+      badge("player", "curtyo profile and actions", null, "curtyo"),
+      badge("opponent", "... profile and actions", null, "..."),
+    ],
+  });
+  onPage(page, () =>
+    assert.deepEqual(board.playerNames(), { mine: "curtyo", opponent: null })
   );
 });
 

@@ -67,18 +67,27 @@
 
   // ---------- player names ----------
   //
-  // Each player has an identity badge that says which side it belongs to and
-  // carries the name in its aria-label ("curtyo menu").
+  // Each player has an identity badge that says which side it belongs to. The
+  // name is printed bare inside it; its aria-label wraps the name in a
+  // sentence the site rewords ("curtyo menu", then "curtyo profile and
+  // actions") and translates, so the label is only the fallback.
   const BADGE = {
     mine: '[data-player-identity-trigger="player"]',
     opponent: '[data-player-identity-trigger="opponent"]',
   };
-  const MENU_SUFFIX_RE = /\s*menu$/i;
+  const BADGE_NAME = "[data-identity-player-name]";
+  const LABEL_SUFFIX_RE = /\s*(menu|profile and actions)$/i;
+  // What the badge shows before the site knows the opponent. Read as a name,
+  // the lifecycle would keep it for the whole match.
+  const PLACEHOLDER_RE = /^[.…\s]*$/;
 
   function badgeName(selector) {
-    const label = document.querySelector(selector)?.getAttribute("aria-label");
-    const name = (label || "").replace(MENU_SUFFIX_RE, "").trim();
-    return name || null;
+    const badge = document.querySelector(selector);
+    if (!badge) return null;
+    const printed = badge.querySelector(BADGE_NAME)?.textContent;
+    const label = (badge.getAttribute("aria-label") || "").replace(LABEL_SUFFIX_RE, "");
+    const name = (printed || label).trim();
+    return PLACEHOLDER_RE.test(name) ? null : name;
   }
 
   /* The letter rails the badges replaced: names spelled out one character per
