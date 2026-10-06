@@ -116,7 +116,7 @@
    * drives, or null if the recording will not play; `destroy` is the teardown
    * for everything wired here and for the core underneath.
    */
-  function wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt) {
+  function wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt, startAtMs) {
     const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
       handles;
 
@@ -147,6 +147,11 @@
           meta,
           marks,
           autoplay: true,
+          // Null when no moment was named. A named one - a mid-game note's
+          // Watch button - opens paused there: the core reads a moment as a
+          // position being examined unless a surface says otherwise, and this
+          // surface agrees.
+          startAtMs,
           onTime: callbacks.onTime,
           onPlayState: callbacks.onPlayState,
         }),
@@ -384,6 +389,13 @@
   function mount(container, match, payload, options) {
     const shareMoment = (options && options.shareMoment) || null;
     const flagsOpt = (options && options.flags) || null;
+    // `options.startAtMs` opens the replay at a named moment - a mid-game
+    // note's Watch button. Same contract as the core's: null means "no
+    // moment given", and 0 is a real moment.
+    const startAtMs =
+      options && options.startAtMs != null && Number.isFinite(Number(options.startAtMs))
+        ? Number(options.startAtMs)
+        : null;
     const meta = (payload && payload.meta) || {};
     const events = (payload && payload.events) || [];
     if (events.length < 2) {
@@ -400,7 +412,7 @@
     const chips = evenly(marks, MAX_CHIPS);
 
     const handles = renderShell(container, match, meta, marks, chips, !!shareMoment, !!flagsOpt);
-    const ctl = wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt);
+    const ctl = wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt, startAtMs);
     if (!ctl) {
       container.innerHTML = '<p class="rp-empty">This recording could not be played back.</p>';
       return null;

@@ -18,7 +18,7 @@ import { state, emit, resetPaging } from "./state.js";
 const T = window.RATrackerTable;
 const S = window.RATrackerSeries;
 const {
-  esc, champ, fmtDuration, fmtDay, fmtTime, fmtScore,
+  esc, champ, fmtClock, fmtDuration, fmtDay, fmtTime, fmtScore,
 } = window.RATrackerFormat;
 
 const LEGACY = () => window.RATrackerLegacy;
@@ -202,13 +202,58 @@ function row(m, deciderIds, readOnly) {
     <span class="cell">${resultCell(m, readOnly)}</span>
     <span class="cell cell-source">${
       live ? '<span class="src-live"><span class="dot dot-accent"></span>in game</span>' : esc(m.resultSource || "auto")
-    }${m.notes ? '<span class="note-dot" title="Has notes">●</span>' : ""}</span>
+    }${m.notes ? '<span class="note-dot" title="Has notes">●</span>' : ""}${
+      Array.isArray(m.replayFlags) && m.replayFlags.length
+        ? '<span class="note-dot" title="Has mid-game notes">⚑</span>'
+        : ""
+    }</span>
     <span class="cell cell-more"><button class="row-more" data-rowmenu="${esc(m.id)}"
       aria-haspopup="true" aria-expanded="${state.openRowMenu === m.id}" aria-label="Row actions">⋯</button>${rowMenu(m, readOnly)}</span>
   </div>`;
 }
 
 // ---- the expanded row --------------------------------------------------
+
+/**
+ * The match's timestamped flags: notes typed on the game page mid-game, and
+ * bookmarks made in the replay viewer - one list, because they are one field
+ * (`replayFlags`, {ms, text}).
+ *
+ * When a recording exists each row gets a Watch button that opens the replay
+ * AT that moment: it carries the same data-visual attribute as "Open full
+ * screen", so it lands in view-replays.js's handler, plus data-visualat naming
+ * the millisecond. Without a recording the notes still read - they are on the
+ * match record and outlive the replay - but there is nothing to jump into.
+ */
+function midGameNotes(m) {
+  const flags = (Array.isArray(m.replayFlags) ? m.replayFlags : []).filter(
+    (f) => f && Number.isFinite(Number(f.ms))
+  );
+  if (!flags.length) return "";
+  const canWatch = LEGACY().hasVisual(m.id);
+  return `<div class="flag-block">
+    <span class="block-label">Mid-game notes</span>
+    ${flags
+      .map(
+        (f) => `<div class="flag-row">
+      <span class="flag-when">⚑ ${esc(fmtClock(Number(f.ms)))}</span>
+      <span class="flag-text">${esc(String(f.text || ""))}</span>
+      ${
+        canWatch
+          ? `<button class="btn btn-sm" data-visual="${esc(m.id)}" data-visualat="${Number(f.ms)}"
+               title="Open the replay at this moment">Watch</button>`
+          : ""
+      }
+    </div>`
+      )
+      .join("")}
+    ${
+      canWatch
+        ? ""
+        : '<p class="coverage">No recording is stored for this match, so these moments cannot be replayed.</p>'
+    }
+  </div>`;
+}
 
 function detail(m, readOnly) {
   const legacy = LEGACY();
@@ -282,6 +327,8 @@ function detail(m, readOnly) {
       </div>
       <textarea class="notes" data-notes="${esc(m.id)}" rows="4" ${readOnly ? "readonly" : ""}
         placeholder="What happened? What would you do differently?">${esc(m.notes || "")}</textarea>
+
+      ${midGameNotes(m)}
 
       ${
         !m.endedAt && !readOnly

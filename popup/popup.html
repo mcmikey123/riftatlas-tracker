@@ -24,6 +24,11 @@
 </main>
 
 <script src="../dashboard/format.js"></script>
+<!-- goalsFor - which goals apply against which opponent - is the content
+     script's, loaded here so the popup and the game page cannot come to
+     disagree about it. Its panel code only runs when a match starts, which
+     never happens in a popup; loading it costs the function definitions. -->
+<script src="../capture/goal-notes.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

@@ -56,6 +56,12 @@
         }
       }
     }
+
+    // The goals panel follows what this tick decided - after the text scan,
+    // so a match that just ended takes the panel down on the same frame. A
+    // pregame board (battlefield pick, roll, mulligan) pops the applicable
+    // goals up, a live match adds the note input, anything else removes it.
+    globalThis.RATGoalNotes.observe(phase, capture().current());
   }
 
   function boot() {

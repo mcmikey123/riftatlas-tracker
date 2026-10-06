@@ -123,6 +123,19 @@ body {
 .scout-note::placeholder { color: var(--ink-3); }
 .scout-note:focus { outline: none; border-color: var(--accent); }
 
+/* --- goals --- */
+.goals {
+  display: grid; gap: 5px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 11px;
+}
+.goal-line { display: flex; align-items: baseline; gap: 7px; font-size: 12px; color: var(--ink-2); }
+.goal-mark { flex: none; color: var(--ink-3); font-size: 11px; }
+/* The matchup-specific goal is the one this popup exists to surface. */
+.goal-line-vs .goal-body { color: var(--ink); font-weight: 600; }
+.goal-line-vs .goal-mark { color: var(--accent); }
+.goal-body { overflow-wrap: anywhere; }
+
 /* --- last three --- */
 .recent { display: grid; gap: 5px; }
 .recent-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
