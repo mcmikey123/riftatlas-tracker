@@ -45,8 +45,15 @@
       capture().refresh(board);
     } else if (!live && board && phase) {
       globalThis.RATDeckScan.rememberPregame(); // battlefield pick / roll / mulligan
+      // The replay starts here too: the mulligan and everything before it
+      // happen under this root before any match record exists. The recorder
+      // holds the footage and the match adopts it when it starts.
+      globalThis.RATRec.preroll();
+      globalThis.RATRec.phase(phase);
     } else if (live) {
       capture().endOnPhaseChange(board, phase);
+    } else {
+      globalThis.RATRec.abandon(); // no board: a pre-roll here was for a game that never dealt
     }
 
     if (mutations && capture().current()) {

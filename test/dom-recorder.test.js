@@ -40,7 +40,9 @@ const readSrc = (rel) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8"
  * Returns the recorder plus the three things worth asserting on: the turn tags
  * in order, when snapshots were spent, and what reached the worker.
  */
-function harness() {
+function harness(opts) {
+  const snapshotMs = (opts && opts.snapshotMs) || 0; // what a full snapshot costs the page
+  let records = 0;
   let now = 0;
   let seq = 0;
   const timers = new Map();
@@ -96,6 +98,7 @@ function harness() {
   let emit = () => {};
   let recordCfg = null;
   const rrwebRecord = (cfg) => {
+    records += 1;
     recordCfg = cfg;
     emit = cfg.emit;
     // rrweb takes its opening snapshot inside record(), before returning.
@@ -104,6 +107,7 @@ function harness() {
   };
   rrwebRecord.takeFullSnapshot = () => {
     snapshotsAt.push(now);
+    now += snapshotMs; // the recorder times this call: see keyframe()
     emit({ type: FULL_SNAPSHOT, timestamp: now, data: {} });
   };
   rrwebRecord.addCustomEvent = (tag, payload) => {
@@ -150,6 +154,8 @@ function harness() {
     turnNumbers: () => tags.filter((t) => t.tag === "ra:turn").map((t) => t.turnNumber),
     /** The options the recorder handed rrweb, once `start` has run. */
     config: () => recordCfg,
+    /** How many times rrweb was started. */
+    records: () => records,
     /** Push one event through rrweb's emit, the way rrweb itself would. */
     emit: (event) => emit(event),
   };
@@ -339,4 +345,195 @@ test("pointer events do not move the snapshot cadence", () => {
   assert.deepEqual(h.warnings, [], "the recorder must not have errored");
   assert.equal(h.snapshotsAt.length, before, "no snapshot may be spent without a settled board");
   assert.deepEqual(h.turnNumbers(), [], "pointer traffic is not a turn");
+});
+
+/* ---- the pre-roll ------------------------------------------------------
+ *
+ * The mulligan happens before the match record exists. The recorder runs
+ * from the first pre-game screen, holds what it captures on the page, and the
+ * match adopts the footage when it starts - or nothing does, and the worker
+ * never hears of it. */
+
+const bigMove = (now, bytes) => ({
+  type: INCREMENTAL_SNAPSHOT,
+  timestamp: now,
+  data: { source: MOUSE_MOVE, positions: [{ x: 1, y: 1, id: 7, timeOffset: 0, pad: "x".repeat(bytes) }] },
+});
+
+test("a pre-roll is held on the page until a match adopts it, then shipped first", () => {
+  const h = harness();
+  h.rec.preroll();
+  h.rec.phase("mulligan");
+  h.advance(SETTLE_MS + 1);
+  h.emit(mouseMove(300));
+  h.advance(6000); // past FLUSH_MS: a match session would have flushed by now
+
+  assert.deepEqual(h.sent, [], "nothing reaches the worker before there is a match to file under");
+
+  h.rec.start("m1");
+  assert.deepEqual(h.warnings, []);
+  assert.equal(h.sent[0].type, "ra:visual:start");
+  assert.equal(h.sent[0].matchId, "m1");
+  assert.equal(h.sent[1].type, "ra:visual:events");
+  assert.equal(h.sent[1].matchId, "m1");
+  const types = h.sent[1].events.map((e) => e.type);
+  assert.equal(types[0], FULL_SNAPSHOT, "the held batch opens on rrweb's opening snapshot");
+  assert.ok(
+    h.sent[1].events.some((e) => e.type === 5 && e.data.tag === "ra:phase" && e.data.payload.phase === "mulligan"),
+    "the phase tagged before adoption travels with the batch"
+  );
+  assert.ok(types.includes(INCREMENTAL_SNAPSHOT), "the pointer data held before adoption travels too");
+});
+
+test("adoption starts the match where the pre-roll did, not where the match did", () => {
+  const h = harness();
+  const before = Date.now();
+  h.rec.preroll();
+  h.advance(30 * 1000);
+  h.rec.start("m1");
+  const started = h.sent.find((m) => m.type === "ra:visual:start").meta.startedAt;
+  assert.ok(started >= before && started <= Date.now(), "startedAt is the recording's own start");
+});
+
+test("each pre-game phase is tagged once, in order, ahead of the first turn", () => {
+  const h = harness();
+  h.rec.preroll();
+  for (let i = 0; i < 3; i += 1) {
+    h.rec.phase("battlefield_pick"); // the tick repeats the phase several times a second
+    h.advance(SETTLE_MS + 1);
+  }
+  h.rec.phase("initiative_roll");
+  h.rec.phase("initiative_roll");
+  h.advance(SETTLE_MS + 1);
+  h.rec.phase("mulligan");
+  h.advance(SETTLE_MS + 1);
+  h.rec.start("m1");
+  h.turn(1);
+
+  assert.deepEqual(
+    h.tags.map((t) => t.tag + ":" + (t.phase || t.turnNumber)),
+    ["ra:phase:battlefield_pick", "ra:phase:initiative_roll", "ra:phase:mulligan", "ra:turn:1"]
+  );
+});
+
+test("a pre-roll no match adopts is dropped without a word to the worker", () => {
+  const h = harness();
+  h.rec.preroll();
+  h.rec.phase("sideboarding");
+  h.advance(SETTLE_MS + 1);
+  h.emit(mouseMove(300));
+  h.rec.abandon();
+  h.advance(10 * 1000);
+
+  assert.deepEqual(h.sent, [], "an abandoned pre-roll sends neither events nor a stop");
+  assert.deepEqual(h.warnings, []);
+
+  // And the recorder is still good for the next game.
+  h.rec.start("m1");
+  assert.equal(h.sent[0].type, "ra:visual:start");
+  assert.equal(h.sent[0].matchId, "m1");
+});
+
+test("abandon never touches a session that belongs to a match", () => {
+  const h = harness();
+  h.rec.start("m1");
+  h.turn(1);
+  h.rec.abandon();
+  h.turn(2);
+  assert.deepEqual(h.turnNumbers(), [1, 2], "the match recording carries on");
+  assert.ok(!h.sent.some((m) => m.type === "ra:visual:stop"), "nothing was stopped");
+});
+
+test("a rematch's pre-roll waits for the previous match's closing frame", () => {
+  /* The site flips the phase straight from in_game to battlefield_pick on a
+   * rematch. The lifecycle ends the match - the recorder is now finishing, its
+   * closing frame pending - and the same tick asks for a pre-roll. Tearing the
+   * finishing session down for it would file the first game as truncated. */
+  const h = harness();
+  h.rec.start("m1");
+  h.turn(1);
+  h.rec.stop("end");
+  h.rec.preroll(); // same tick as the phase change
+  h.advance(SETTLE_MS + 1);
+
+  const stop = h.sent.find((m) => m.type === "ra:visual:stop");
+  assert.equal(stop.reason, "end", "the first game closes out normally");
+  assert.equal(stop.truncatedAtTurn, null);
+
+  h.rec.preroll(); // the next tick
+  h.rec.phase("battlefield_pick");
+  h.advance(SETTLE_MS + 1);
+  h.rec.start("m2");
+  const starts = h.sent.filter((m) => m.type === "ra:visual:start").map((m) => m.matchId);
+  assert.deepEqual(starts, ["m1", "m2"]);
+  assert.ok(
+    h.tags.some((t) => t.tag === "ra:phase" && t.phase === "battlefield_pick"),
+    "the second game's pre-game is in its recording"
+  );
+});
+
+test("a pre-roll over its cap keeps a fresh keyframe and the phase it is sitting on", () => {
+  /* A lobby nobody leaves. The buffer is cut back to a keyframe spent for the
+   * purpose - nothing drives the cadence on a screen with no marks - so what
+   * the match adopts is small, playable, and still labelled. */
+  const h = harness();
+  h.rec.preroll();
+  h.rec.phase("sideboarding");
+  h.advance(SETTLE_MS + 1);
+  const snapshotsBefore = h.snapshotsAt.length;
+  for (let i = 0; i < 9; i += 1) h.emit(bigMove(i, 1024 * 1024)); // 9 MB against an 8 MB cap
+  h.advance(SETTLE_MS + 1); // the re-tag settles
+
+  assert.deepEqual(h.warnings, []);
+  assert.equal(h.snapshotsAt.length, snapshotsBefore + 1, "one keyframe spent to rotate on");
+  h.rec.start("m1");
+  const batch = h.sent.find((m) => m.type === "ra:visual:events").events;
+  assert.equal(batch[0].type, FULL_SNAPSHOT, "the held batch now opens on the rotated keyframe");
+  assert.ok(batch.length < 5, `the 9 MB of deltas are gone, got ${batch.length} events`);
+  assert.ok(
+    batch.some((e) => e.type === 5 && e.data.tag === "ra:phase" && e.data.payload.phase === "sideboarding"),
+    "the phase is tagged again after the rotation, so its chip points at a frame that exists"
+  );
+});
+
+test("a pre-roll the recorder itself killed stays dead until the board goes away", () => {
+  /* The tick asks for a pre-roll every frame. A page whose full snapshot
+   * trips the kill switch must not be re-snapshotted on every one of them for
+   * the whole pre-game - that is the interference the switch exists to end. */
+  const h = harness({ snapshotMs: 200 }); // over the policy's 150ms kill threshold
+  h.rec.preroll();
+  for (let i = 0; i < 9; i += 1) h.emit(bigMove(i, 1024 * 1024)); // forces a keyframe: the rotation
+  assert.equal(h.rec.stats().state, "perf-kill", "the rotation's keyframe trips the switch");
+  const records = h.records();
+
+  for (let i = 0; i < 5; i += 1) {
+    h.rec.preroll();
+    h.rec.phase("mulligan");
+    h.advance(1000);
+  }
+  assert.equal(h.records(), records, "later ticks do not reopen it");
+  assert.deepEqual(h.sent, [], "and the worker still hears nothing");
+
+  h.rec.abandon(); // the board went away
+  h.rec.preroll();
+  assert.equal(h.records(), records + 1, "the next room starts a fresh recorder");
+});
+
+test("a match starts its own recording after a killed pre-roll", () => {
+  const h = harness({ snapshotMs: 200 });
+  h.rec.preroll();
+  for (let i = 0; i < 9; i += 1) h.emit(bigMove(i, 1024 * 1024));
+  assert.equal(h.rec.stats().state, "perf-kill");
+  h.rec.start("m1");
+  assert.equal(h.sent[0].type, "ra:visual:start", "a match has its own policy, as it always has");
+  assert.equal(h.sent[0].matchId, "m1");
+});
+
+test("a start with no pre-roll records exactly as before", () => {
+  const h = harness();
+  h.rec.start("m1");
+  h.turn(1);
+  assert.equal(h.sent[0].type, "ra:visual:start", "announced ahead of the opening snapshot");
+  assert.equal(h.sent[1].type, "ra:visual:events");
+  assert.equal(h.sent[1].events[0].type, FULL_SNAPSHOT);
 });

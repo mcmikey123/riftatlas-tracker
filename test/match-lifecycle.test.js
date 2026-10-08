@@ -129,6 +129,7 @@ function harness(seed) {
       start: (id) => recorder.push("rec-start:" + id),
       mark: (turn) => recorder.push("rec-mark:" + turn),
       stop: (why) => recorder.push("rec-stop:" + why),
+      abandon: () => recorder.push("rec-abandon"),
     },
   };
   sandbox.globalThis = sandbox;

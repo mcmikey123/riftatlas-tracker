@@ -15,7 +15,7 @@ const assert = require("node:assert/strict");
 // `targetOwnsKey` and `SEEK` off the global the same way it does in a browser,
 // where a <script> tag ahead of it has installed them.
 const { SEEK } = require("../replay/replay-timeline.js");
-const { activeChip, readout, playFace, keyAction, handleKey } = require("../replay/replay-transport.js");
+const { activeChip, readout, playFace, stateFace, keyAction, handleKey } = require("../replay/replay-transport.js");
 const { fmtClock } = require("../dashboard/format.js");
 
 const chips = [{ ms: 0, turn: 1 }, { ms: 5000, turn: 2 }, { ms: 12000, turn: 3 }];
@@ -112,6 +112,23 @@ test("the button's accessible name moves with its glyph", () => {
   // The glyphs are a triangle and two bars; a name that stayed on "Play" while
   // the replay played is a button announcing the opposite of what it does.
   assert.notStrictEqual(playFace(true).label, playFace(false).label);
+});
+
+/* --- the overlay on the board ------------------------------------------- */
+
+test("a paused replay wears the pause glyph on the board, and keeps it", () => {
+  assert.deepStrictEqual(stateFace(false), { state: "paused", glyph: "❚❚", flash: false });
+});
+
+test("a replay starting flashes the play glyph once", () => {
+  assert.deepStrictEqual(stateFace(true), { state: "playing", glyph: "▶", flash: true });
+});
+
+test("the overlay reports the state reached where the button invites the next one", () => {
+  // Pausing shows pause on the board while the button already offers play;
+  // the two are opposites by design and must not be made to agree.
+  assert.notStrictEqual(stateFace(true).glyph, playFace(true).text);
+  assert.notStrictEqual(stateFace(false).glyph, playFace(false).text);
 });
 
 /* --- the key map -------------------------------------------------------- */

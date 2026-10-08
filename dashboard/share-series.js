@@ -85,11 +85,16 @@
           false
         );
       }
-      const stripped = await window.extractCssAssets(replay.events, { hash: sha256Hex });
+      const m = matches().find((x) => x.id === g.id) || g;
+      // Names out before anything is encrypted, as the single-game share does.
+      const anonymised = window.RAReplayTimeline.anonymiseEvents(replay.events, {
+        mine: m.myName,
+        opponent: m.opponentName,
+      });
+      const stripped = await window.extractCssAssets(anonymised, { hash: sha256Hex });
       // Pooled by content hash, so the site's stylesheets are carried once
       // however many games reference them.
       for (const [h, text] of stripped.assets) assets.set(h, text);
-      const m = matches().find((x) => x.id === g.id) || g;
       const flags = Array.isArray(m.replayFlags) && m.replayFlags.length ? m.replayFlags : null;
       games.push({
         label: "Game " + (g.seriesGame || games.length + 1),

@@ -15,8 +15,10 @@
   "use strict";
 
   const { esc, fmtClock, fmtScore } = root.RATrackerFormat;
-  const { MAX_CHIPS, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
-    root.RAReplayTimeline;
+  const {
+    MAX_CHIPS, SPEEDS, timeline, evenly, truncationText, targetOwnsKey, chipLabel, chipTitle,
+    anonymiseEvents,
+  } = root.RAReplayTimeline;
 
   /**
    * Escape is consumed by the browser to leave fullscreen, but not every engine
@@ -80,19 +82,20 @@
           ? `<div class="rp-chapters">${chips
               .map(
                 (c) =>
-                  `<button class="rp-btn rp-chapter vr-chapter" data-ms="${c.ms}" title="Jump to turn ${esc(
-                    c.turn
-                  )}">T${esc(c.turn)}</button>`
+                  `<button class="rp-btn rp-chapter vr-chapter" data-ms="${c.ms}" title="${esc(
+                    chipTitle(c)
+                  )}">${esc(chipLabel(c))}</button>`
               )
               .join("")}</div>`
           : ""
       }
-      <div class="vr-stage"><div class="vr-scale"></div></div>`;
+      <div class="vr-stage"><div class="vr-scale"></div><div class="vr-state" aria-hidden="true"></div></div>`;
 
     return {
       container,
       stage: container.querySelector(".vr-stage"),
       scaleEl: container.querySelector(".vr-scale"),
+      overlay: container.querySelector(".vr-state"),
       slider: container.querySelector(".vr-slider"),
       timeEl: container.querySelector(".vr-time"),
       playBtn: container.querySelector(".vr-play"),
@@ -117,8 +120,9 @@
    * for everything wired here and for the core underneath.
    */
   function wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt) {
-    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
-      handles;
+    const {
+      container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls, overlay,
+    } = handles;
 
     // The transport row itself - the clock, the chips' highlight, the play,
     // step, seek and chapter controls and the keys both surfaces answer - is
@@ -138,6 +142,7 @@
         speed: speedSel,
         chapterEls,
         chapterHost: container,
+        overlay,
       },
       create: (callbacks) =>
         root.RAReplayCore.create({
@@ -385,7 +390,13 @@
     const shareMoment = (options && options.shareMoment) || null;
     const flagsOpt = (options && options.flags) || null;
     const meta = (payload && payload.meta) || {};
-    const events = (payload && payload.events) || [];
+    // Names off the match record, which is where the capture filed them. The
+    // board is rendered as the site drew it with "You" and "Opponent" in their
+    // place; the record itself keeps the names.
+    const events = anonymiseEvents((payload && payload.events) || [], {
+      mine: match && match.myName,
+      opponent: match && match.opponentName,
+    });
     if (events.length < 2) {
       container.innerHTML =
         '<p class="rp-empty">No recording was captured for this match.</p>';

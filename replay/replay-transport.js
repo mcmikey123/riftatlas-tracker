@@ -83,6 +83,21 @@
   }
 
   /**
+   * What the overlay on the board shows for a play state: a paused replay
+   * wears a pause glyph over a dimmed board for as long as it is paused, like
+   * any player; a replay starting flashes a play glyph once and clears. The
+   * glyph is the one the state was reached with, not the one the button
+   * offers next - the overlay reports, the button invites.
+   */
+  function stateFace(playing) {
+    return {
+      state: playing ? "playing" : "paused",
+      glyph: playing ? PLAY_GLYPH : PAUSE_GLYPH,
+      flash: playing
+    };
+  }
+
+  /**
    * The keys both surfaces answer, and what each one asks the transport to do.
    *
    * "Spacebar" is the older name for the space key, still reported by some
@@ -170,6 +185,11 @@
    * delegated on - the surfaces differ, one delegating on the chip row and the
    * other on the whole viewer). `speed` is optional, for a chrome that draws
    * the playback-rate control; a chrome without one keeps the core's 1x.
+   * `overlay` is optional too: an element laid over the stage that wears the
+   * play state (`data-state`, `data-glyph`, a `flash` class for the moment of
+   * starting) and toggles playback when clicked - the board itself is the
+   * biggest play button on the page, as it is in any player. Its look is the
+   * chrome's CSS; what it says is decided here, once.
    *
    * Null comes back when the recording will not play. What to say about that is
    * the chrome's business and the two surfaces say quite different things.
@@ -188,17 +208,43 @@
       chapterEls.forEach((el, n) => el.classList.toggle("on", n === next.active));
     }
 
+    function paintOverlay(playing) {
+      const overlay = els.overlay;
+      if (!overlay) return;
+      const face = stateFace(playing);
+      overlay.dataset.state = face.state;
+      overlay.dataset.glyph = face.glyph;
+      overlay.classList.remove("flash");
+      if (face.flash) {
+        // Dropping and re-adding the class in one turn does not restart a
+        // running animation; reading layout between the two does.
+        void overlay.offsetWidth;
+        overlay.classList.add("flash");
+      }
+    }
+
     function paintPlayState(playing) {
       const face = playFace(playing);
       els.play.textContent = face.text;
       els.play.setAttribute("aria-label", face.label);
+      paintOverlay(playing);
     }
 
+    // The core only announces a CHANGE of state, so a replay that opens paused
+    // never says so. The overlay starts paused and the core's first announce,
+    // if there is one, is the start.
+    paintOverlay(false);
     const playback = config.create({ onTime: paintTime, onPlayState: paintPlayState });
     if (!playback) return null;
 
     const { SEEK } = root.RAReplayTimeline;
     els.play.addEventListener("click", () => playback.togglePlay());
+    if (els.overlay) {
+      els.overlay.addEventListener("click", () => playback.togglePlay());
+      // Once the flash has played out the class goes, so the overlay is back
+      // to its resting state and the next start can flash again.
+      els.overlay.addEventListener("animationend", () => els.overlay.classList.remove("flash"));
+    }
     els.prev.addEventListener("click", () => playback.stepTo(-1));
     els.next.addEventListener("click", () => playback.stepTo(1));
     // `input` fires all the way through a drag, so the drag holds playback and
@@ -237,6 +283,7 @@
     activeChip,
     readout,
     playFace,
+    stateFace,
     keyAction,
     handleKey,
     wireTransport

@@ -63,6 +63,8 @@
     ["RAReplayCore", "available"],
     ["RAReplayCore", "create"],
     ["RAReplayTimeline", "MAX_CHIPS"],
+    ["RAReplayTimeline", "chipLabel"],
+    ["RAReplayTimeline", "chipTitle"],
     ["RAReplayTimeline", "SEEK"],
     ["RAReplayTimeline", "SPEEDS"],
     ["RAReplayTimeline", "evenly"],
@@ -282,6 +284,7 @@
   }
 
   function renderChapters(chips) {
+    const { chipLabel, chipTitle } = root.RAReplayTimeline;
     // One chip is the start of the replay and seeks nowhere useful.
     if (chips.length < 2) return [];
     const buttons = chips.map((chip) => {
@@ -289,8 +292,8 @@
       b.type = "button";
       b.className = "btn chapter";
       b.dataset.ms = String(chip.ms);
-      b.textContent = "T" + chip.turn;
-      b.title = "Jump to turn " + chip.turn;
+      b.textContent = chipLabel(chip);
+      b.title = chipTitle(chip);
       ui.chapters.appendChild(b);
       return b;
     });
@@ -660,7 +663,8 @@
         clock: ui.clock,
         speed: ui.speed,
         chapterEls,
-        chapterHost: ui.chapters
+        chapterHost: ui.chapters,
+        overlay: ui.state
       },
       create: (callbacks) => {
         transportCallbacks = callbacks;
@@ -770,7 +774,7 @@
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
       "player", "play", "prev", "next", "seek", "clock", "speed", "full", "copyAt", "chapters",
-      "flags", "flagmarks", "games", "stage", "scale"]) {
+      "flags", "flagmarks", "games", "stage", "scale", "state"]) {
       ui[id] = doc.getElementById(id);
     }
     // The one element addressed by class: it is the page's layout root, and the
