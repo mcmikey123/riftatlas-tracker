@@ -33,6 +33,7 @@
   const CONFIG = root.RAShareConfig || require("../share/config.js");
   const CLAMP = root.RATrackerSettingsClamps || require("./settings-clamps.js");
   const PANEL = root.RATrackerSharePanel || require("./share-panel.js");
+  const TIMELINE = root.RAReplayTimeline || require("../replay/replay-timeline.js");
 
   // Whether the configured endpoint may be uploaded to, and why a stored
   // replay could not be played. Both are decidable from their argument alone,
@@ -93,6 +94,10 @@
   // The flags a share should carry for a match, or null - the match array is
   // the dashboard's too. Supplied by mount().
   let matchFlags = () => null;
+  // The players' names for a match, `{ mine, opponent }` or null, read the
+  // same way. A share is the one copy of a replay that leaves this machine,
+  // so the names come out of it before anything is encrypted.
+  let matchNames = () => null;
 
   /* Read just enough of an object to recognise it: the four magic bytes. Used
    * both to verify a fresh upload and to re-check an old share from the shares
@@ -179,7 +184,10 @@
      * which is the exact inverse. */
     setShare(matchId, { phase: "stripping" });
     await paintYield();
-    const { events, assets } = await window.extractCssAssets(replay.events, { hash: sha256Hex });
+    const { events, assets } = await window.extractCssAssets(
+      TIMELINE.anonymiseEvents(replay.events, matchNames(matchId)),
+      { hash: sha256Hex }
+    );
 
     setShare(matchId, { phase: "encrypting" });
     await paintYield();
@@ -442,6 +450,7 @@
     readReplay = deps.readReplay;
     render = deps.render;
     if (deps.matchFlags) matchFlags = deps.matchFlags;
+    if (deps.matchNames) matchNames = deps.matchNames;
 
     document.addEventListener("click", (e) => {
       // The panel is toggled in place rather than through a render, so opening

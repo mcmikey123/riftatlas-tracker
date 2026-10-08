@@ -2,7 +2,19 @@
  *
  * Drives the vendored rrweb recorder (global `rrwebRecord`) behind
  * `capture/capture-policy.js`, buffers the event stream and ships it to the
- * service worker. Exposes `globalThis.RATRec` = start/mark/stop/stats.
+ * service worker. Exposes `globalThis.RATRec` =
+ * preroll/phase/start/mark/stop/abandon/stats.
+ *
+ * Recording starts before the match does. The site deals a game through five
+ * pre-game screens - battlefield pick, initiative roll, first-player choice,
+ * sideboarding, mulligan - under the same board root, and only the last of
+ * them flips the phase to "in_game", which is when a match record exists to
+ * file footage under. So the content script asks for a PRE-ROLL on the first
+ * pre-game screen: rrweb runs as usual but every batch is held on this thread,
+ * and when the match starts `start` adopts the session and ships the held
+ * batches ahead of whatever comes next. A pre-roll for a game that never
+ * dealt - the room was left, the tab closed - is dropped without a word to the
+ * worker, which never knew it existed.
  *
  * The extension's premise is that it never interferes with play, so every entry
  * point and the rrweb `emit` callback is wrapped: an unexpected error ends the
@@ -31,6 +43,14 @@
    * off `mark()` settles, not off the emit stream. */
   const MOUSEMOVE_MS = 100;
   const FULL_SNAPSHOT = 2; // rrweb EventType.FullSnapshot
+  const META = 4; // rrweb EventType.Meta: emitted ahead of every full snapshot
+  /* A pre-roll is held on this thread until a match adopts it, so it is the one
+   * buffer with no flush to empty it. Past this it is cut back to a fresh
+   * keyframe: a keyframe is a self-contained start, so the stream stays
+   * playable, and the newest pre-game screens - the mulligan among them - are
+   * the ones that survive. Far above a normal pre-game, which is a minute or
+   * two of deltas; what this bounds is a lobby nobody comes back to. */
+  const PREROLL_MAX_BYTES = 8 * 1024 * 1024;
   const MAX_SAMPLES = 500; // capture-duration ring for the diagnostics p50
   // A full snapshot is never serialized on this thread just to size it (that is
   // the single most expensive thing the page could do), so it enters the buffer
@@ -89,6 +109,13 @@
   function flush(s, force) {
     if (!s.stopped) armFlush(s);
     if (!s.buffer.length) return;
+    // A pre-roll has no match to file under yet: the batch waits here for
+    // `start` to adopt the session, bounded so a long lobby cannot grow it
+    // without end.
+    if (!s.matchId) {
+      if (s.bufferBytes > PREROLL_MAX_BYTES) rotatePreroll(s);
+      return;
+    }
     // One batch in flight at a time: a retry prepends its events back, so an
     // overlapping second batch could reorder the stream. rrweb cannot recover
     // from that. The stopping flush goes out regardless - it is the last one.
@@ -130,7 +157,11 @@
   function onFlushFailed(s, events, rawBytes, hadKeyframe, reply) {
     s.flushFailures += 1;
     if (!s.stopped) {
-      if (s.bufferBytes + rawBytes > MAX_RETAINED_BYTES) {
+      /* The retention cap bounds deltas, never a keyframe: a batch holding one
+       * is what every later batch applies against, and an adopted pre-roll can
+       * hand over several keyframes at once, well past the cap. Its size is
+       * already bounded by PREROLL_MAX_BYTES. */
+      if (!hadKeyframe && s.bufferBytes + rawBytes > MAX_RETAINED_BYTES) {
         s.droppedEvents += events.length;
       } else {
         s.buffer = events.concat(s.buffer); // order is load-bearing
@@ -142,6 +173,46 @@
       const why = (reply && reply.error) ||
         "visual events rejected " + s.flushFailures + " times in a row";
       teardown(s, "error", why);
+    }
+  }
+
+  /* A pre-roll over its cap: spend a keyframe now and keep only from there.
+   * The keyframe is spent on purpose rather than waiting for the cadence,
+   * because nothing drives the cadence during a pre-game that sits on one
+   * screen - settles come from marks and phase changes, and a lobby nobody
+   * leaves has neither. `rotating` guards the re-entry: the keyframe's own
+   * emit lands in `flush`, which would find the buffer still over the cap. */
+  function rotatePreroll(s) {
+    if (s.rotating || !s.stopRecording) return;
+    s.rotating = true;
+    try {
+      keyframe(s);
+    } finally {
+      s.rotating = false;
+    }
+    trimToLastKeyframe(s);
+    // The phase tag went with the old frames. Re-tag it, so the chip for the
+    // screen the pre-roll is sitting on points at a frame that still exists.
+    s.lastPhaseSeen = null;
+    scheduleSettle(s);
+  }
+
+  /* Cut the buffer back to its most recent keyframe, Meta event included: rrweb
+   * emits the pair together and the replayer wants both. */
+  function trimToLastKeyframe(s) {
+    let at = -1;
+    for (let i = s.buffer.length - 1; i >= 0; i--) {
+      if (s.buffer[i] && s.buffer[i].type === FULL_SNAPSHOT) {
+        at = i;
+        break;
+      }
+    }
+    if (at <= 0) return;
+    if (s.buffer[at - 1] && s.buffer[at - 1].type === META) at -= 1;
+    s.buffer = s.buffer.slice(at);
+    s.bufferBytes = 0;
+    for (const e of s.buffer) {
+      s.bufferBytes += e && e.type === FULL_SNAPSHOT ? SNAPSHOT_WEIGHT_BYTES : approxDeltaBytes(e);
     }
   }
 
@@ -220,6 +291,15 @@
     root.rrwebRecord.addCustomEvent("ra:turn", { turnNumber: n });
   }
 
+  /* The pre-game chapters: one marker per screen the site dealt the game
+   * through, from the same custom-event channel as the turns. The viewer
+   * labels them by name; `ra:turn` stays numeric and untouched. */
+  function tagPhase(s, phase) {
+    if (typeof phase !== "string" || !phase) return;
+    if (typeof root.rrwebRecord.addCustomEvent !== "function") return;
+    root.rrwebRecord.addCustomEvent("ra:phase", { phase });
+  }
+
   function keyframe(s) {
     const t0 = performance.now();
     s.lastKeyframeAt = t0;
@@ -239,6 +319,10 @@
     if (turnMoved) {
       s.lastTurnSeen = s.pendingTurn;
       tagTurn(s, s.pendingTurn);
+    }
+    if (s.pendingPhase !== s.lastPhaseSeen) {
+      s.lastPhaseSeen = s.pendingPhase;
+      tagPhase(s, s.pendingPhase);
     }
 
     // Snapshots are timed, not counted: see KEYFRAME_EVERY_MS. This is the only
@@ -325,6 +409,9 @@
     cancelSettle(s);
     try { if (s.stopRecording) s.stopRecording(); } catch (_) { /* rrweb already gone */ }
     s.stopRecording = null;
+    // A pre-roll no match adopted was never filed, so there is nothing to close
+    // out: the worker never heard of it and must not hear of it now.
+    if (!s.matchId) return;
     // s.stopped is set, so this final flush cannot rearm the timer, and a batch
     // that fails now is not worth retrying into a session that is closing.
     try { flush(s, true); } catch (_) { /* a corrupt tail must not block the stop message */ }
@@ -398,8 +485,7 @@
      * anchor for. Starting it early would spend the first cadence snapshot early
      * by however long that read took. */
     s.lastKeyframeAt = performance.now();
-    const meta = { viewport: s.viewport, startedAt: s.startedAt, href: location.href };
-    send({ type: "ra:visual:start", matchId: s.matchId, meta }); // viewport sizes the viewer's iframe
+    announce(s); // a pre-roll has no match yet and is announced on adoption instead
     // The record-only bundle exposes the record function AS `rrwebRecord`, with
     // takeFullSnapshot/addCustomEvent hung off it. Only the all-in-one `rrweb`
     // bundle has a `.record` member; calling that here is what broke capture.
@@ -428,37 +514,110 @@
     }
     s.stopRecording = stopRecording;
     armFlush(s);
+    // A phase or turn marked while storage was still answering is waiting on a
+    // settle that `fire` refused for want of a recorder. It has one now.
+    if (s.pendingPhase !== s.lastPhaseSeen || s.pendingTurn !== s.lastTurnSeen) scheduleSettle(s);
+  }
+
+  /* Tells the worker a recording exists. Once per session, and only once there
+   * is a match id to file it under: a normal start has one from the outset and
+   * announces ahead of rrweb's opening snapshot, so the batch carrying it can
+   * never overtake the start; an adopted pre-roll announces at adoption, with
+   * everything it held still on this thread. The meta sizes the viewer's iframe. */
+  function announce(s) {
+    if (s.announced || !s.matchId) return;
+    s.announced = true;
+    const meta = { viewport: s.viewport, startedAt: s.startedAt, href: location.href };
+    send({ type: "ra:visual:start", matchId: s.matchId, meta });
+  }
+
+  /* A session, recording nothing yet. `matchId` is null for a pre-roll. */
+  function newSession(matchId) {
+    return {
+      matchId, startedAt: Date.now(), announced: false,
+      viewport: { w: root.innerWidth, h: root.innerHeight, dpr: root.devicePixelRatio || 1 },
+      policy: null, stopRecording: null, stopped: false, stopReason: null,
+      buffer: [], bufferBytes: 0, bufferHasKeyframe: false, flushTimer: null, flushedBytes: 0,
+      inFlight: false, flushFailures: 0, droppedEvents: 0, rotating: false,
+      idleId: null, settleId: null, pendingTurn: null, turnNumber: null,
+      pendingPhase: null, lastPhaseSeen: null,
+      finishing: false, finishTimer: null, onPageHide: null,
+      // Which turn we have already tagged, and when a snapshot was last
+      // spent. The clock is set in `beginRecording`, alongside the rrweb
+      // opening snapshot it is the anchor for - see there for why not here.
+      lastTurnSeen: null, lastKeyframeAt: 0,
+      events: 0, keyframes: 0, deltaBytes: 0, samples: [], captureMaxMs: 0,
+    };
+  }
+
+  /* Opens a session once the setting allows it. Shared by `start` and
+   * `preroll`: the two differ only in whether a match id is known yet. */
+  function openSession(matchId) {
+    // A start we cannot honour still clears the old session: otherwise the
+    // previous match's stopped session lingers and `stats()` reports it.
+    session = null;
+    if (typeof root.rrwebRecord !== "function" || typeof root.createCapturePolicy !== "function") return;
+    const s = (session = newSession(matchId));
+    chrome.storage.local.get({ settings: {} }, (data) => guarded(() => {
+      const cfg = (data && data.settings) || {}; // visualReplayEnabled defaults true
+      // A stop() landing before storage answers must not start rrweb after all.
+      if (cfg.visualReplayEnabled === false || s.stopped || session !== s) return;
+      beginRecording(s, cfg.visualReplayMaxMatchMb);
+    }));
   }
 
   root.RATRec = {
+    /* Start recording ahead of the match, from a pre-game screen. Idempotent
+     * from the content script's tick: a session still recording - or still
+     * finishing, its closing frame pending after a rematch's phase change - is
+     * left alone, and the next tick asks again. */
+    preroll() {
+      return guarded(() => {
+        if (session && !session.stopped) return;
+        openSession(null);
+      });
+    },
+    /* The pre-game screen the board is on. Tagged once per change, on the next
+     * settle, like a turn; repeated calls with the same phase cost nothing. */
+    phase(name) {
+      return guarded(() => {
+        const s = session;
+        if (!s || s.stopped || s.finishing) return;
+        const p = typeof name === "string" && name ? name : null;
+        if (p === s.pendingPhase) return;
+        s.pendingPhase = p;
+        scheduleSettle(s);
+      });
+    },
     start(matchId) {
       return guarded(() => {
+        /* A pre-roll still recording is this match's: adopt it, and everything
+         * held since the first pre-game screen goes out under the match id
+         * ahead of whatever rrweb emits next. If storage has not answered yet
+         * the announcement waits for `beginRecording`, which now has an id. */
+        if (session && !session.stopped && !session.matchId) {
+          const s = session;
+          s.matchId = matchId;
+          if (s.stopRecording) {
+            announce(s);
+            flush(s);
+          }
+          return;
+        }
         // A new match always starts from a clean session; the old one is closed out.
         if (session && !session.stopped) teardown(session, "restart");
-        // A start we cannot honour still clears the old session: otherwise the
-        // previous match's stopped session lingers and `stats()` reports it.
+        openSession(matchId);
+      });
+    },
+    /* Drop a pre-roll no match will adopt: the room was left before a game
+     * dealt. Nothing reaches the worker. A session with a match id is not a
+     * pre-roll and is not touched - that is `stop`'s to end. */
+    abandon() {
+      return guarded(() => {
+        const s = session;
+        if (!s || s.stopped || s.matchId) return;
+        teardown(s, "abandoned");
         session = null;
-        if (typeof root.rrwebRecord !== "function" || typeof root.createCapturePolicy !== "function") return;
-        const s = (session = {
-          matchId, startedAt: Date.now(),
-          viewport: { w: root.innerWidth, h: root.innerHeight, dpr: root.devicePixelRatio || 1 },
-          policy: null, stopRecording: null, stopped: false, stopReason: null,
-          buffer: [], bufferBytes: 0, bufferHasKeyframe: false, flushTimer: null, flushedBytes: 0,
-          inFlight: false, flushFailures: 0, droppedEvents: 0,
-          idleId: null, settleId: null, pendingTurn: null, turnNumber: null,
-          finishing: false, finishTimer: null, onPageHide: null,
-          // Which turn we have already tagged, and when a snapshot was last
-          // spent. The clock is set in `beginRecording`, alongside the rrweb
-          // opening snapshot it is the anchor for - see there for why not here.
-          lastTurnSeen: null, lastKeyframeAt: 0,
-          events: 0, keyframes: 0, deltaBytes: 0, samples: [], captureMaxMs: 0,
-        });
-        chrome.storage.local.get({ settings: {} }, (data) => guarded(() => {
-          const cfg = (data && data.settings) || {}; // visualReplayEnabled defaults true
-          // A stop() landing before storage answers must not start rrweb after all.
-          if (cfg.visualReplayEnabled === false || s.stopped || session !== s) return;
-          beginRecording(s, cfg.visualReplayMaxMatchMb);
-        }));
       });
     },
     mark(turnNumber) {

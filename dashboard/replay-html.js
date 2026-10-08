@@ -15,8 +15,10 @@
   "use strict";
 
   const { esc, fmtClock, fmtScore } = root.RATrackerFormat;
-  const { MAX_CHIPS, SPEEDS, timeline, evenly, truncationText, targetOwnsKey } =
-    root.RAReplayTimeline;
+  const {
+    MAX_CHIPS, SPEEDS, timeline, evenly, truncationText, targetOwnsKey, chipLabel, chipTitle,
+    anonymiseEvents,
+  } = root.RAReplayTimeline;
 
   /**
    * Escape is consumed by the browser to leave fullscreen, but not every engine
@@ -80,9 +82,9 @@
           ? `<div class="rp-chapters">${chips
               .map(
                 (c) =>
-                  `<button class="rp-btn rp-chapter vr-chapter" data-ms="${c.ms}" title="Jump to turn ${esc(
-                    c.turn
-                  )}">T${esc(c.turn)}</button>`
+                  `<button class="rp-btn rp-chapter vr-chapter" data-ms="${c.ms}" title="${esc(
+                    chipTitle(c)
+                  )}">${esc(chipLabel(c))}</button>`
               )
               .join("")}</div>`
           : ""
@@ -385,7 +387,13 @@
     const shareMoment = (options && options.shareMoment) || null;
     const flagsOpt = (options && options.flags) || null;
     const meta = (payload && payload.meta) || {};
-    const events = (payload && payload.events) || [];
+    // Names off the match record, which is where the capture filed them. The
+    // board is rendered as the site drew it with "You" and "Opponent" in their
+    // place; the record itself keeps the names.
+    const events = anonymiseEvents((payload && payload.events) || [], {
+      mine: match && match.myName,
+      opponent: match && match.opponentName,
+    });
     if (events.length < 2) {
       container.innerHTML =
         '<p class="rp-empty">No recording was captured for this match.</p>';

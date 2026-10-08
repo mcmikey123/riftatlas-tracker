@@ -39,6 +39,23 @@
   const MOVE_SOURCES = new Set([1, 6, 12]); // MouseMove, TouchMove, Drag
   const MOUSE_INTERACTION = 2;
   const POINTING_INTERACTIONS = new Set([2, 7, 9]); // Click, TouchStart, TouchEnd
+  const MUTATION = 0; // rrweb IncrementalSource.Mutation
+  const INPUT = 5; // rrweb IncrementalSource.Input
+  const TEXT_NODE = 3; // rrweb NodeType.Text
+  /* The pre-game screens the recorder tags, as the site names them in
+   * `data-room-phase`, with the word a chip has room for. A phase not listed
+   * here - the site adds one, renames one - is still a chapter: it is labelled
+   * from its own name rather than dropped. */
+  const PHASE_LABELS = Object.freeze({
+    battlefield_pick: "Battlefield",
+    initiative_roll: "Roll",
+    first_player_choice: "First player",
+    sideboarding: "Sideboard",
+    mulligan: "Mulligan",
+  });
+  /* What a player's name becomes in a replay. The recording is of the sharer's
+   * own screen, so the two sides are fixed: the viewer is "you". */
+  const NAME_LABELS = Object.freeze({ mine: "You", opponent: "Opponent" });
   const MAX_CHIPS = 30; // more than this and the chip row stops being scannable
 
   /**
@@ -253,8 +270,34 @@
     return Number.isFinite(Number(n)) ? Number(n) : null;
   }
 
+  /** Pre-game phase carried by an rrweb custom event, or null if it isn't one. */
+  function phaseOf(event) {
+    if (!event || event.type !== CUSTOM || !event.data) return null;
+    if (String(event.data.tag || "") !== "ra:phase") return null;
+    const p = event.data.payload && event.data.payload.phase;
+    return typeof p === "string" && p ? p : null;
+  }
+
+  /** The chip's text: a phase by name, a turn by number. */
+  function chipLabel(mark) {
+    if (mark && mark.phase) {
+      if (PHASE_LABELS[mark.phase]) return PHASE_LABELS[mark.phase];
+      const words = String(mark.phase).replace(/_+/g, " ").trim();
+      return words ? words[0].toUpperCase() + words.slice(1) : "Setup";
+    }
+    return "T" + (mark ? mark.turn : "");
+  }
+
+  /** The chip's tooltip. */
+  function chipTitle(mark) {
+    if (mark && mark.phase) return "Jump to " + chipLabel(mark).toLowerCase();
+    return "Jump to turn " + (mark ? mark.turn : "");
+  }
+
   /**
-   * Settled board states, as ms from the first event.
+   * Settled board states, as ms from the first event. A pre-game screen is
+   * `{ ms, phase }`, a turn `{ ms, turn }`, in stream order - a recording that
+   * started on the first pre-game screen puts its phases ahead of turn 1.
    *
    * Recorder-supplied `ra:turn` markers win, and in a recording made by this
    * extension there is always one per turn - `tagTurn` emits them independently
@@ -274,7 +317,12 @@
     const marked = [];
     for (const e of events) {
       const turn = turnOf(e);
-      if (turn !== null) marked.push({ ms: (e.timestamp || t0) - t0, turn });
+      if (turn !== null) {
+        marked.push({ ms: (e.timestamp || t0) - t0, turn });
+        continue;
+      }
+      const phase = phaseOf(e);
+      if (phase !== null) marked.push({ ms: (e.timestamp || t0) - t0, phase });
     }
     if (marked.length) return marked;
     const frames = [];
@@ -297,7 +345,10 @@
 
   /** Banner copy for a capture that stopped before the match did. */
   function truncationText(meta, match, marks) {
-    const last = marks.length ? marks[marks.length - 1].turn : null;
+    // The last TURN: a capture that got no further than the pre-game screens
+    // has covered no turn at all, whatever marks it carries.
+    let last = null;
+    for (const m of marks) if (m && m.turn != null) last = m.turn;
     const coveredTo = Number.isFinite(Number(meta.truncatedAtTurn)) ? Number(meta.truncatedAtTurn) : last;
     const turns = Number(match && match.turns);
     if (coveredTo == null) return "This replay stops before the end of the match.";
@@ -430,6 +481,167 @@
     return changed ? next : events;
   }
 
+  const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  /**
+   * A function that rewrites one string with the players' names replaced, or
+   * null when there is no name to replace.
+   *
+   * One alternation, longest name first, resolved per match through a table:
+   * two passes would let the first name's label be read as the second name,
+   * and a name that is a prefix of the other must not be found inside it. A
+   * name is matched whole - "JROD21" in "JROD21's turn", not in "JROD210" -
+   * where "whole" is bounded by anything that is not a letter, digit or
+   * underscore, since the site's names are user-chosen and `\b` only knows
+   * ASCII. Case-sensitive: the site prints the name as entered. A possessive
+   * is taken with the name, because "You's turn" is not a sentence.
+   */
+  function nameMask(names) {
+    const pairs = [];
+    for (const side of Object.keys(NAME_LABELS)) {
+      const raw = names && names[side];
+      const name = typeof raw === "string" ? raw.trim() : "";
+      if (name) pairs.push({ name, label: NAME_LABELS[side] });
+    }
+    if (!pairs.length) return null;
+    pairs.sort((a, b) => b.name.length - a.name.length);
+    const labels = new Map(pairs.map((p) => [p.name, p.label]));
+    const re = new RegExp(
+      "(?<![\\p{L}\\p{N}_])(" + pairs.map((p) => escapeRe(p.name)).join("|") + ")(['’]s)?(?![\\p{L}\\p{N}_])",
+      "gu"
+    );
+    const label = (name, possessive) => {
+      const word = labels.get(name);
+      if (!possessive) return word;
+      return word === NAME_LABELS.mine ? "Your" : word + possessive;
+    };
+    return (text) => (typeof text === "string" && text ? text.replace(re, (_, name, poss) => label(name, poss)) : text);
+  }
+
+  /* Stylesheet text is the one attribute no name can be in, and the largest
+   * string in every keyframe by far. */
+  const UNMASKED_ATTRS = new Set(["_cssText", "__cssRef"]);
+
+  /* `arr.map(fn)` that hands back `arr` itself when nothing in it changed. */
+  function mapSame(arr, fn) {
+    let out = null;
+    for (let i = 0; i < arr.length; i++) {
+      const next = fn(arr[i]);
+      if (next !== arr[i]) {
+        if (!out) out = arr.slice();
+        out[i] = next;
+      }
+    }
+    return out || arr;
+  }
+
+  function maskAttributes(attributes, mask) {
+    if (!attributes || typeof attributes !== "object") return attributes;
+    let out = null;
+    for (const key of Object.keys(attributes)) {
+      const value = attributes[key];
+      if (typeof value !== "string" || UNMASKED_ATTRS.has(key)) continue;
+      const next = mask(value);
+      if (next !== value) {
+        if (!out) out = Object.assign({}, attributes);
+        out[key] = next;
+      }
+    }
+    return out || attributes;
+  }
+
+  /* A serialized node, text and attributes rewritten, children recursed.
+   * Returns the node itself when nothing under it changed, like `pruneNode`. */
+  function maskNode(node, mask) {
+    if (!node || typeof node !== "object") return node;
+    let next = node;
+    if (node.type === TEXT_NODE && typeof node.textContent === "string") {
+      const text = mask(node.textContent);
+      if (text !== node.textContent) next = Object.assign({}, next, { textContent: text });
+    }
+    const attributes = maskAttributes(node.attributes, mask);
+    if (attributes !== node.attributes) next = Object.assign({}, next, { attributes });
+    if (Array.isArray(node.childNodes)) {
+      const childNodes = mapSame(node.childNodes, (c) => maskNode(c, mask));
+      if (childNodes !== node.childNodes) next = Object.assign({}, next, { childNodes });
+    }
+    return next;
+  }
+
+  /* Everything an incremental event can print: a mutation's changed text
+   * nodes, changed attributes and added nodes, and what was typed into an
+   * input. Pointer and scroll data carry no text and come back untouched. */
+  function maskIncremental(data, mask) {
+    if (!data || typeof data !== "object") return data;
+    if (data.source === MUTATION) {
+      let next = data;
+      if (Array.isArray(data.texts)) {
+        const texts = mapSame(data.texts, (t) => {
+          if (!t || typeof t.value !== "string") return t;
+          const value = mask(t.value);
+          return value === t.value ? t : Object.assign({}, t, { value });
+        });
+        if (texts !== data.texts) next = Object.assign({}, next, { texts });
+      }
+      if (Array.isArray(data.attributes)) {
+        const attributes = mapSame(data.attributes, (a) => {
+          if (!a) return a;
+          const masked = maskAttributes(a.attributes, mask);
+          return masked === a.attributes ? a : Object.assign({}, a, { attributes: masked });
+        });
+        if (attributes !== data.attributes) next = Object.assign({}, next, { attributes });
+      }
+      if (Array.isArray(data.adds)) {
+        const adds = mapSame(data.adds, (a) => {
+          if (!a) return a;
+          const node = maskNode(a.node, mask);
+          return node === a.node ? a : Object.assign({}, a, { node });
+        });
+        if (adds !== data.adds) next = Object.assign({}, next, { adds });
+      }
+      return next;
+    }
+    if (data.source === INPUT && typeof data.text === "string") {
+      const text = mask(data.text);
+      return text === data.text ? data : Object.assign({}, data, { text });
+    }
+    return data;
+  }
+
+  /**
+   * The event stream with both players' names replaced by "You" and
+   * "Opponent", wherever the site printed them: the identity badges and their
+   * labels, the match log ("JROD21 rolled 7"), the end-of-match modal.
+   *
+   * `names` is `{ mine, opponent }`, as the match record stores them. A
+   * recording whose record holds no name comes back untouched - there is
+   * nothing to replace it with, and a replay is not refused over it.
+   *
+   * Pure and identity-preserving like `stripInertLinks`: the caller's array
+   * and events are never written to, and a stream with nothing to rewrite is
+   * handed back as itself. Full snapshots are walked whole; incremental events
+   * through `maskIncremental`; the recorder's own custom events carry numbers
+   * and phase names and are left alone.
+   */
+  function anonymiseEvents(events, names) {
+    if (!Array.isArray(events)) return events;
+    const mask = nameMask(names);
+    if (!mask) return events;
+    return mapSame(events, (event) => {
+      if (!event || !event.data) return event;
+      if (event.type === FULL_SNAPSHOT) {
+        const node = maskNode(event.data.node, mask);
+        if (node === event.data.node) return event;
+        return Object.assign({}, event, { data: Object.assign({}, event.data, { node }) });
+      }
+      if (event.type === INCREMENTAL) {
+        const data = maskIncremental(event.data, mask);
+        return data === event.data ? event : Object.assign({}, event, { data });
+      }
+      return event;
+    });
+  }
+
   /* True when the stream holds something that will put rrweb's cursor somewhere.
    *
    * Recordings made before pointer capture was turned on hold nothing of the
@@ -477,6 +689,13 @@
     shouldAutoplay,
     targetOwnsKey,
     turnOf,
+    phaseOf,
+    PHASE_LABELS,
+    chipLabel,
+    chipTitle,
+    NAME_LABELS,
+    nameMask,
+    anonymiseEvents,
     timeline,
     evenly,
     truncationText,

@@ -335,6 +335,10 @@
       const m = all.find((x) => x.id === id);
       return m && Array.isArray(m.replayFlags) && m.replayFlags.length ? m.replayFlags : null;
     },
+    matchNames: (id) => {
+      const m = all.find((x) => x.id === id);
+      return m ? { mine: m.myName, opponent: m.opponentName } : null;
+    },
   });
   window.RATrackerShareSeries.mount({ readReplay, matches: () => all, readOnly });
   SHARES_VIEW.mount({

@@ -717,3 +717,165 @@ test("an absent or empty stream carries no pointer data rather than throwing", (
   assert.equal(hasPointerData(null), false);
   assert.equal(hasPointerData([null, undefined, {}]), false);
 });
+
+// ---- pre-game chapters ---------------------------------------------------
+
+const { phaseOf, chipLabel, chipTitle, anonymiseEvents, nameMask } = require("../replay/replay-timeline.js");
+
+/** A recorder phase marker, as `capture/dom-recorder.js` emits them. */
+const phaseEvent = (timestamp, phase) => ({
+  type: CUSTOM,
+  timestamp,
+  data: { tag: "ra:phase", payload: { phase } }
+});
+
+test("pre-game phases are chapters ahead of the turns, in stream order", () => {
+  const marks = timeline([
+    snapshot(1000),
+    phaseEvent(1000, "battlefield_pick"),
+    phaseEvent(8000, "mulligan"),
+    turnEvent(20000, 1),
+    turnEvent(50000, 2)
+  ]);
+  assert.deepStrictEqual(marks, [
+    { ms: 0, phase: "battlefield_pick" },
+    { ms: 7000, phase: "mulligan" },
+    { ms: 19000, turn: 1 },
+    { ms: 49000, turn: 2 }
+  ]);
+});
+
+test("a phase marker is recognised by its tag alone, and an empty one is not a chapter", () => {
+  assert.strictEqual(phaseOf(phaseEvent(0, "mulligan")), "mulligan");
+  assert.strictEqual(phaseOf(turnEvent(0, 3)), null);
+  assert.strictEqual(phaseOf(phaseEvent(0, "")), null);
+  assert.strictEqual(phaseOf({ type: CUSTOM, timestamp: 0, data: { tag: "ra:phase" } }), null);
+});
+
+test("chips name a phase and number a turn", () => {
+  assert.strictEqual(chipLabel({ ms: 0, phase: "mulligan" }), "Mulligan");
+  assert.strictEqual(chipLabel({ ms: 0, phase: "first_player_choice" }), "First player");
+  assert.strictEqual(chipLabel({ ms: 0, turn: 7 }), "T7");
+  assert.strictEqual(chipTitle({ ms: 0, phase: "mulligan" }), "Jump to mulligan");
+  assert.strictEqual(chipTitle({ ms: 0, turn: 7 }), "Jump to turn 7");
+});
+
+test("a phase the site adds later is still a chapter, labelled from its own name", () => {
+  assert.strictEqual(chipLabel({ ms: 0, phase: "deck_reveal" }), "Deck reveal");
+});
+
+test("the truncation banner counts turns, not the pre-game chapters", () => {
+  const text = truncationText({ state: "truncated" }, { turns: 20 }, [
+    { ms: 0, phase: "mulligan" },
+    { ms: 100, turn: 1 },
+    { ms: 200, turn: 2 }
+  ]);
+  assert.strictEqual(text, "This replay covers turns 1–2 of 20; capture ran out of budget after that");
+  const none = truncationText({ state: "truncated" }, { turns: 20 }, [{ ms: 0, phase: "mulligan" }]);
+  assert.strictEqual(none, "This replay stops before the end of the match.");
+});
+
+// ---- anonymised names -----------------------------------------------------
+
+const NAMES = { mine: "curtyo", opponent: "JROD21" };
+
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const k of Object.keys(value)) deepFreeze(value[k]);
+  }
+  return value;
+}
+
+const text = (id, textContent) => ({ type: 3, id, textContent });
+const element = (id, tagName, attributes, childNodes) => ({ type: 2, id, tagName, attributes, childNodes });
+
+test("names are replaced whole, possessive and all, and never inside another word", () => {
+  const mask = nameMask(NAMES);
+  assert.strictEqual(mask("JROD21 rolled 7."), "Opponent rolled 7.");
+  assert.strictEqual(mask("curtyo's turn"), "Your turn");
+  assert.strictEqual(mask("JROD21's turn"), "Opponent's turn");
+  assert.strictEqual(mask("JROD21’s deck"), "Opponent’s deck");
+  assert.strictEqual(mask("curtyo profile and actions"), "You profile and actions");
+  assert.strictEqual(mask("JROD210 and curtyo2 are other people"), "JROD210 and curtyo2 are other people");
+  assert.strictEqual(mask("Curtyo"), "Curtyo", "case-sensitive: the site prints the name as entered");
+});
+
+test("a name with regex metacharacters is matched literally", () => {
+  const mask = nameMask({ mine: "a.b(c", opponent: "x+" });
+  assert.strictEqual(mask("a.b(c beat x+ and axb(c"), "You beat Opponent and axb(c");
+});
+
+test("the longer name wins when one is a prefix of the other", () => {
+  const mask = nameMask({ mine: "Rex", opponent: "RexFan" });
+  assert.strictEqual(mask("RexFan beat Rex"), "Opponent beat You");
+});
+
+test("no names, no mask: the stream comes back as itself", () => {
+  const events = [snapshot(0), mutation(1)];
+  assert.strictEqual(anonymiseEvents(events, null), events);
+  assert.strictEqual(anonymiseEvents(events, { mine: "", opponent: "  " }), events);
+  assert.strictEqual(nameMask({}), null);
+});
+
+test("a full snapshot is rewritten in its text nodes and attributes, and nothing else", () => {
+  const events = deepFreeze([
+    {
+      type: FULL_SNAPSHOT,
+      timestamp: 0,
+      data: {
+        node: element(1, "div", {}, [
+          element(2, "button", { "aria-label": "JROD21 profile and actions", class: "k" }, [
+            element(3, "span", {}, [text(4, "JROD21")])
+          ]),
+          element(5, "style", { _cssText: ".curtyo{color:red}" }, []),
+          text(6, "curtyo rolled 13.")
+        ])
+      }
+    }
+  ]);
+  const out = anonymiseEvents(events, NAMES);
+  assert.notStrictEqual(out, events);
+  const root = out[0].data.node;
+  assert.strictEqual(root.childNodes[0].attributes["aria-label"], "Opponent profile and actions");
+  assert.strictEqual(root.childNodes[0].attributes.class, "k");
+  assert.strictEqual(root.childNodes[0].childNodes[0].childNodes[0].textContent, "Opponent");
+  assert.strictEqual(root.childNodes[1].attributes._cssText, ".curtyo{color:red}", "stylesheets are not text");
+  assert.strictEqual(root.childNodes[1], events[0].data.node.childNodes[1], "an untouched subtree is the same object");
+  assert.strictEqual(root.childNodes[2].textContent, "You rolled 13.");
+  assert.strictEqual(events[0].data.node.childNodes[2].textContent, "curtyo rolled 13.", "the input is never written to");
+});
+
+test("a mutation is rewritten in its changed text, changed attributes and added nodes", () => {
+  const events = deepFreeze([
+    {
+      type: 3,
+      timestamp: 0,
+      data: {
+        source: 0,
+        texts: [{ id: 4, value: "JROD21's turn" }, { id: 9, value: "Turn 3" }],
+        attributes: [{ id: 2, attributes: { "aria-label": "curtyo menu", title: null } }],
+        adds: [{ parentId: 1, nextId: null, node: text(11, "JROD21 left the game.") }],
+        removes: []
+      }
+    },
+    { type: 3, timestamp: 1, data: { source: 5, text: "gg curtyo", id: 3 } },
+    { type: 3, timestamp: 2, data: { source: 1, positions: [{ x: 1, y: 2, id: 7, timeOffset: 0 }] } },
+    phaseEvent(3, "mulligan")
+  ]);
+  const out = anonymiseEvents(events, NAMES);
+  const m = out[0].data;
+  assert.deepStrictEqual(m.texts, [{ id: 4, value: "Opponent's turn" }, { id: 9, value: "Turn 3" }]);
+  assert.strictEqual(m.texts[1], events[0].data.texts[1], "an unchanged entry is the same object");
+  assert.deepStrictEqual(m.attributes, [{ id: 2, attributes: { "aria-label": "You menu", title: null } }]);
+  assert.strictEqual(m.adds[0].node.textContent, "Opponent left the game.");
+  assert.strictEqual(m.removes, events[0].data.removes);
+  assert.strictEqual(out[1].data.text, "gg You");
+  assert.strictEqual(out[2], events[2], "pointer data is passed through untouched");
+  assert.strictEqual(out[3], events[3], "the recorder's own markers are passed through untouched");
+});
+
+test("a stream with nothing to rewrite is the same array", () => {
+  const events = [snapshot(0), mutation(1), turnEvent(2, 1)];
+  assert.strictEqual(anonymiseEvents(events, NAMES), events);
+});

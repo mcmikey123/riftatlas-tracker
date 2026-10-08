@@ -10,6 +10,14 @@ rrweb event stream. The only kind of replay; there is no structured replay.
 
 **Keyframe** — an rrweb full snapshot. A seek target.
 
+**Pre-roll** — the part of a recording captured before the match record existed: the
+pre-game screens (battlefield pick, initiative roll, first-player choice, sideboarding,
+mulligan), held in the page until the match starts and adopts it. A pre-roll no match adopts
+is dropped and never reaches storage.
+
+**Phase marker** — a recorder-emitted custom event naming the pre-game screen the board moved
+to. The pre-game counterpart of a turn marker; the viewer draws a chapter chip from each.
+
 **Viewer core** — the playback engine that turns `{meta, events}` into a running replay in a
 container. Knows nothing about the dashboard or about sharing.
 

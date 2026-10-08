@@ -215,6 +215,10 @@
       myScore: root.RATBoard.myScore(board),
     });
     if (clearLatch) lastEnded = null;
+    // Neither verdict is a match starting, so a pre-roll waiting on one has
+    // nothing to be adopted by: a finished board lingering under its overlay,
+    // or a game we ended too early that is still the recording it had.
+    if (verdict !== "start") root.RATRec && root.RATRec.abandon();
     if (verdict === "suppress") return;
     if (verdict === "reopen") {
       latched.endedAt = null;

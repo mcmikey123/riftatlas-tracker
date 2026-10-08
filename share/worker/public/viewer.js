@@ -63,6 +63,8 @@
     ["RAReplayCore", "available"],
     ["RAReplayCore", "create"],
     ["RAReplayTimeline", "MAX_CHIPS"],
+    ["RAReplayTimeline", "chipLabel"],
+    ["RAReplayTimeline", "chipTitle"],
     ["RAReplayTimeline", "SEEK"],
     ["RAReplayTimeline", "SPEEDS"],
     ["RAReplayTimeline", "evenly"],
@@ -289,8 +291,8 @@
       b.type = "button";
       b.className = "btn chapter";
       b.dataset.ms = String(chip.ms);
-      b.textContent = "T" + chip.turn;
-      b.title = "Jump to turn " + chip.turn;
+      b.textContent = chipLabel(chip);
+      b.title = chipTitle(chip);
       ui.chapters.appendChild(b);
       return b;
     });
