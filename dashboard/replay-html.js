@@ -89,12 +89,13 @@
               .join("")}</div>`
           : ""
       }
-      <div class="vr-stage"><div class="vr-scale"></div></div>`;
+      <div class="vr-stage"><div class="vr-scale"></div><div class="vr-state" aria-hidden="true"></div></div>`;
 
     return {
       container,
       stage: container.querySelector(".vr-stage"),
       scaleEl: container.querySelector(".vr-scale"),
+      overlay: container.querySelector(".vr-state"),
       slider: container.querySelector(".vr-slider"),
       timeEl: container.querySelector(".vr-time"),
       playBtn: container.querySelector(".vr-play"),
@@ -119,8 +120,9 @@
    * for everything wired here and for the core underneath.
    */
   function wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt) {
-    const { container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls } =
-      handles;
+    const {
+      container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls, overlay,
+    } = handles;
 
     // The transport row itself - the clock, the chips' highlight, the play,
     // step, seek and chapter controls and the keys both surfaces answer - is
@@ -140,6 +142,7 @@
         speed: speedSel,
         chapterEls,
         chapterHost: container,
+        overlay,
       },
       create: (callbacks) =>
         root.RAReplayCore.create({

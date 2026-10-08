@@ -920,6 +920,42 @@ select.rp-speed { padding: 2px 6px; }
    unseen. Keyframes run on a time cadence — see KEYFRAME_EVERY_MS in
    capture/capture-policy.js — so this lands roughly once a minute. */
 .vr-scale iframe { border: 0; display: block; background: #0b1424; image-rendering: auto; }
+/* The play state, worn over the board the way any player wears it: paused is
+   a pause glyph on a dimmed board for as long as it lasts; starting flashes a
+   play glyph once. The transport writes data-state, data-glyph and the flash
+   class (replay/replay-transport.js); this draws them. It also takes the
+   click - the board is the biggest play button on the page - which costs
+   nothing underneath, since the replayed iframe is inert. No filter or
+   backdrop-filter here, for the raster reason given above .vr-scale. */
+.vr-state {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; user-select: none;
+  opacity: 0; transition: opacity 120ms ease, background-color 120ms ease;
+}
+.vr-state::after {
+  content: attr(data-glyph);
+  display: grid; place-items: center;
+  width: 96px; height: 96px; border-radius: 50%;
+  background: rgba(11, 20, 36, 0.78); border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  color: #fff; font-size: 38px; line-height: 1;
+}
+/* The triangle's visual centre sits left of its box; the bars' does not. */
+.vr-state[data-state="playing"]::after { padding-left: 6px; }
+.vr-state[data-state="paused"] { opacity: 1; background: rgba(11, 20, 36, 0.45); }
+.vr-state.flash { animation: vr-flash 650ms ease-out forwards; }
+@keyframes vr-flash {
+  0% { opacity: 1; transform: scale(0.85); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vr-state.flash { animation-name: vr-flash-still; }
+  @keyframes vr-flash-still {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}
 .vr-banner {
   flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;

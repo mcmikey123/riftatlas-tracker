@@ -663,7 +663,8 @@
         clock: ui.clock,
         speed: ui.speed,
         chapterEls,
-        chapterHost: ui.chapters
+        chapterHost: ui.chapters,
+        overlay: ui.state
       },
       create: (callbacks) => {
         transportCallbacks = callbacks;
@@ -773,7 +774,7 @@
   function start() {
     for (const id of ["sub", "notices", "status", "bar", "statusMsg", "statusDetail", "retry",
       "player", "play", "prev", "next", "seek", "clock", "speed", "full", "copyAt", "chapters",
-      "flags", "flagmarks", "games", "stage", "scale"]) {
+      "flags", "flagmarks", "games", "stage", "scale", "state"]) {
       ui[id] = doc.getElementById(id);
     }
     // The one element addressed by class: it is the page's layout root, and the
