@@ -829,7 +829,8 @@ test("a full snapshot is rewritten in its text nodes and attributes, and nothing
             element(3, "span", {}, [text(4, "JROD21")])
           ]),
           element(5, "style", { _cssText: ".curtyo{color:red}" }, []),
-          text(6, "curtyo rolled 13.")
+          text(6, "curtyo rolled 13."),
+          element(7, "img", { src: "/cards/curtyo.png", alt: "curtyo's champion", class: "curtyo" }, [])
         ])
       }
     }
@@ -844,6 +845,33 @@ test("a full snapshot is rewritten in its text nodes and attributes, and nothing
   assert.strictEqual(root.childNodes[1], events[0].data.node.childNodes[1], "an untouched subtree is the same object");
   assert.strictEqual(root.childNodes[2].textContent, "You rolled 13.");
   assert.strictEqual(events[0].data.node.childNodes[2].textContent, "curtyo rolled 13.", "the input is never written to");
+  assert.deepStrictEqual(
+    root.childNodes[3].attributes,
+    { src: "/cards/curtyo.png", alt: "Your champion", class: "curtyo" },
+    "only attributes a player can read are rewritten: never a URL or a class"
+  );
+});
+
+test("a name that is also a CSS word cannot break the board", () => {
+  const events = deepFreeze([
+    {
+      type: FULL_SNAPSHOT,
+      timestamp: 0,
+      data: {
+        node: element(1, "div", { class: "hidden flex", style: "display:none" }, [
+          element(2, "style", {}, [{ type: 3, id: 3, isStyle: true, textContent: ".hidden{display:none}" }]),
+          text(4, "hidden rolled 7.")
+        ])
+      }
+    },
+    { type: 3, timestamp: 1, data: { source: 0, attributes: [{ id: 1, attributes: { class: "none", title: "none" } }] } }
+  ]);
+  const out = anonymiseEvents(events, { mine: "hidden", opponent: "none" });
+  const root = out[0].data.node;
+  assert.deepStrictEqual(root.attributes, { class: "hidden flex", style: "display:none" });
+  assert.strictEqual(root.childNodes[0], events[0].data.node.childNodes[0], "inline stylesheet text is untouched");
+  assert.strictEqual(root.childNodes[1].textContent, "You rolled 7.");
+  assert.deepStrictEqual(out[1].data.attributes, [{ id: 1, attributes: { class: "none", title: "Opponent" } }]);
 });
 
 test("a mutation is rewritten in its changed text, changed attributes and added nodes", () => {

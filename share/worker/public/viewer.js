@@ -284,6 +284,7 @@
   }
 
   function renderChapters(chips) {
+    const { chipLabel, chipTitle } = root.RAReplayTimeline;
     // One chip is the start of the replay and seeks nowhere useful.
     if (chips.length < 2) return [];
     const buttons = chips.map((chip) => {

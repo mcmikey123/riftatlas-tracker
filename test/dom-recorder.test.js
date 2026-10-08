@@ -40,7 +40,9 @@ const readSrc = (rel) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8"
  * Returns the recorder plus the three things worth asserting on: the turn tags
  * in order, when snapshots were spent, and what reached the worker.
  */
-function harness() {
+function harness(opts) {
+  const snapshotMs = (opts && opts.snapshotMs) || 0; // what a full snapshot costs the page
+  let records = 0;
   let now = 0;
   let seq = 0;
   const timers = new Map();
@@ -96,6 +98,7 @@ function harness() {
   let emit = () => {};
   let recordCfg = null;
   const rrwebRecord = (cfg) => {
+    records += 1;
     recordCfg = cfg;
     emit = cfg.emit;
     // rrweb takes its opening snapshot inside record(), before returning.
@@ -104,6 +107,7 @@ function harness() {
   };
   rrwebRecord.takeFullSnapshot = () => {
     snapshotsAt.push(now);
+    now += snapshotMs; // the recorder times this call: see keyframe()
     emit({ type: FULL_SNAPSHOT, timestamp: now, data: {} });
   };
   rrwebRecord.addCustomEvent = (tag, payload) => {
@@ -150,6 +154,8 @@ function harness() {
     turnNumbers: () => tags.filter((t) => t.tag === "ra:turn").map((t) => t.turnNumber),
     /** The options the recorder handed rrweb, once `start` has run. */
     config: () => recordCfg,
+    /** How many times rrweb was started. */
+    records: () => records,
     /** Push one event through rrweb's emit, the way rrweb itself would. */
     emit: (event) => emit(event),
   };
@@ -488,6 +494,39 @@ test("a pre-roll over its cap keeps a fresh keyframe and the phase it is sitting
     batch.some((e) => e.type === 5 && e.data.tag === "ra:phase" && e.data.payload.phase === "sideboarding"),
     "the phase is tagged again after the rotation, so its chip points at a frame that exists"
   );
+});
+
+test("a pre-roll the recorder itself killed stays dead until the board goes away", () => {
+  /* The tick asks for a pre-roll every frame. A page whose full snapshot
+   * trips the kill switch must not be re-snapshotted on every one of them for
+   * the whole pre-game - that is the interference the switch exists to end. */
+  const h = harness({ snapshotMs: 200 }); // over the policy's 150ms kill threshold
+  h.rec.preroll();
+  for (let i = 0; i < 9; i += 1) h.emit(bigMove(i, 1024 * 1024)); // forces a keyframe: the rotation
+  assert.equal(h.rec.stats().state, "perf-kill", "the rotation's keyframe trips the switch");
+  const records = h.records();
+
+  for (let i = 0; i < 5; i += 1) {
+    h.rec.preroll();
+    h.rec.phase("mulligan");
+    h.advance(1000);
+  }
+  assert.equal(h.records(), records, "later ticks do not reopen it");
+  assert.deepEqual(h.sent, [], "and the worker still hears nothing");
+
+  h.rec.abandon(); // the board went away
+  h.rec.preroll();
+  assert.equal(h.records(), records + 1, "the next room starts a fresh recorder");
+});
+
+test("a match starts its own recording after a killed pre-roll", () => {
+  const h = harness({ snapshotMs: 200 });
+  h.rec.preroll();
+  for (let i = 0; i < 9; i += 1) h.emit(bigMove(i, 1024 * 1024));
+  assert.equal(h.rec.stats().state, "perf-kill");
+  h.rec.start("m1");
+  assert.equal(h.sent[0].type, "ra:visual:start", "a match has its own policy, as it always has");
+  assert.equal(h.sent[0].matchId, "m1");
 });
 
 test("a start with no pre-roll records exactly as before", () => {

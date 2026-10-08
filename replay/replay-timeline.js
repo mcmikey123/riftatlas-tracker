@@ -518,9 +518,12 @@
     return (text) => (typeof text === "string" && text ? text.replace(re, (_, name, poss) => label(name, poss)) : text);
   }
 
-  /* Stylesheet text is the one attribute no name can be in, and the largest
-   * string in every keyframe by far. */
-  const UNMASKED_ATTRS = new Set(["_cssText", "__cssRef"]);
+  /* The attributes a name can be printed in. An allowlist, because the
+   * alternative is a mask over `class`, `style`, `src` and inline stylesheet
+   * text, where a player called "none", "hidden" or "red" would rewrite the
+   * site's own CSS and break the board - and because `_cssText` is the largest
+   * string in every keyframe and not worth scanning. */
+  const MASKED_ATTRS = new Set(["aria-label", "aria-description", "title", "alt", "placeholder", "value"]);
 
   /* `arr.map(fn)` that hands back `arr` itself when nothing in it changed. */
   function mapSame(arr, fn) {
@@ -540,7 +543,7 @@
     let out = null;
     for (const key of Object.keys(attributes)) {
       const value = attributes[key];
-      if (typeof value !== "string" || UNMASKED_ATTRS.has(key)) continue;
+      if (typeof value !== "string" || !MASKED_ATTRS.has(key)) continue;
       const next = mask(value);
       if (next !== value) {
         if (!out) out = Object.assign({}, attributes);
@@ -551,11 +554,13 @@
   }
 
   /* A serialized node, text and attributes rewritten, children recursed.
-   * Returns the node itself when nothing under it changed, like `pruneNode`. */
+   * Returns the node itself when nothing under it changed, like `pruneNode`.
+   * rrweb serialises an inline <style>'s text as a text node flagged
+   * `isStyle`: that is CSS, not something the site printed, and is skipped. */
   function maskNode(node, mask) {
     if (!node || typeof node !== "object") return node;
     let next = node;
-    if (node.type === TEXT_NODE && typeof node.textContent === "string") {
+    if (node.type === TEXT_NODE && !node.isStyle && typeof node.textContent === "string") {
       const text = mask(node.textContent);
       if (text !== node.textContent) next = Object.assign({}, next, { textContent: text });
     }

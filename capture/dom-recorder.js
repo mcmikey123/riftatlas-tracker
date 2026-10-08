@@ -574,6 +574,13 @@
     preroll() {
       return guarded(() => {
         if (session && !session.stopped) return;
+        /* A pre-roll the recorder ended itself - the kill switch, an error -
+         * stays ended: the tick asks again every frame, and reopening would
+         * take the opening snapshot that killed it over and over for the
+         * whole pre-game. It is cleared when the board goes away (`abandon`)
+         * or the match starts, which opens its own session with its own
+         * policy, as a match always has. */
+        if (session && !session.matchId && TRUNCATING[session.stopReason]) return;
         openSession(null);
       });
     },
@@ -615,9 +622,9 @@
     abandon() {
       return guarded(() => {
         const s = session;
-        if (!s || s.stopped || s.matchId) return;
-        teardown(s, "abandoned");
-        session = null;
+        if (!s || s.matchId) return;
+        if (!s.stopped) teardown(s, "abandoned");
+        session = null; // a dead pre-roll too: the next room starts clean
       });
     },
     mark(turnNumber) {
