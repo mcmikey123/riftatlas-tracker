@@ -12,10 +12,9 @@
 
   const STORE = window.RATrackerStorage;
   const SERIES = window.RATrackerSeries;
-  /* Sharing, in four files loaded before this one. This side keeps what they
+  /* Sharing, in three files loaded before this one. This side keeps what they
    * cannot see: the match array behind a share's label, the replay reader, and
-   * the render that puts a panel where it was asked for. The fourth,
-   * share-moment.js, is now reached only by the Replays view. */
+   * the render that puts a panel where it was asked for. */
   const SHARE_PANEL = window.RATrackerSharePanel;
   const SHARE_PIPELINE = window.RATrackerSharePipeline;
   const SHARES_VIEW = window.RATrackerSharesView;

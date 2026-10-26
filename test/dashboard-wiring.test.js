@@ -95,7 +95,7 @@ test("the share modules load before legacy.js, which reads them as it evaluates"
   const legacy = at("legacy.js");
   assert.notEqual(legacy, -1, "legacy.js is not loaded");
 
-  for (const file of ["share-panel.js", "share-pipeline.js", "share-moment.js", "shares-view.js"]) {
+  for (const file of ["share-panel.js", "share-pipeline.js", "shares-view.js"]) {
     assert.ok(at(file) !== -1, `dashboard.html must load ${file}`);
     assert.ok(at(file) < legacy, `${file} must load before legacy.js`);
     assert.ok(
@@ -105,7 +105,6 @@ test("the share modules load before legacy.js, which reads them as it evaluates"
   }
   // Each reads the one above it off the global as it evaluates.
   assert.ok(at("share-panel.js") < at("share-pipeline.js"));
-  assert.ok(at("share-pipeline.js") < at("share-moment.js"));
   assert.ok(at("share-pipeline.js") < at("shares-view.js"));
   // And all of them read share/share-ui-support.js and share/hosts.js.
   assert.ok(at("share-ui-support.js") < at("share-panel.js"));
