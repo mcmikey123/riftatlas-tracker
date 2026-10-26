@@ -13,6 +13,9 @@
 (function (root) {
   "use strict";
 
+  // The site's own token endpoint: a POST with the auth cookie returns {token},
+  // the short-lived JWT the two calls below are authenticated with.
+  const TOKEN_URL = "https://auth.riftatlas.com/api/auth/token";
   const LIST_URL = "https://data.riftatlas-workers.com/rpc/gameHistory:list";
   const REPLAY_URL = "https://realtime.riftatlas-workers.com/api/replays/";
   const REPLAY_ACCEPT = "application/vnd.riftatlas.replay+json;version=2";
@@ -217,6 +220,7 @@
   const isReplay = (parsed) => !!(parsed && parsed.format === "riftatlas-replay");
 
   root.RATOfficialHistory = {
+    TOKEN_URL,
     LIST_URL,
     REPLAY_URL,
     REPLAY_ACCEPT,

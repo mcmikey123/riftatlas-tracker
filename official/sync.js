@@ -8,8 +8,9 @@
  *
  * The requests go out from this content script, not the service worker:
  * content-script fetches carry the page's origin, which the site's own API
- * already accepts, so no new host permission is needed - and the token they
- * need only exists in the page (official/token-bridge.js).
+ * already accepts, so no new host permission is needed. The token comes the
+ * way the site gets its own - a POST to its auth server, which the auth
+ * cookie answers - and lives only as long as one poll.
  *
  * The other half is the way back: on the site's replay viewer, opened by the
  * dashboard with a game key in the fragment, the stored JSON is handed to the
@@ -20,7 +21,6 @@
 
   const H = root.RATOfficialHistory || require("./history.js");
 
-  const SOURCE = "rat-official";
   const FIRST_POLL_MS = 15 * 1000;
   const POLL_MS = 3 * 60 * 1000;
   const PENDING_POLL_MS = 60 * 1000; // a replay is being prepared: come back sooner
@@ -28,7 +28,6 @@
   const PAGE_SIZE = 10;
   // Per poll. Each one is a full action log; the rest wait for the next poll.
   const MAX_DOWNLOADS = 3;
-  const TOKEN_TIMEOUT_MS = 15000;
   const INPUT_WAIT_MS = 30000;
 
   let busy = () => false;
@@ -48,23 +47,15 @@
     });
   }
 
-  function requestToken() {
-    return new Promise((resolve) => {
-      const nonce = Math.random().toString(36).slice(2);
-      const done = (token) => {
-        window.removeEventListener("message", onReply);
-        clearTimeout(t);
-        resolve(token);
-      };
-      const onReply = (e) => {
-        const d = e.data;
-        if (e.source !== window || !d || d.source !== SOURCE || d.kind !== "token" || d.nonce !== nonce) return;
-        done(H.tokenUsable(d.token, Date.now()) ? d.token : null);
-      };
-      const t = setTimeout(() => done(null), TOKEN_TIMEOUT_MS);
-      window.addEventListener("message", onReply);
-      window.postMessage({ source: SOURCE, kind: "token-request", nonce }, location.origin);
-    });
+  async function requestToken() {
+    try {
+      const res = await fetch(H.TOKEN_URL, { method: "POST", credentials: "include" });
+      if (!res.ok) return null; // signed out
+      const body = await res.json();
+      return body && H.tokenUsable(body.token, Date.now()) ? body.token : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   async function listRecent(token) {
@@ -95,7 +86,7 @@
   async function syncOnce() {
     if (busy()) return BUSY_POLL_MS;
     const token = await requestToken();
-    if (!token) return POLL_MS; // signed out, or Clerk not reachable: try again later
+    if (!token) return POLL_MS; // signed out, or the auth server unreachable: try again later
     const summaries = await listRecent(token);
     const stored = await send({ type: "ra:official:keys" });
     if (!stored || !stored.ok) return POLL_MS;
