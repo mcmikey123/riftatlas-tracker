@@ -32,6 +32,8 @@
    * and each download is a few milliseconds of main-thread work (the parse and
    * the hand-off to the worker), so spread out they cost the game nothing. */
   const DOWNLOAD_GAP_MS = 10 * 1000;
+  // Ample for ~760 KB: past this the request is stuck, not slow.
+  const DOWNLOAD_TIMEOUT_MS = 60 * 1000;
   const INPUT_WAIT_MS = 30000;
   const INPUT_POLL_MS = 250;
 
@@ -74,16 +76,41 @@
     return H.parsePage(await res.json());
   }
 
+  /* fetch() reports every network failure as the same "Failed to fetch" - the
+   * browser keeps the real reason from scripts. So a failure is labelled with
+   * what a script CAN see: which stage it died in, how long it took, and the
+   * state of the page around it. A stuck request is cut off rather than left
+   * pending, so it fails with a reason instead of not at all. */
   async function download(token, gameKey) {
-    const res = await fetch(H.REPLAY_URL + encodeURIComponent(gameKey), {
-      headers: { accept: H.REPLAY_ACCEPT, authorization: "Bearer " + token },
-      credentials: "omit",
-    });
-    if (!res.ok) throw new Error("replay " + res.status);
-    const text = await res.text();
-    // A truncated body or an error reply must not be stored as a replay.
-    if (!H.isReplay(JSON.parse(text))) throw new Error("replay: not a riftatlas-replay file");
-    return text;
+    const started = Date.now();
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), DOWNLOAD_TIMEOUT_MS);
+    let stage = "request";
+    let status = null;
+    try {
+      const res = await fetch(H.REPLAY_URL + encodeURIComponent(gameKey), {
+        headers: { accept: H.REPLAY_ACCEPT, authorization: "Bearer " + token },
+        credentials: "omit",
+        signal: abort.signal,
+      });
+      status = res.status;
+      if (!res.ok) throw new Error("replay " + res.status);
+      stage = "body";
+      const text = await res.text();
+      stage = "parse";
+      // A truncated body or an error reply must not be stored as a replay.
+      if (!H.isReplay(JSON.parse(text))) throw new Error("replay: not a riftatlas-replay file");
+      return text;
+    } catch (err) {
+      const why = abort.signal.aborted ? `timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s` : String(err && err.message);
+      throw new Error(
+        `${why} | stage=${stage} status=${status} after=${Date.now() - started}ms ` +
+          `online=${navigator.onLine} visible=${document.visibilityState} ` +
+          `board=${!!document.querySelector('[data-testid="game-state"]')}`
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /** One pass: list, download what is missing, store it. Resolves to the next delay. */
