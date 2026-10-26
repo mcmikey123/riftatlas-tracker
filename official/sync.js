@@ -119,7 +119,9 @@
     console.info(
       `[RA-Tracker] official replays: ${summaries.length} listed, ${all.length} to fetch, ${saved} saved`
     );
-    const more = all.length > todo.length;
+    // A failed download is retried on the sooner schedule: the ones seen so far
+    // were transient, and the server copy is on a clock.
+    const more = all.length > todo.length || saved < todo.length;
     return more || H.pending(summaries, Date.now()) ? PENDING_POLL_MS : POLL_MS;
   }
 
