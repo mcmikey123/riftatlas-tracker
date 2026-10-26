@@ -86,7 +86,8 @@
     });
     if (!res.ok) throw new Error("replay " + res.status);
     const text = await res.text();
-    JSON.parse(text); // a truncated body must not be stored as a replay
+    // A truncated body or an error reply must not be stored as a replay.
+    if (!H.isReplay(JSON.parse(text))) throw new Error("replay: not a riftatlas-replay file");
     return text;
   }
 

@@ -223,6 +223,16 @@ test("the site's replay viewer is recognised, the game itself is not", () => {
   assert.equal(H.isViewerPage({ pathname: "/", search: "" }), false);
 });
 
-test("the file handed to the viewer has a plain, safe name", () => {
-  assert.equal(H.fileName("8BXV8:1:1:2"), "replay-8BXV8_1_1_2.json");
+test("the file handed to the viewer is named the way the site names its download", () => {
+  assert.equal(
+    H.fileName("8BXV8:1793031014195:1:1793031045596"),
+    "riftatlas-replay-8BXV8-1793031014195-1-1793031045596.json"
+  );
+});
+
+test("only a riftatlas-replay body counts as a replay", () => {
+  assert.equal(H.isReplay({ format: "riftatlas-replay", version: 2, nodes: [], root: { r: 0 } }), true);
+  assert.equal(H.isReplay({ error: "not found" }), false);
+  assert.equal(H.isReplay(null), false);
+  assert.equal(H.isReplay([]), false);
 });

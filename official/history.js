@@ -208,8 +208,13 @@
     return /[?&]replayFile=/.test(loc.search || "");
   }
 
-  /** What the viewer's file input is handed: a name like the site's own download. */
-  const fileName = (gameKey) => "replay-" + String(gameKey).replace(/[^A-Za-z0-9_-]+/g, "_") + ".json";
+  /** What the viewer's file input is handed: the name the site's own download uses. */
+  const fileName = (gameKey) =>
+    "riftatlas-replay-" + String(gameKey).replace(/[^A-Za-z0-9_-]+/g, "-") + ".json";
+
+  /* Whether a downloaded body is a replay at all. Parsing is not enough: an
+   * error reply is JSON too, and stored it would be a replay that never opens. */
+  const isReplay = (parsed) => !!(parsed && parsed.format === "riftatlas-replay");
 
   root.RATOfficialHistory = {
     LIST_URL,
@@ -226,6 +231,7 @@
     viewerKeyFrom,
     isViewerPage,
     fileName,
+    isReplay,
   };
 })(typeof window !== "undefined" ? window : globalThis);
 
