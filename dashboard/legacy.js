@@ -464,8 +464,7 @@
      * set with it, so a branch here would only fire a second render for the
      * same click. */
 
-    /* The share panel, the shares list and "copy a link to this moment" have
-     * moved out - share-pipeline.js and shares-view.js listen for their own
+    /* The share panel and the shares list have moved out - share-pipeline.js and shares-view.js listen for their own
      * seven attributes, mounted above. */
     const logBtn = e.target?.closest?.("[data-log]");
     if (logBtn) {

@@ -173,17 +173,9 @@
     box.innerHTML = shareBoxInner(matchId);
   }
 
-  /* Anything else that has to follow a share's phases. The replay modal's
-   * "copy link to this moment" registers one: its panel sits over the row's
-   * own and has to say the same thing. Registered rather than called by name so
-   * the modal can depend on this file without this file depending on it. */
-  const watchers = new Set();
-  const onPaint = (fn) => void watchers.add(fn);
-
   function setShare(matchId, patch) {
     shareState.set(matchId, Object.assign({}, shareState.get(matchId), patch));
     paintShare(matchId);
-    for (const watcher of watchers) watcher(matchId);
   }
 
   root.RATrackerSharePanel = {
@@ -199,7 +191,6 @@
     shareBoxHtml,
     shareBoxInner,
     setShare,
-    onPaint,
   };
 })(typeof window !== "undefined" ? window : globalThis);
 

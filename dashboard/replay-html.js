@@ -69,7 +69,7 @@
         <button class="rp-btn vr-full" title="Fullscreen (f)" aria-pressed="false">⛶ Fullscreen</button>
         ${
           officialKey
-            ? `<button class="rp-btn vr-official" data-official="${esc(officialKey)}" title="Open the site's own replay of this game in a new tab">Official replay ↗</button>`
+            ? `<button class="rp-btn vr-official" data-official="${esc(officialKey)}" title="Opens in Rift Atlas's own replay viewer, with both hands visible">Official replay ↗</button>`
             : ""
         }
       </div>

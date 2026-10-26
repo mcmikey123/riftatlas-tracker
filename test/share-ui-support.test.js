@@ -426,8 +426,8 @@ test("a missing or non-array shares key reads as no shares", () => {
 
 /* ---- which share gets reused -------------------------------------------
  *
- * This is what stands between "copy a link to this moment" and re-uploading
- * 3.5 MB every time someone presses it, so it is tested as the decision it is
+ * This is what stands between "Create share link" and re-uploading 3.5 MB
+ * every time someone presses it, so it is tested as the decision it is
  * rather than left as a lookup inside a click handler.
  */
 

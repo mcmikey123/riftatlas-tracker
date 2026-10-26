@@ -45,9 +45,9 @@ R.mount({
   readReplay: async () => ({ events: [{}, {}] }),
 });
 
-// A click on an element carrying `attr`, as the delegated listener sees it.
-const clickOn = (attr, value) =>
-  click({ target: { closest: (sel) => (sel === `[${attr}]` ? { dataset: { visual: value } } : null) } });
+// A click on a match's Play button, as the delegated listener sees it.
+const clickVisual = (id) =>
+  click({ target: { closest: (sel) => (sel === "[data-visual]" ? { dataset: { visual: id } } : null) } });
 
 test("a match is linked to its official replay once the list has landed", () => {
   R.ensureVisualIds(); // lists, and the reply's render() links
@@ -57,7 +57,7 @@ test("a match is linked to its official replay once the list has landed", () => 
 });
 
 test("the replay window is handed the match's official replay, for its button", async () => {
-  clickOn("data-visual", "m1");
+  clickVisual("m1");
   await new Promise((r) => setImmediate(r));
   assert.equal(opened.at(-1).official, "8BXV8:1:1:1793031045596");
 });
