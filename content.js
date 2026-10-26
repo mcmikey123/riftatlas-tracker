@@ -68,11 +68,11 @@
   }
 
   function boot() {
-    /* Official replays: polled for while this tab is open, and on the site's
-     * own replay viewer, handed to it. The viewer draws a real board, so on
-     * that page the capture below must not start at all - it would file the
-     * replay as a match being played. */
-    globalThis.RATOfficialSync.start({ busy: () => !!capture().current() });
+    /* Official replays: polled for while this tab is open, mid-match too,
+     * and on the site's own replay viewer, handed to it. The viewer draws a
+     * real board, so on that page the capture below must not start at all -
+     * it would file the replay as a match being played. */
+    globalThis.RATOfficialSync.start();
     if (globalThis.RATOfficialSync.isViewerPage()) {
       console.info("[RA-Tracker] replay viewer: capture off");
       return;

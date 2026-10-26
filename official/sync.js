@@ -24,14 +24,17 @@
   const FIRST_POLL_MS = 5 * 1000;
   const POLL_MS = 3 * 60 * 1000;
   const PENDING_POLL_MS = 60 * 1000; // a replay is being prepared: come back sooner
-  const BUSY_POLL_MS = 60 * 1000; // a match is live: nothing new can have finished
   const PAGE_SIZE = 10;
   // Per poll. Each one is a full action log; the rest wait for the next poll.
   const MAX_DOWNLOADS = 3;
+  /* Between downloads, so a backlog never lands all at once. It also runs
+   * during a match - older games' replays expire while you play the next one -
+   * and each download is a few milliseconds of main-thread work (the parse and
+   * the hand-off to the worker), so spread out they cost the game nothing. */
+  const DOWNLOAD_GAP_MS = 10 * 1000;
   const INPUT_WAIT_MS = 30000;
   const INPUT_POLL_MS = 250;
 
-  let busy = () => false;
   let timer = null;
   let running = false;
 
@@ -85,7 +88,6 @@
 
   /** One pass: list, download what is missing, store it. Resolves to the next delay. */
   async function syncOnce() {
-    if (busy()) return BUSY_POLL_MS;
     const token = await requestToken();
     if (!token) {
       // Signed out, or the auth server unreachable: try again later.
@@ -101,7 +103,8 @@
     const all = H.wanted(summaries, stored.keys, Date.now());
     const todo = all.slice(0, MAX_DOWNLOADS);
     let saved = 0;
-    for (const summary of todo) {
+    for (const [i, summary] of todo.entries()) {
+      if (i > 0) await new Promise((r) => setTimeout(r, DOWNLOAD_GAP_MS));
       try {
         const text = await download(token, summary.gameKey);
         const reply = await send({ type: "ra:official:put", summary, text });
@@ -175,8 +178,7 @@
   }
 
   /** Start polling, or on the viewer page load the replay the fragment names. */
-  function start(opts) {
-    busy = (opts && opts.busy) || busy;
+  function start() {
     if (H.isViewerPage(location)) {
       openFromHash().catch((err) => console.warn("[RA-Tracker] official replay open failed", err));
       return;

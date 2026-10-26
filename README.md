@@ -112,7 +112,7 @@ Turn the whole thing off with the **Visual replay** checkbox in Settings; everyt
 
 ### Official replays
 
-Rift Atlas keeps its own replay of every game you play — an action log rather than a recording, with **full information: your opponent's hand included**. It becomes downloadable a little after the game ends and the site deletes it a few hours later, so while a play.riftatlas.com tab is open the extension checks your game history every few minutes (every minute while one is still being prepared) and downloads each ready replay it doesn't already have. Nothing is fetched while you're in a match.
+Rift Atlas keeps its own replay of every game you play — an action log rather than a recording, with **full information: your opponent's hand included**. It becomes downloadable a little after the game ends and the site deletes it a few hours later, so while a play.riftatlas.com tab is open the extension checks your game history every few minutes (every minute while one is still being prepared) and downloads each ready replay it doesn't already have. This carries on while you play, so older games are caught even if you go straight from one match to the next; downloads are spaced ten seconds apart so a backlog never lands at once.
 
 A match that has one shows **Official replay ↗** beside **Replay** in its expanded row. It opens Rift Atlas's own viewer (`play.riftatlas.com/?replayFile=1`) in a new tab and loads the saved file into it for you — the same as picking the JSON by hand, and nothing is uploaded. Matching a replay to a match goes by the room code and start time, so games of a Bo3 each get their own.
 
