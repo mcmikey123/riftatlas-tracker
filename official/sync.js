@@ -29,6 +29,7 @@
   // Per poll. Each one is a full action log; the rest wait for the next poll.
   const MAX_DOWNLOADS = 3;
   const INPUT_WAIT_MS = 30000;
+  const INPUT_POLL_MS = 250;
 
   let busy = () => false;
   let timer = null;
@@ -145,7 +146,7 @@
         const input = document.querySelector('input[type="file"]');
         if (input) return resolve(input);
         if (Date.now() > until) return resolve(null);
-        setTimeout(look, 250);
+        setTimeout(look, INPUT_POLL_MS);
       })();
     });
   }

@@ -36,6 +36,11 @@
   // A token this close to expiry is treated as gone: the replay download can
   // take a few seconds, and a 401 halfway through is a wasted fetch.
   const TOKEN_MARGIN_MS = 30 * 1000;
+  /* How long after a game a replay that is not ready yet still counts as being
+   * prepared. The status names for "being prepared" are not known, so any
+   * non-final status counts - and this bound is what stops a status that is
+   * really terminal ("failed", say) holding the poll at its fast rate. */
+  const PREPARING_WINDOW_MS = 60 * 60 * 1000;
 
   const str = (v) => (typeof v === "string" && v ? v : null);
   const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -123,7 +128,9 @@
         s &&
         s.replayStatus !== "ready" &&
         s.replayStatus !== "expired" &&
-        (s.expiresAt == null || s.expiresAt > now)
+        (s.expiresAt == null || s.expiresAt > now) &&
+        s.endedAt != null &&
+        now - s.endedAt < PREPARING_WINDOW_MS
     );
   }
 

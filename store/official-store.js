@@ -58,6 +58,8 @@
 
     async function remove(gameKey) {
       const row = await idb.get("official", gameKey);
+      // Already a tombstone: rewriting it would lose the expiry it carries.
+      if (row && row.deletedAt) return;
       const expiresAt = (row && row.summary && row.summary.expiresAt) || null;
       await idb.put("official", { gameKey, deletedAt: Date.now(), expiresAt });
       await idb.del("officialData", gameKey);

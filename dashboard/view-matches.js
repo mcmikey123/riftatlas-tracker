@@ -303,7 +303,7 @@ function detail(m, readOnly) {
 /* The expanded row's Replay block: our recording, the site's official replay,
  * or both. The official one opens in Rift Atlas's own viewer, which is the
  * one that shows the opponent's hand. */
-function replayBlock(m) {
+export function replayBlock(m) {
   const visual = LEGACY().hasVisual(m.id);
   const official = LEGACY().officialFor(m.id);
   if (!visual && !official) return "";

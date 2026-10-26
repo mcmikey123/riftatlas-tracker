@@ -183,7 +183,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (official ? handleOfficial(msg) : handleVisual(msg))
     .then(sendResponse)
     .catch((e) => {
-      console.warn("[Rift Atlas] visual message failed:", msg.type, e);
+      console.warn(`[Rift Atlas] ${official ? "official" : "visual"} message failed:`, msg.type, e);
       try {
         sendResponse({ ok: false, error: String(e) });
       } catch (_) {

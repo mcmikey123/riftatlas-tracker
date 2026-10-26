@@ -134,6 +134,12 @@ test("a replay still being prepared asks for an early poll; an expired one does 
   assert.equal(H.pending([summary()], NOW), false);
 });
 
+test("a status that never turns ready stops counting as pending an hour after the game", () => {
+  const stuck = summary({ status: "failed", expiresAt: null, endedAt: NOW - 2 * 60 * 60 * 1000 });
+  assert.equal(H.pending([stuck], NOW), false);
+  assert.equal(H.pending([summary({ status: "failed", expiresAt: null })], NOW), true);
+});
+
 // ---- linking to our records ----------------------------------------------
 
 const match = (over) =>

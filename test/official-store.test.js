@@ -55,6 +55,15 @@ test("a deleted replay is gone from the list but still known to the poll", async
   assert.deepEqual(await s.keys(), ["k1"], "the next poll must not download it back");
 });
 
+test("deleting a tombstone again keeps the expiry it carries", async () => {
+  const { s, idb } = store();
+  const expiresAt = Date.now() + 60000;
+  await s.put(summary("k1", 1, expiresAt), "{}");
+  await s.remove("k1");
+  await s.remove("k1");
+  assert.equal(idb.stores.official.get("k1").expiresAt, expiresAt);
+});
+
 test("a tombstone is dropped once the server copy has expired", async () => {
   const { s, idb } = store();
   await s.put(summary("live", 1, Date.now() + 60000), "{}");
