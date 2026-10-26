@@ -201,7 +201,7 @@ test("a link carries no timestamp unless one is asked for", () => {
 });
 
 /* The shares list rebuilds links for records it knows nothing else about, and
- * passes neither a position nor a rate; only "copy a link to this moment" does.
+ * passes neither a position nor a rate; only a moment link does.
  * A rate leaking into the list's links would pin every share to whatever the
  * last replay happened to be playing at. */
 test("a link carries no playback rate unless one is asked for", () => {

@@ -391,8 +391,8 @@
    * The share to rebuild a link from instead of uploading the replay again, or
    * null when there is nothing usable.
    *
-   * This is the whole decision behind "copy a link to this moment" in the
-   * replay modal. Uploading again would cost about 600 ms of blocked main
+   * This is the reuse half of `planShare`, behind the match row's "Create share
+   * link". Uploading again would cost about 600 ms of blocked main
    * thread and a 3.5 MB PUT to produce a link the browser could have assembled
    * from a record it already holds - and it would leave a second copy on the
    * endpoint that nothing can delete before its own TTL elapses. So an
@@ -432,10 +432,8 @@
   /**
    * What to say when a link came out of an existing share rather than an upload.
    *
-   * One sentence in one place because two buttons produce it - the replay
-   * modal's "copy a link to this moment" and the match row's "Create share
-   * link" - and a reader who presses both must not be told two different
-   * things about the same decision.
+   * One sentence in one place, beside the decision it describes, so the match
+   * row's "Create share link" cannot drift from what `reusableShare` decided.
    *
    * What the share has left is said out loud. A reused share carries whatever
    * remains of its seven days, not seven fresh ones, and the sharer has no

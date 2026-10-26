@@ -19,7 +19,8 @@ const listed = [
     gameKey: "8BXV8:1:1:1793031045596", roomCode: "8BXV8", startedAt: 1793031045596,
     opponent: { name: "Corin" } } },
 ];
-global.document = { querySelector: () => null, addEventListener: () => {} };
+let click = null;
+global.document = { querySelector: () => null, addEventListener: (type, fn) => { if (type === "click") click = fn; } };
 global.chrome = {
   runtime: {
     lastError: null,
@@ -35,13 +36,30 @@ global.chrome = {
 const R = require("../dashboard/view-replays.js");
 
 let all = [{ id: "m1", roomCode: "8BXV8", startedAt: new Date(1793031045596 + 60000).toISOString() }];
-R.mount({ matches: () => all, readOnly: () => false, render: () => R.ensureVisualIds(), readReplay: async () => null });
+const opened = [];
+global.RATrackerVisualReplay = { openModal: (m, payload, options) => opened.push(options) };
+R.mount({
+  matches: () => all,
+  readOnly: () => false,
+  render: () => R.ensureVisualIds(),
+  readReplay: async () => ({ events: [{}, {}] }),
+});
+
+// A click on a match's Play button, as the delegated listener sees it.
+const clickVisual = (id) =>
+  click({ target: { closest: (sel) => (sel === "[data-visual]" ? { dataset: { visual: id } } : null) } });
 
 test("a match is linked to its official replay once the list has landed", () => {
   R.ensureVisualIds(); // lists, and the reply's render() links
   assert.equal(R.officialFor("m1"), "8BXV8:1:1:1793031045596");
   assert.equal(R.officialFor("nope"), null);
   assert.equal(sent.filter((m) => m.type === "ra:official:list").length, 1, "listed once, not per paint");
+});
+
+test("the replay window is handed the match's official replay, for its button", async () => {
+  clickVisual("m1");
+  await new Promise((r) => setImmediate(r));
+  assert.equal(opened.at(-1).official, "8BXV8:1:1:1793031045596");
 });
 
 test("the link outlives the match leaving the array, so deleting it takes the replay too", () => {

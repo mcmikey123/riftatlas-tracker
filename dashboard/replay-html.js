@@ -32,19 +32,17 @@
    * Write the viewer's chrome into `container` and hand back every element the
    * transport controls touch. `chips` is the already-thinned chapter list.
    *
-   * `withMoment` adds the "copy link to this moment" control and the empty
-   * panel it works in. Both are rendered only when a caller supplied a handler:
-   * turning a local replay into a link needs chrome.storage, the share
-   * pipeline and the endpoint setting, none of which this file has or should
-   * have, so a modal opened without one simply has no such button rather than a
-   * dead one.
+   * `officialKey` is the game key of the site's own replay of this match, or
+   * null. With one, the row ends in a button that opens it in the site's
+   * viewer; the click is the dashboard's document-level `data-official`
+   * branch, so this file only draws it. Without one there is no button.
    *
    * `withFlags` does the same for the flag button: saving a bookmark needs the
    * match array and the writer, so a modal opened without a flags handler
    * simply has no button. The flag ROW renders either way - a shared or
    * archived replay whose meta brought flags shows them read-only.
    */
-  function renderShell(container, match, meta, marks, chips, withMoment, withFlags) {
+  function renderShell(container, match, meta, marks, chips, officialKey, withFlags) {
     const truncated = meta.state === "truncated";
     const lostTail = !!meta.incomplete || meta.truncatedAtChunk != null;
 
@@ -70,12 +68,11 @@
         ).join("")}</select>
         <button class="rp-btn vr-full" title="Fullscreen (f)" aria-pressed="false">⛶ Fullscreen</button>
         ${
-          withMoment
-            ? `<button class="rp-btn vr-moment" title="Copy a link that opens this replay at the moment it is showing now">Copy link to this moment</button>`
+          officialKey
+            ? `<button class="rp-btn vr-official" data-official="${esc(officialKey)}" title="Opens in Rift Atlas's own replay viewer, with both hands visible">Official replay ↗</button>`
             : ""
         }
       </div>
-      ${withMoment ? '<div class="vr-share" aria-live="polite" hidden></div>' : ""}
       <div class="rp-flags vr-flags" hidden></div>
       ${
         chips.length > 1
@@ -106,20 +103,18 @@
       flagBtn: container.querySelector(".vr-flag"),
       flagsRow: container.querySelector(".vr-flags"),
       flagMarks: container.querySelector(".vr-flagmarks"),
-      momentBtn: container.querySelector(".vr-moment"),
-      momentPanel: container.querySelector(".vr-share"),
       chapterEls: container.querySelectorAll(".vr-chapter"),
     };
   }
 
   /**
    * Start the playback core inside the rendered shell, wire the shared
-   * transport row to it, and add the chrome only this surface has: fullscreen
-   * and the copy-link-to-this-moment button. Returns the controller the modal
+   * transport row to it, and add the chrome only this surface has:
+   * fullscreen. Returns the controller the modal
    * drives, or null if the recording will not play; `destroy` is the teardown
    * for everything wired here and for the core underneath.
    */
-  function wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt) {
+  function wireControls(handles, meta, events, marks, chips, flagsOpt) {
     const {
       container, slider, timeEl, playBtn, prevBtn, nextBtn, fullBtn, speedSel, chapterEls, overlay,
     } = handles;
@@ -223,18 +218,13 @@
     }
 
     /**
-     * The moment panel is a band in the same column as the stage, so opening it
-     * takes 110-130px off the board's box without the window ever resizing -
-     * and the fit is height-bound in the modal, so the board is left clipped and
-     * off-centre for the whole consent → progress → link sequence, then
-     * letterboxed the other way once the panel closes again.
-     *
-     * Observed rather than refitted at each of the panel's states: the panel
-     * changes content in six places, the two easiest to forget are the failure
-     * paths, and anything else that ever changes the stage's box - a banner that
-     * wraps, a chip row that reflows - is covered by the same listener. It costs
-     * one observer, torn down below. The callback only writes a transform on a
-     * child, which changes no layout, so it cannot feed itself.
+     * The stage shares its column with the rows above it, so anything that
+     * changes their height - a banner that wraps, a chip row or flag row that
+     * reflows - changes the board's box without the window ever resizing, and
+     * the fit is height-bound in the modal. Observed rather than refitted at
+     * each such change. It costs one observer, torn down below. The callback
+     * only writes a transform on a child, which changes no layout, so it cannot
+     * feed itself.
      */
     let stageResize = null;
     if (typeof root.ResizeObserver === "function") {
@@ -330,28 +320,6 @@
       root.requestAnimationFrame(playback.refit);
     }
 
-    // Wired directly rather than through the dashboard's document-level click
-    // delegation: the handler needs the transport's position, which only this
-    // closure holds, and a data attribute the document also listens for would
-    // give the same click two owners.
-    //
-    // The position is read at the click, not when the handler finishes. A
-    // first share has an upload in the middle of it, and the link is supposed
-    // to name the moment the button was pressed, not the moment the network
-    // came back.
-    if (shareMoment && handles.momentBtn) {
-      handles.momentBtn.addEventListener("click", () =>
-        shareMoment({
-          atMs: playback.getTime(),
-          // Read off the select, not the core: the transport writes that
-          // control back from whatever the core accepted, so it is the one
-          // place that cannot disagree with what is actually playing.
-          atSpeed: parseFloat(speedSel.value),
-          button: handles.momentBtn,
-          panel: handles.momentPanel,
-        })
-      );
-    }
     if (canFullscreen) {
       fullBtn.addEventListener("click", toggleFullscreen);
       document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -383,11 +351,11 @@
   /**
    * Mount a replay into `container`. Returns a controller, or null.
    *
-   * `options.shareMoment({ atMs, button, panel })` is the dashboard's hook for
-   * turning the current position into a link; see `renderShell`.
+   * `options.official` is the game key of the match's official replay, or
+   * null; see `renderShell`.
    */
   function mount(container, match, payload, options) {
-    const shareMoment = (options && options.shareMoment) || null;
+    const official = (options && options.official) || null;
     const flagsOpt = (options && options.flags) || null;
     const meta = (payload && payload.meta) || {};
     // Names off the match record, which is where the capture filed them. The
@@ -410,8 +378,8 @@
     const marks = timeline(events);
     const chips = evenly(marks, MAX_CHIPS);
 
-    const handles = renderShell(container, match, meta, marks, chips, !!shareMoment, !!flagsOpt);
-    const ctl = wireControls(handles, meta, events, marks, chips, shareMoment, flagsOpt);
+    const handles = renderShell(container, match, meta, marks, chips, official, !!flagsOpt);
+    const ctl = wireControls(handles, meta, events, marks, chips, flagsOpt);
     if (!ctl) {
       container.innerHTML = '<p class="rp-empty">This recording could not be played back.</p>';
       return null;
@@ -462,11 +430,9 @@
         return close();
       }
       if (!ctl) return;
-      // Escape is above this on purpose: it closes the modal from anywhere,
-      // including from the share link's field, where it has nothing else to do.
-      // Everything below moves the replay, and the moment panel puts a text
-      // field and two buttons inside the modal that own those keys themselves —
-      // which is what `targetOwnsKey` answers for, inside handleKey for the
+      // Escape is above this on purpose: it closes the modal from anywhere.
+      // Everything below moves the replay, and a focused control inside the
+      // modal may own those keys itself — which is what `targetOwnsKey` answers for, inside handleKey for the
       // shared keys and here for fullscreen, the one key only this surface has.
       if (ctl.handleKey(e)) return;
       if (targetOwnsKey(e.target, e.key)) return;

@@ -1,8 +1,8 @@
 /* Rift Atlas Stats Tracker - copy a link, and say that it was copied
  *
  * One helper, shared by every place a share link is handed over: the row's
- * share panel, the shares list, the replay modal's "copy link to this moment",
- * and the standalone viewer's. Four buttons across two surfaces that ship to
+ * share panel, the shares list, and the standalone viewer's. Three buttons
+ * across two surfaces that ship to
  * two different origins, which is exactly the shape that drifts - the same
  * lesson share/repaint.js already learned.
  *

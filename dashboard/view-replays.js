@@ -325,7 +325,7 @@
               return;
             }
             root.RATrackerVisualReplay.openModal(m, payload, {
-              shareMoment: (request) => root.RATrackerShareMoment.shareMoment(request, m),
+              official: officialFor(m.id),
               /* Flags are bookmarks ON THE MATCH RECORD - they survive
                * export/import with it, and deleting the recording leaves them
                * on the record it described. Not offered in archive mode,

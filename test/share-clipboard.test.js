@@ -1,8 +1,7 @@
 /* share/clipboard.js - handing a link over, and saying that it happened.
  *
- * Four buttons across two surfaces use this: the row's share panel, the shares
- * list, the replay modal's "copy link to this moment", and the standalone
- * viewer's. The behaviour worth pinning down is what happens when the copy does
+ * Three buttons across two surfaces use this: the row's share panel, the
+ * shares list, and the standalone viewer's. The behaviour worth pinning down is what happens when the copy does
  * NOT work, because that is the path nobody exercises by hand.
  */
 const test = require("node:test");
