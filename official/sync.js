@@ -21,7 +21,7 @@
 
   const H = root.RATOfficialHistory || require("./history.js");
 
-  const FIRST_POLL_MS = 15 * 1000;
+  const FIRST_POLL_MS = 5 * 1000;
   const POLL_MS = 3 * 60 * 1000;
   const PENDING_POLL_MS = 60 * 1000; // a replay is being prepared: come back sooner
   const BUSY_POLL_MS = 60 * 1000; // a match is live: nothing new can have finished
