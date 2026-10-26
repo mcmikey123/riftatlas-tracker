@@ -5,11 +5,16 @@
   "use strict";
 
   const DB_NAME = "ra-visual";
-  const DB_VERSION = 1;
+  /* 2 added the official replays, as two stores so that listing them never
+   * reads the replay bodies. The upgrade only creates what is missing, so a
+   * version-1 database keeps everything it had. */
+  const DB_VERSION = 2;
   const STORE_DEFS = {
     replays: { keyPath: "matchId" },
     chunks: { keyPath: ["matchId", "seq"] },
     assets: { keyPath: "hash" },
+    official: { keyPath: "gameKey" },
+    officialData: { keyPath: "gameKey" },
   };
 
   let dbPromise = null;

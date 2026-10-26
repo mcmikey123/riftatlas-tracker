@@ -9,9 +9,10 @@
  * arrive via importScripts and register themselves on globalThis. The platform
  * pieces the store leaves injectable - compression and hashing - are supplied
  * here, which is also what keeps `store/replay-store.js` testable under node. */
-importScripts("store/idb.js", "store/css-assets.js", "store/replay-store.js");
+importScripts("store/idb.js", "store/css-assets.js", "store/replay-store.js", "store/official-store.js");
 
 const VISUAL_PREFIX = "ra:visual:";
+const OFFICIAL_PREFIX = "ra:official:";
 /* How many matches keep a visual track. This is the *primary* storage control -
  * recordings are never degraded to fit a size, so total disk use is retention
  * times the cost of a match - which is why it is a setting the owner turns and
@@ -58,6 +59,45 @@ const replayStore = self.RATrackerReplayStore.createReplayStore({
   decompress,
   hash,
 });
+
+/* Official replays: the site's own replay JSON, downloaded by official/sync.js
+ * in the play tab. Stored here because the content script cannot reach this
+ * origin's IndexedDB, and read back here for the same reason when the site's
+ * viewer is handed one. */
+const officialStore = self.RATrackerOfficialStore.createOfficialStore({
+  idb: self.RATrackerIdb,
+  compress,
+  decompress,
+});
+
+async function handleOfficial(msg) {
+  switch (msg.type) {
+    case "ra:official:keys":
+      return { ok: true, keys: await officialStore.keys() };
+    case "ra:official:list":
+      return { ok: true, replays: await officialStore.list() };
+    case "ra:official:put": {
+      const key = msg.summary && msg.summary.gameKey;
+      if (typeof key !== "string" || !key || typeof msg.text !== "string") {
+        return { ok: false, error: "malformed official replay" };
+      }
+      await officialStore.put(msg.summary, msg.text);
+      try {
+        await officialStore.gc(await keepNewest());
+      } catch (e) {
+        console.warn("[Rift Atlas] official replay retention failed:", e);
+      }
+      return { ok: true };
+    }
+    case "ra:official:get":
+      return { ok: true, text: await officialStore.getText(msg.gameKey) };
+    case "ra:official:delete":
+      await officialStore.remove(msg.gameKey);
+      return { ok: true };
+    default:
+      return { ok: false, error: "unknown message " + msg.type };
+  }
+}
 
 /* Stylesheets are content-addressed, so their cost belongs to the whole store
  * rather than to any one match: this is what the diagnostics panel reports as
@@ -129,7 +169,9 @@ async function handleVisual(msg) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Anything that isn't ours is left to the other listeners untouched.
-  if (!msg || typeof msg.type !== "string" || !msg.type.startsWith(VISUAL_PREFIX)) return;
+  if (!msg || typeof msg.type !== "string") return;
+  const official = msg.type.startsWith(OFFICIAL_PREFIX);
+  if (!official && !msg.type.startsWith(VISUAL_PREFIX)) return;
   // A storage failure must never reject into the content script: the recording
   // stops, and the match record, its game log, its result and its card list all
   // carry on to the end of the match regardless.
@@ -138,10 +180,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // sendResponse itself, and sending an oversized reply throws exactly there.
   // The sender was left with `undefined` and no reason at all, which is how a
   // payload too large to transport came to look like an unreadable recording.
-  handleVisual(msg)
+  (official ? handleOfficial(msg) : handleVisual(msg))
     .then(sendResponse)
     .catch((e) => {
-      console.warn("[Rift Atlas] visual message failed:", msg.type, e);
+      console.warn(`[Rift Atlas] ${official ? "official" : "visual"} message failed:`, msg.type, e);
       try {
         sendResponse({ ok: false, error: String(e) });
       } catch (_) {

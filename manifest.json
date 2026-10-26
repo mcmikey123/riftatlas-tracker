@@ -34,6 +34,8 @@
         "capture/match-log.js",
         "capture/match-start.js",
         "capture/match-lifecycle.js",
+        "official/history.js",
+        "official/sync.js",
         "content.js"
       ],
       "css": [

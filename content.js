@@ -6,7 +6,9 @@
  *  - room code, mode, player names, scores
  *  - result (auto-detected on win / concede, with a manual override toast)
  *
- * It never clicks anything or sends anything on your behalf.
+ * It never clicks anything or sends anything on your behalf. The one thing it
+ * asks the site for is your own game history and its official replays, read
+ * with the site's own session token (official/sync.js).
  *
  * What is left in this file is the clock: what wakes the capture up, how often,
  * and in what order. Everything it wakes lives in capture/ - the board scrapes,
@@ -66,6 +68,16 @@
   }
 
   function boot() {
+    /* Official replays: polled for while this tab is open, mid-match too,
+     * and on the site's own replay viewer, handed to it. The viewer draws a
+     * real board, so on that page the capture below must not start at all -
+     * it would file the replay as a match being played. */
+    globalThis.RATOfficialSync.start();
+    if (globalThis.RATOfficialSync.isViewerPage()) {
+      console.info("[RA-Tracker] replay viewer: capture off");
+      return;
+    }
+
     /* One scan per frame, but every record still gets scanned.
      *
      * The observer can deliver several batches inside one frame, and only the

@@ -138,3 +138,8 @@ test("the record stored in the matches array never carries the game log", () => 
   assert.ok(!/JSON\.stringify\(currentMatch\)/.test(source),
     "the dirty-check is snapshotting the live record, so log growth rewrites the matches array");
 });
+
+test("the official-replay sync loads after the history it reads", () => {
+  assert.ok(scripts.indexOf("official/history.js") !== -1);
+  assert.ok(scripts.indexOf("official/history.js") < scripts.indexOf("official/sync.js"));
+});

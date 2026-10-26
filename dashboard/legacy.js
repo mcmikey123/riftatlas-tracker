@@ -260,6 +260,7 @@
      * document-level - so a row drawn by a module is driven by those handlers
      * without either side knowing about the other. */
     hasVisual: (id) => REPLAYS.hasVisual(id),
+    officialFor: (id) => REPLAYS.officialFor(id),
     shareOpenHas: (id) => SHARE_PANEL.isOpen(id),
     shareBoxInner: (id) => SHARE_PANEL.shareBoxInner(id),
     deckNames,
