@@ -32,8 +32,13 @@
    * and each download is a few milliseconds of main-thread work (the parse and
    * the hand-off to the worker), so spread out they cost the game nothing. */
   const DOWNLOAD_GAP_MS = 10 * 1000;
-  // Ample for ~760 KB: past this the request is stuck, not slow.
-  const DOWNLOAD_TIMEOUT_MS = 60 * 1000;
+  /* The server sometimes takes a replay it lists as ready and answers nothing
+   * at all - no headers - while the same request a little later is served at
+   * once. So a download is cut off well past a slow normal one (~760 KB takes
+   * a second or two) and tried again within the same poll; only after every
+   * retry fails is it left to the next poll. */
+  const DOWNLOAD_TIMEOUT_MS = 15 * 1000;
+  const RETRY_DELAYS_MS = [5 * 1000, 15 * 1000];
   const INPUT_WAIT_MS = 30000;
   const INPUT_POLL_MS = 250;
 
@@ -113,6 +118,19 @@
     }
   }
 
+  async function downloadWithRetry(token, gameKey) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await download(token, gameKey);
+      } catch (err) {
+        const wait = RETRY_DELAYS_MS[attempt];
+        if (wait == null) throw err;
+        console.info(`[RA-Tracker] official replay attempt ${attempt + 1} failed, retrying in ${wait / 1000}s`, gameKey, err.message);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+  }
+
   /** One pass: list, download what is missing, store it. Resolves to the next delay. */
   async function syncOnce() {
     const token = await requestToken();
@@ -133,7 +151,7 @@
     for (const [i, summary] of todo.entries()) {
       if (i > 0) await new Promise((r) => setTimeout(r, DOWNLOAD_GAP_MS));
       try {
-        const text = await download(token, summary.gameKey);
+        const text = await downloadWithRetry(token, summary.gameKey);
         const reply = await send({ type: "ra:official:put", summary, text });
         if (!reply || !reply.ok) throw new Error("not stored: " + ((reply && reply.error) || "no reply"));
         saved++;
