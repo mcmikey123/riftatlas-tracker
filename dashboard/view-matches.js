@@ -295,18 +295,30 @@ function detail(m, readOnly) {
           : ""
       }
 
+      ${replayBlock(m)}
+    </div>
+  </div>`;
+}
+
+/* The expanded row's Replay block: our recording, the site's official replay,
+ * or both. The official one opens in Rift Atlas's own viewer, which is the
+ * one that shows the opponent's hand. */
+function replayBlock(m) {
+  const visual = LEGACY().hasVisual(m.id);
+  const official = LEGACY().officialFor(m.id);
+  if (!visual && !official) return "";
+  return `<span class="block-label">Replay</span>
+    <div class="replay-row">
+      ${visual ? `<button class="btn btn-sm btn-primary" data-visual="${esc(m.id)}">Open full screen</button>` : ""}
+      ${visual ? `<button class="btn btn-sm" data-share="${esc(m.id)}">Share a link</button>` : ""}
       ${
-        LEGACY().hasVisual(m.id)
-          ? `<span class="block-label">Replay</span>
-             <div class="replay-row">
-               <button class="btn btn-sm btn-primary" data-visual="${esc(m.id)}">Open full screen</button>
-               <button class="btn btn-sm" data-share="${esc(m.id)}">Share a link</button>
-             </div>
-             <div class="share-box" data-sharebox="${esc(m.id)}" ${LEGACY().shareOpenHas(m.id) ? "" : "hidden"}>${LEGACY().shareBoxInner(m.id)}</div>`
+        official
+          ? `<button class="btn btn-sm${visual ? "" : " btn-primary"}" data-official="${esc(official)}"
+               title="Opens in Rift Atlas's own replay viewer, with both hands visible">Official replay ↗</button>`
           : ""
       }
     </div>
-  </div>`;
+    ${visual ? `<div class="share-box" data-sharebox="${esc(m.id)}" ${LEGACY().shareOpenHas(m.id) ? "" : "hidden"}>${LEGACY().shareBoxInner(m.id)}</div>` : ""}`;
 }
 
 /* The picker keeps the same data-deck attribute legacy.js listens for, so

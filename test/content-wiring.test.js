@@ -138,3 +138,15 @@ test("the record stored in the matches array never carries the game log", () => 
   assert.ok(!/JSON\.stringify\(currentMatch\)/.test(source),
     "the dirty-check is snapshotting the live record, so log growth rewrites the matches array");
 });
+
+/* The token bridge reads Clerk off the page's window, which only the MAIN world
+ * can see - and the MAIN world has no chrome.runtime, which the sync needs to
+ * reach the service worker. Swapping the two worlds breaks both silently: no
+ * token, so no official replay is ever fetched. */
+test("the official-replay token bridge runs in the page's world, and only it", () => {
+  const main = manifest.content_scripts.filter((c) => c.world === "MAIN");
+  assert.deepEqual(main.map((c) => c.js), [["official/token-bridge.js"]]);
+  assert.deepEqual(main[0].matches, manifest.content_scripts[0].matches);
+  assert.ok(!scripts.includes("official/token-bridge.js"));
+  assert.ok(scripts.indexOf("official/history.js") < scripts.indexOf("official/sync.js"));
+});

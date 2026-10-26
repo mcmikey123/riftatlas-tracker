@@ -33,6 +33,8 @@
   const { unreadableReason } = root.RAShareUI || require("../share/share-ui-support.js");
   const { say, ask } = root.RATrackerNotify || require("./notify.js");
 
+  const OFFICIAL = root.RATOfficialHistory || require("../official/history.js");
+
   const { statOf, sumStat, visualStateCell, playable } = PANEL;
 
   /* Nothing below dereferences a query result directly: this view's markup is
@@ -66,7 +68,38 @@
   // many matches costs. Written by settings-capture.js, which owns the field.
   let keepMatches = 25;
 
+  /* The official replays on disk - the site's own replay JSON, fetched by the
+   * content script - and which match each one is. Rows are listed once, like
+   * the recordings; the links are worked out on every paint, from the rows and
+   * the match array as they are then.
+   *
+   * `officialLinks` only ever grows (until a delete): deleting a match repaints
+   * before it tears the match's data down, and by then the match is no longer
+   * in the array to be linked - the last link seen is how its official replay
+   * is still found and deleted with it. */
+  let officialRows = null;
+  const officialLinks = new Map(); // matchId -> gameKey
+
+  function ensureOfficial() {
+    if (readOnly()) return;
+    if (officialRows === null) {
+      officialRows = [];
+      chrome.runtime.sendMessage({ type: "ra:official:list" }, (reply) => {
+        if (chrome.runtime.lastError || !reply || !reply.ok) return;
+        officialRows = (reply.replays || []).filter((r) => r && r.summary);
+        render();
+      });
+      return;
+    }
+    const linked = OFFICIAL.linkToMatches(matches(), officialRows.map((r) => r.summary));
+    for (const [id, s] of linked) officialLinks.set(id, s.gameKey);
+  }
+
+  /** The game key of a match's official replay, or null. */
+  const officialFor = (id) => (readOnly() ? null : officialLinks.get(id) || null);
+
   function ensureVisualIds() {
+    ensureOfficial();
     // Set before the reply lands, so a re-render can't fire a second query.
     if (visualIds !== null || readOnly()) return;
     visualIds = new Set();
@@ -95,6 +128,15 @@
     });
     if (visualIds) visualIds.delete(matchId);
     visualRecords = visualRecords.filter((r) => r.matchId !== matchId);
+    // The official replay holds the same opponent, and their hand besides.
+    const gameKey = officialLinks.get(matchId);
+    if (gameKey) {
+      chrome.runtime.sendMessage({ type: "ra:official:delete", gameKey }, () => {
+        void chrome.runtime.lastError;
+      });
+      officialLinks.delete(matchId);
+      if (officialRows) officialRows = officialRows.filter((r) => r.gameKey !== gameKey);
+    }
     renderPanel();
   }
 
@@ -106,6 +148,9 @@
     visualIds = new Set();
     visualRecords = [];
     visualAssets = { count: 0, bytes: 0 };
+    // The same clear empties the official stores: idb.js clears every store.
+    officialRows = [];
+    officialLinks.clear();
     renderPanel();
   }
 
@@ -260,6 +305,15 @@
     readReplay = deps.readReplay;
 
     document.addEventListener("click", (e) => {
+      /* The site's own viewer, in a new tab. The content script there reads
+       * the game key off the fragment and hands the stored JSON to the
+       * viewer's file input - nothing is uploaded anywhere. */
+      const officialBtn = e.target?.closest?.("[data-official]");
+      if (officialBtn) {
+        window.open(OFFICIAL.viewerUrl(officialBtn.dataset.official), "_blank");
+        return;
+      }
+
       const visualBtn = e.target?.closest?.("[data-visual]");
       const visualId = visualBtn && visualBtn.dataset.visual;
       if (visualId) {
@@ -365,6 +419,7 @@
   root.RATrackerViewReplays = {
     ensureVisualIds,
     hasVisual,
+    officialFor,
     forgetVisual,
     forgetAllVisual,
     records,

@@ -110,6 +110,16 @@ Two things replays are deliberately **not** part of:
 
 Turn the whole thing off with the **Visual replay** checkbox in Settings; everything else the tracker records is unaffected.
 
+### Official replays
+
+Rift Atlas keeps its own replay of every game you play — an action log rather than a recording, with **full information: your opponent's hand included**. It becomes downloadable a little after the game ends and the site deletes it a few hours later, so while a play.riftatlas.com tab is open the extension checks your game history every few minutes (every minute while one is still being prepared) and downloads each ready replay it doesn't already have. Nothing is fetched while you're in a match.
+
+A match that has one shows **Official replay ↗** beside **Replay** in its expanded row. It opens Rift Atlas's own viewer (`play.riftatlas.com/?replayFile=1`) in a new tab and loads the saved file into it for you — the same as picking the JSON by hand, and nothing is uploaded. Matching a replay to a match goes by the room code and start time, so games of a Bo3 each get their own.
+
+Official replays follow the same rules as visual ones: stored compressed in the extension's IndexedDB, the same **keep the newest N matches** count, deleted with their match (and not downloaded back), wiped by **Clear all**, and in no export. A game played while no Rift Atlas tab was open in the following few hours is missed — the site's copy has expired before the extension could see it.
+
+The requests go to Rift Atlas's own API, from the play.riftatlas.com tab, with the session token the site itself uses; the token is never stored.
+
 ## How it works
 
 - A content script watches the game board (`data-testid="game-state"`). When a match enters `in_game`, it records the room code, mode, both players' legends and champions (from card image alt text), and tracks scores and turn count.

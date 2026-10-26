@@ -615,7 +615,10 @@ const BROWSER_GLOBALS = new Set([
   "cancelAnimationFrame", "requestAnimationFrame", "cancelIdleCallback", "requestIdleCallback",
   "clearInterval", "setInterval", "clearTimeout", "setTimeout",
   "close", "crypto", "devicePixelRatio", "document", "fetch", "indexedDB",
-  "innerHeight", "innerWidth", "location", "matchMedia", "navigator", "prompt", "scrollY",
+  "innerHeight", "innerWidth", "location", "matchMedia", "navigator", "open", "postMessage",
+  "prompt", "scrollY",
+  // The site's own, read by official/token-bridge.js from the page's MAIN world
+  "Clerk",
   // vendor/, covered by test/vendor-contract.test.js
   "rrwebRecord", "rrwebReplay", "showdown",
 ]);
