@@ -86,21 +86,36 @@
   async function syncOnce() {
     if (busy()) return BUSY_POLL_MS;
     const token = await requestToken();
-    if (!token) return POLL_MS; // signed out, or the auth server unreachable: try again later
+    if (!token) {
+      // Signed out, or the auth server unreachable: try again later.
+      console.info("[RA-Tracker] official replays: no session token");
+      return POLL_MS;
+    }
     const summaries = await listRecent(token);
     const stored = await send({ type: "ra:official:keys" });
-    if (!stored || !stored.ok) return POLL_MS;
-    const todo = H.wanted(summaries, stored.keys, Date.now()).slice(0, MAX_DOWNLOADS);
+    if (!stored || !stored.ok) {
+      console.warn("[RA-Tracker] official replays: storage unreachable", stored && stored.error);
+      return POLL_MS;
+    }
+    const all = H.wanted(summaries, stored.keys, Date.now());
+    const todo = all.slice(0, MAX_DOWNLOADS);
+    let saved = 0;
     for (const summary of todo) {
       try {
         const text = await download(token, summary.gameKey);
-        await send({ type: "ra:official:put", summary, text });
+        const reply = await send({ type: "ra:official:put", summary, text });
+        if (!reply || !reply.ok) throw new Error("not stored: " + ((reply && reply.error) || "no reply"));
+        saved++;
         console.info("[RA-Tracker] official replay saved", summary.gameKey);
       } catch (err) {
         console.warn("[RA-Tracker] official replay download failed", summary.gameKey, err);
       }
     }
-    const more = H.wanted(summaries, stored.keys, Date.now()).length > todo.length;
+    // One line per poll, so a quiet console still says how far the sync got.
+    console.info(
+      `[RA-Tracker] official replays: ${summaries.length} listed, ${all.length} to fetch, ${saved} saved`
+    );
+    const more = all.length > todo.length;
     return more || H.pending(summaries, Date.now()) ? PENDING_POLL_MS : POLL_MS;
   }
 
